@@ -42,23 +42,11 @@ class Citation:
 
 
 def to_citation(chunk: Chunk, n: int, score: float = 0.0) -> Citation:
-    if chunk.contains_table:
-        return Citation(
-            n=n,
-            doc_code=chunk.doc_code,
-            doc_title=chunk.doc_title,
-            clause=None,
-            section_no=chunk.section,
-            section_title=chunk.section,
-            chunk_id=chunk.chunk_id,
-            score=score,
-            snippet=chunk.text[:400],
-        )
     return Citation(
         n=n,
         doc_code=chunk.doc_code,
         doc_title=chunk.doc_title,
-        clause=chunk.clause,
+        clause=None if chunk.contains_table else chunk.clause,
         section_no=chunk.section,
         section_title=chunk.section,
         chunk_id=chunk.chunk_id,

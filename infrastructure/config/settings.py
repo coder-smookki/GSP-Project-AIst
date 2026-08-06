@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Observability (OpenLIT / OTLP)
     otlp_endpoint: str = ""  # e.g. http://openlit:4318; empty = tracing disabled
 
+    # Retrieval: синтетический поиск (тест-дубль) before real (Qdrant)
+    use_mock_search: bool = False
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
 
