@@ -7,3 +7,6 @@ from typing_extensions import TypedDict
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     summary: NotRequired[str]
+    sections: NotRequired[list[str]]
+    retrieved: NotRequired[list[dict]]
+    followups: NotRequired[list[str]]
