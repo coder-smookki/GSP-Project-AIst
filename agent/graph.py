@@ -7,7 +7,9 @@ from langgraph.graph import START, StateGraph
 from langgraph.store.base import BaseStore
 
 from domain.memory import MemoryCollection
+from infrastructure.retrieval.search import Search, to_citation
 
+from .events import emit
 from .state import AgentState
 
 MODEL_SYSTEM_MESSAGE = """Ты — ассистент АИст, работающий на базе корпоративной базы знаний (регламенты ИСМ.СМОЗиОБТ: охрана труда, промышленная безопасность, ГО и ЧС) и долгосрочной памяти о пользователях.
@@ -66,6 +68,7 @@ def create_app_agent(
     store=None,
     checkpointer=None,
     max_memories_count: int = 10,
+    search: Search | None = None,
 ):
 
     graph = StateGraph(AgentState)
@@ -105,6 +108,19 @@ def create_app_agent(
             )
 
         return {"messages": [await model.ainvoke(messages=all_messages)]}
+
+    async def retrieve(state: AgentState):
+        if not search:
+            return {}
+        last = state["messages"][-1]
+        query = str(last.content) if hasattr(last, "content") else ""
+        if not query:
+            return {}
+
+        hits = await search.query(query, sections=state.get("sections"))
+        items = [to_citation(chunk, n, score).to_dict() for n, (chunk, score) in enumerate(hits, 1)]
+        emit("sources", {"items": items})
+        return {"retrieved": items}
 
     async def condense_context(state: AgentState):
         if not context_manager:
@@ -174,11 +190,13 @@ def create_app_agent(
         return {}
 
     graph.add_node("assistant", assistant)
+    graph.add_node("retrieve", retrieve)
     graph.add_node("condense_context", condense_context)
     graph.add_node("write_memory", write_memory)
 
     graph.add_edge(START, "condense_context")
-    graph.add_edge("condense_context", "assistant")
+    graph.add_edge("condense_context", "retrieve")
+    graph.add_edge("retrieve", "assistant")
     graph.add_edge("assistant", "write_memory")
 
     compile_kwargs = {}

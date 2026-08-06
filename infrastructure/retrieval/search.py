@@ -1,0 +1,77 @@
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Chunk:
+    chunk_id: str
+    doc_code: str
+    doc_title: str
+    section: str
+    section_type: str
+    clause: str | None
+    text: str
+    contains_table: bool = False
+
+
+@dataclass(frozen=True)
+class Citation:
+    n: int
+    doc_code: str
+    doc_title: str
+    clause: str | None
+    section_no: str
+    section_title: str
+    chunk_id: str
+    score: float
+    snippet: str
+    url: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "n": self.n,
+            "doc_code": self.doc_code,
+            "doc_title": self.doc_title,
+            "clause": self.clause,
+            "section_no": self.section_no,
+            "section_title": self.section_title,
+            "chunk_id": self.chunk_id,
+            "score": round(self.score, 4),
+            "snippet": self.snippet,
+            "url": self.url,
+        }
+
+
+def to_citation(chunk: Chunk, n: int, score: float = 0.0) -> Citation:
+    if chunk.contains_table:
+        return Citation(
+            n=n,
+            doc_code=chunk.doc_code,
+            doc_title=chunk.doc_title,
+            clause=None,
+            section_no=chunk.section,
+            section_title=chunk.section,
+            chunk_id=chunk.chunk_id,
+            score=score,
+            snippet=chunk.text[:400],
+        )
+    return Citation(
+        n=n,
+        doc_code=chunk.doc_code,
+        doc_title=chunk.doc_title,
+        clause=chunk.clause,
+        section_no=chunk.section,
+        section_title=chunk.section,
+        chunk_id=chunk.chunk_id,
+        score=score,
+        snippet=chunk.text[:400],
+    )
+
+
+class Search:
+    async def query(
+        self,
+        query: str,
+        sections: list[str] | None = None,
+        limit: int = 8,
+    ) -> list[tuple[Chunk, float]]:
+        raise NotImplementedError
