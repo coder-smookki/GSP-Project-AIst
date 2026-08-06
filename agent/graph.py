@@ -61,6 +61,36 @@ def _parse_memory_json(text: str) -> list[dict] | None:
         return None
 
 
+def build_followups(items: list[dict], limit: int = 3) -> list[str]:
+    """Детерминированные подсказки следующего вопроса по retrieved-цитатам.
+
+    - по пункту: «Подробнее по пункту X (DOC)»
+    - по документу (без пункта): «Список положений из DOC»
+    - если остался слот: «Список всех найденных документов по охране труда»
+    """
+    out: list[str] = []
+    seen: set[tuple] = set()
+
+    for it in items:
+        clause = it.get("clause")
+        doc = it.get("doc_code") or ""
+        if clause and (doc, clause) not in seen:
+            seen.add((doc, clause))
+            out.append(f"Подробнее по пункту {clause} ({doc})")
+        elif doc and ("doc", doc) not in seen:
+            seen.add(("doc", doc))
+            out.append(f"Список положений из {doc}")
+
+    if len(out) < limit and ("all",) not in seen:
+        seen.add(("all",))
+        if items:
+            out.append("Список всех найденных документов по охране труда")
+        else:
+            out.append("Что искать в базе знаний?")
+
+    return out[:limit]
+
+
 def create_app_agent(
     model,
     support_model,
@@ -118,9 +148,16 @@ def create_app_agent(
             return {}
 
         hits = await search.query(query, sections=state.get("sections"))
-        items = [to_citation(chunk, n, score).to_dict() for n, (chunk, score) in enumerate(hits, 1)]
+        items = [
+            to_citation(chunk, n, score).to_dict()
+            for n, (chunk, score) in enumerate(hits, 1)
+        ]
         emit("sources", {"items": items})
-        return {"retrieved": items}
+
+        followups = build_followups(items)
+        if followups:
+            emit("followups", {"items": followups})
+        return {"retrieved": items, "followups": followups}
 
     async def condense_context(state: AgentState):
         if not context_manager:
