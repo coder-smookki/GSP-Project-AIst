@@ -3,11 +3,12 @@ import os
 
 import bcrypt
 import chainlit as cl
+from chainlit.input_widget import MultiSelect
 from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
 from pydantic import BaseModel
 
-from gui.contract import decode_aist_envelope, format_sources
+from gui.contract import build_input, decode_aist_envelope, format_sources
 from gui.db import create_user, get_user, init_db, seed_admin, update_password
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,12 @@ AEGRA_URL = os.getenv("AEGRA_URL", "http://aegra:2026")
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+SECTION_CHOICES = {
+    "Процедуры": "procedura",
+    "Сокращения": "sokrashcheniya",
+}
+DEFAULT_SECTIONS = list(SECTION_CHOICES.values())
 
 
 @cl.password_auth_callback
@@ -74,10 +81,35 @@ async def on_chat_start():
     cl.user_session.set("assistant_id", assistants[0]["assistant_id"])
     cl.user_session.set("thread_id", thread["thread_id"])
     cl.user_session.set("user_id", user_id)
+    cl.user_session.set("sections", DEFAULT_SECTIONS)
+
+    chat_settings = cl.ChatSettings(
+        inputs=[
+            MultiSelect(
+                id="sections",
+                label="Разделы знаний",
+                items=SECTION_CHOICES,
+                initial=DEFAULT_SECTIONS,
+            )
+        ]
+    )
+    await chat_settings.send()
 
     await cl.Message(
         content=f"Hello **{user_id}**! I'm your AI assistant. Ask me anything."
     ).send()
+
+
+@cl.on_settings_update
+async def on_settings_update(settings: dict):
+    raw = settings.get("sections")
+    if isinstance(raw, list):
+        sections = raw
+    elif raw is None or raw == "":
+        sections = []
+    else:
+        sections = [raw]
+    cl.user_session.set("sections", sections)
 
 
 @cl.on_message
@@ -94,6 +126,7 @@ async def on_message(message: cl.Message):
     msg = cl.Message(content="")
     await msg.send()
 
+    sections: list[str] | None = cl.user_session.get("sections")
     sources_items: list[dict] = []
     followups: list[str] = []
     should_stream = False
@@ -102,7 +135,7 @@ async def on_message(message: cl.Message):
     async for chunk in client.runs.stream(
         thread_id=thread_id,
         assistant_id=assistant_id,
-        input={"messages": [{"type": "human", "content": message.content}]},
+        input=build_input(message.content, sections),
         config={"configurable": {"user_id": user_id or "anonymous"}},
         stream_mode=["messages", "updates", "custom"],
         version="v1",

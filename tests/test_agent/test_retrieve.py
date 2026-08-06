@@ -81,3 +81,21 @@ class TestRetrieveNode:
         result = await app.ainvoke(state)
         assert result["messages"][-1].content == "Ответ по документам."
         assert result.get("retrieved") is None
+
+    @pytest.mark.asyncio
+    async def test_sections_filter_reaches_search(self):
+        app = create_app_agent(
+            model=FakeModel(),
+            support_model=FakeModel(),
+            store=InMemoryStore(),
+            search=MockSearch(),
+        )
+        state: AgentState = {
+            "messages": [{"role": "human", "content": "Что такое СОУТ?"}],
+            "sections": ["sokrashcheniya"],
+        }
+        result = await app.ainvoke(state)
+
+        retrieved = result.get("retrieved")
+        assert retrieved
+        assert all(r["section_title"] == "2.2" for r in retrieved)

@@ -81,8 +81,13 @@ class MockSearch(Search):
 
     @staticmethod
     def _tokens(text: str) -> set[str]:
-        words = text.lower().replace(",", " ").replace(".", " ").split()
-        return {w for w in words if w not in MockSearch._STOPWORDS and len(w) > 1}
+        for ch in "?!.,:;()[]{}«»\"'—–-":
+            text = text.replace(ch, " ")
+        return {
+            w
+            for w in text.lower().split()
+            if w and w not in MockSearch._STOPWORDS and len(w) > 1
+        }
 
     async def query(
         self,

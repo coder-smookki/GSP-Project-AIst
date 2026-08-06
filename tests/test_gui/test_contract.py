@@ -1,4 +1,21 @@
-from gui.contract import decode_aist_envelope, format_sources
+from gui.contract import build_input, decode_aist_envelope, format_sources
+
+
+class TestBuildInput:
+    def test_without_sections(self):
+        assert build_input("привет") == {
+            "messages": [{"type": "human", "content": "привет"}]
+        }
+
+    def test_with_sections(self):
+        payload = build_input("привет", sections=["procedura"])
+        assert payload == {
+            "messages": [{"type": "human", "content": "привет"}],
+            "sections": ["procedura"],
+        }
+
+    def test_empty_sections_omitted(self):
+        assert "sections" not in build_input("привет", [])
 
 
 class TestDecodeAistEnvelope:

@@ -1,3 +1,11 @@
+def build_input(content: str, sections: list[str] | None = None) -> dict:
+    """Payload for runs.stream: human message + (optional) sections filter."""
+    payload: dict = {"messages": [{"type": "human", "content": content}]}
+    if sections:
+        payload["sections"] = sections
+    return payload
+
+
 def decode_aist_envelope(chunk: dict) -> dict | None:
     env = chunk.get("aist")
     if env is None:
