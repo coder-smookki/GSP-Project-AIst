@@ -1,0 +1,5 @@
+{
+  "graphs": {
+    "agent": "./deploy/aegra_entry.py:graph"
+  }
+}
