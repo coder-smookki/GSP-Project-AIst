@@ -22,6 +22,8 @@ dependencies = [
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
+    "chainlit>=2.11.0",
+    "langgraph-sdk>=0.3.0",
 ]
 
 [tool.pytest.ini_options]
@@ -32,4 +34,4 @@ markers = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["infrastructure*", "agent*", "domain*", "tests*"]
+include = ["infrastructure*", "agent*", "domain*", "tests*", "gui*"]

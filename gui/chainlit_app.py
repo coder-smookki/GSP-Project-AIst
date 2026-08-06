@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
 from pydantic import BaseModel
 
+from gui.contract import decode_aist_envelope, format_sources
 from gui.db import create_user, get_user, init_db, seed_admin, update_password
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,8 @@ async def on_message(message: cl.Message):
     msg = cl.Message(content="")
     await msg.send()
 
+    sources_items: list[dict] = []
+    followups: list[str] = []
     should_stream = False
     content_by_id = {}
 
@@ -101,9 +104,12 @@ async def on_message(message: cl.Message):
         assistant_id=assistant_id,
         input={"messages": [{"type": "human", "content": message.content}]},
         config={"configurable": {"user_id": user_id or "anonymous"}},
-        stream_mode=["messages", "updates"],
+        stream_mode=["messages", "updates", "custom"],
+        version="v1",
     ):
-        if chunk.event == "messages/partial" and should_stream:
+        mode = (chunk.event or "").split("|", 1)[0]
+
+        if mode == "messages/partial" and should_stream:
             for item in chunk.data:
                 if item.get("type") != "ai":
                     continue
@@ -117,6 +123,17 @@ async def on_message(message: cl.Message):
                     content_by_id[mid] = content
             continue
 
+        if mode == "custom":
+            env = decode_aist_envelope(chunk.data or {})
+            if env:
+                kind = env.get("kind")
+                payload = env.get("payload") or {}
+                if kind == "sources":
+                    sources_items = payload.get("items") or []
+                elif kind == "followups":
+                    followups = payload.get("items") or []
+            continue
+
         if chunk.event != "updates":
             continue
 
@@ -128,7 +145,35 @@ async def on_message(message: cl.Message):
                     if m.get("type") == "ai" and not m.get("tool_calls"):
                         should_stream = False
 
+    final_text = max(content_by_id.values(), key=len) if content_by_id else ""
+    msg.content = final_text or msg.content
+
+    if sources_items:
+        marker = f"Источники ({len(sources_items)})"
+        msg.content = f"{msg.content}\n\n{marker}"
+        msg.elements = [  # type: ignore[reportAttributeAccessIssue]
+            cl.Text(name=marker, content=format_sources(sources_items), display="side")
+        ]
+
+    if followups:
+        msg.actions = [
+            cl.Action(
+                name="followup",
+                label=label,
+                payload={"text": label},
+            )
+            for label in followups[:4]
+        ]
+
     await msg.update()
+
+
+@cl.action_callback("followup")
+async def on_followup(action: cl.Action):
+    text = str(action.payload.get("text") or "").strip()
+    if not text:
+        return
+    await on_message(cl.Message(content=text))
 
 
 _password_router = APIRouter()
