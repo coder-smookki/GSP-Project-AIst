@@ -1,5 +1,6 @@
 import logging
 import os
+import uuid
 
 import bcrypt
 import chainlit as cl
@@ -181,12 +182,22 @@ async def on_message(message: cl.Message):
     final_text = max(content_by_id.values(), key=len) if content_by_id else ""
     msg.content = final_text or msg.content
 
+    sidebar_key = f"sources-{msg.id or uuid.uuid4()}"
+
     if sources_items:
         marker = f"Источники ({len(sources_items)})"
-        msg.content = f"{msg.content}\n\n{marker}"
-        msg.elements = [  # type: ignore[reportAttributeAccessIssue]
-            cl.Text(name=marker, content=format_sources(sources_items), display="side")
-        ]
+        await cl.ElementSidebar.set_title(marker)
+        await cl.ElementSidebar.set_elements(
+            [
+                cl.Text(
+                    content=format_sources(sources_items),
+                    display="inline",
+                )
+            ],
+            key=sidebar_key,
+        )
+    else:
+        await cl.ElementSidebar.set_elements([], key=sidebar_key)
 
     if followups:
         msg.actions = [
