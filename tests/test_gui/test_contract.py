@@ -1,4 +1,9 @@
-from gui.contract import build_input, decode_aist_envelope, format_sources
+from gui.contract import (
+    build_input,
+    decode_aist_envelope,
+    format_sources,
+    pick_final_text,
+)
 
 
 class TestBuildInput:
@@ -103,3 +108,32 @@ class TestFormatSources:
         ]
         out = format_sources(items)
         assert out != ""
+
+
+class TestPickFinalText:
+    def test_error_takes_priority(self):
+        out = pick_final_text(
+            {"m1": "partial"},
+            ["финальный текст"],
+            error=RuntimeError("boom"),
+        )
+        assert "Ошибка обработки запроса" in out
+
+    def test_uses_last_non_empty_assistant_text(self):
+        out = pick_final_text(
+            {"m1": "обрыв partial"},
+            ["", "финальный ответ", "итоговый ответ"],
+        )
+        assert out == "итоговый ответ"
+
+    def test_falls_back_to_longest_partial(self):
+        out = pick_final_text({"m1": "ab", "m2": "abcd"})
+        assert out == "abcd"
+
+    def test_empty_partials_return_empty(self):
+        assert pick_final_text({}) == ""
+        assert pick_final_text({}, []) == ""
+
+    def test_empty_assistant_texts_fall_back_to_partial(self):
+        out = pick_final_text({"m1": "пример ответа"}, [""])
+        assert out == "пример ответа"

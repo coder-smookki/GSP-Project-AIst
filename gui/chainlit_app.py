@@ -9,7 +9,12 @@ from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
 from pydantic import BaseModel
 
-from gui.contract import build_input, decode_aist_envelope, format_sources
+from gui.contract import (
+    build_input,
+    decode_aist_envelope,
+    format_sources,
+    pick_final_text,
+)
 from gui.db import create_user, get_user, init_db, seed_admin, update_password
 
 logger = logging.getLogger(__name__)
@@ -130,57 +135,59 @@ async def on_message(message: cl.Message):
     sections: list[str] | None = cl.user_session.get("sections")
     sources_items: list[dict] = []
     followups: list[str] = []
-    should_stream = False
-    content_by_id = {}
+    partials: dict[str, str] = {}
+    assistant_final: list[str] = []
+    run_error: Exception | None = None
 
-    async for chunk in client.runs.stream(
-        thread_id=thread_id,
-        assistant_id=assistant_id,
-        input=build_input(message.content, sections),
-        config={"configurable": {"user_id": user_id or "anonymous"}},
-        stream_mode=["messages", "updates", "custom"],
-        version="v1",
-    ):
-        mode = (chunk.event or "").split("|", 1)[0]
+    try:
+        async for chunk in client.runs.stream(
+            thread_id=thread_id,
+            assistant_id=assistant_id,
+            input=build_input(message.content, sections),
+            config={"configurable": {"user_id": user_id or "anonymous"}},
+            stream_mode=["messages", "updates", "custom"],
+            version="v1",
+        ):
+            mode = (chunk.event or "").split("|", 1)[0]
 
-        if mode == "messages/partial" and should_stream:
-            for item in chunk.data:
-                if item.get("type") != "ai":
-                    continue
-                mid = item.get("id")
-                if not mid:
-                    continue
-                content = item.get("content") or ""
-                prev = content_by_id.get(mid, "")
-                if len(content) > len(prev):
-                    await msg.stream_token(content[len(prev) :])
-                    content_by_id[mid] = content
-            continue
+            if mode == "messages/partial":
+                for item in chunk.data:
+                    if item.get("type") != "ai":
+                        continue
+                    mid = item.get("id")
+                    if not mid:
+                        continue
+                    content = item.get("content") or ""
+                    prev = partials.get(mid, "")
+                    if len(content) > len(prev):
+                        partials[mid] = content
+                        await msg.stream_token(content[len(prev) :])
+                continue
 
-        if mode == "custom":
-            env = decode_aist_envelope(chunk.data or {})
-            if env:
-                kind = env.get("kind")
-                payload = env.get("payload") or {}
-                if kind == "sources":
-                    sources_items = payload.get("items") or []
-                elif kind == "followups":
-                    followups = payload.get("items") or []
-            continue
+            if mode == "custom":
+                env = decode_aist_envelope(chunk.data or {})
+                if env:
+                    kind = env.get("kind")
+                    payload = env.get("payload") or {}
+                    if kind == "sources":
+                        sources_items = payload.get("items") or []
+                    elif kind == "followups":
+                        followups = payload.get("items") or []
+                continue
 
-        if chunk.event != "updates":
-            continue
+            if chunk.event != "updates":
+                continue
 
-        for node_name, data in chunk.data.items():
-            if node_name == "condense_context":
-                should_stream = True
-            elif node_name == "assistant" and data:
-                for m in data.get("messages") or []:
-                    if m.get("type") == "ai" and not m.get("tool_calls"):
-                        should_stream = False
+            for node_name, data in chunk.data.items():
+                if node_name == "assistant" and data:
+                    for m in data.get("messages") or []:
+                        if m.get("type") == "ai" and not m.get("tool_calls"):
+                            assistant_final.append(str(m.get("content") or ""))
+    except Exception as exc:
+        run_error = exc
+        logger.exception("run stream failed")
 
-    final_text = max(content_by_id.values(), key=len) if content_by_id else ""
-    msg.content = final_text or msg.content
+    msg.content = pick_final_text(partials, assistant_final, error=run_error)
 
     sidebar_key = f"sources-{msg.id or uuid.uuid4()}"
 

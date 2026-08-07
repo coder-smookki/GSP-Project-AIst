@@ -31,3 +31,30 @@ def format_sources(items: list[dict]) -> str:
             fields.append(snippet)
         lines.append("\n\n".join(fields))
     return "\n\n---\n".join(lines)
+
+
+def pick_final_text(
+    partials: dict[str, str],
+    assistant_final: list[str] | None = None,
+    error: Exception | None = None,
+) -> str:
+    """Выбор финального текста ответа агента.
+
+    Порядок: сообщение об ошибке -> последний завершённый AI-чанк узла
+    assistant -> самый длинный partial-chunk (fallback на огрызок при прерывании).
+    """
+    if error is not None:
+        return (
+            "Ошибка обработки запроса. Если проблема повторится — "
+            "проверьте доступность сервиса (aegra) и попробуйте ещё раз."
+        )
+
+    if assistant_final:
+        for text in reversed(assistant_final):
+            if text.strip():
+                return text
+
+    if partials:
+        return max(partials.values(), key=len)
+
+    return ""
