@@ -1,9 +1,13 @@
+from pathlib import Path
+
 from infrastructure.config.composition_root import create_application
 
 app = create_application()
 
-png = app.get_graph().draw_mermaid_png()
-with open("graph.png", "wb") as f:
-    f.write(png)
+out = Path(__file__).resolve().parents[1] / "docs" / "demo" / "graph.png"
+out.parent.mkdir(parents=True, exist_ok=True)
 
-print("OK: graph.png saved")
+png = app.get_graph().draw_mermaid_png()
+out.write_bytes(png)
+
+print(f"OK: graph.png saved to {out}")
