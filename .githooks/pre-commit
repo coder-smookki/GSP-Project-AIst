@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Auto-format staged Python files with Ruff before commit.
+# Requires: uv and ruff (dev extra) - pinned in uv.lock.
+set -euo pipefail
+
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.py')
+if [ -z "$files" ]; then
+    exit 0
+fi
+
+echo "[pre-commit] formatting staged files with ruff..."
+uv run --extra dev --frozen ruff format $files
+
+git add $files
