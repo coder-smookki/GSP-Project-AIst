@@ -5,6 +5,7 @@ import uuid
 import bcrypt
 import chainlit as cl
 from chainlit.input_widget import MultiSelect
+from chainlit.server import app as _chainlit_app
 from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
 from pydantic import BaseModel
@@ -245,7 +246,5 @@ async def change_password(body: _ChangePasswordBody):
         raise HTTPException(status_code=400, detail=message)
     return {"success": True, "message": message}
 
-
-from chainlit.server import app as _chainlit_app
 
 _chainlit_app.include_router(_password_router)

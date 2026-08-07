@@ -12,5 +12,5 @@ def emit(kind: str, payload: dict) -> None:
         raise ValueError(f"unknown custom event kind: {kind!r}")
     try:
         get_stream_writer()({"aist": {"v": 1, "kind": kind, "payload": payload}})
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("custom emit skipped: %s", exc)

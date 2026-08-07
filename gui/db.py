@@ -79,7 +79,8 @@ async def create_user(username: str, password: str, role: str = "user") -> bool:
     try:
         async with pool.acquire() as conn:
             await conn.execute(
-                "INSERT INTO gui_users (username, password_hash, role) VALUES ($1, $2, $3)",
+                "INSERT INTO gui_users (username, password_hash, role) "
+            "VALUES ($1, $2, $3)",
                 username,
                 password_hash,
                 role,

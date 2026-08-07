@@ -23,7 +23,8 @@ def graph():
         from tests.fakes.fake_search import MockSearch
 
         logger.warning(
-            "USE_MOCK_SEARCH=True — синтетические источники вместо реального слоя данных"
+            "USE_MOCK_SEARCH=True — синтетические источники вместо реального "
+            "слоя данных"
         )
         configured_search = MockSearch()
 

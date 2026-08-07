@@ -57,7 +57,7 @@ def _parse_memory_json(text: str) -> list[dict] | None:
         data = json.loads(text)
         collection = MemoryCollection(**data)
         return [m.model_dump(mode="json") for m in collection.memories]
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
 
 
@@ -123,8 +123,9 @@ def create_app_agent(
         )
 
         all_messages: list = [
-            SystemMessage(MODEL_SYSTEM_MESSAGE.format(memory=info, context=context))
-        ] + list(state["messages"])
+            SystemMessage(MODEL_SYSTEM_MESSAGE.format(memory=info, context=context)),
+            *state["messages"],
+        ]
 
         if state.get("summary"):
             all_messages.append(

@@ -32,7 +32,8 @@ class ContextManager:
 
         if existing_summary:
             prompt = (
-                f"Update this structured fact list with new information from the conversation.\n"
+                f"Update this structured fact list with new information from the "
+                f"conversation.\n"
                 f"Output ONLY bullet points starting with '- '.\n\n"
                 f"Current summary:\n{existing_summary}\n\n"
                 f"New conversation:\n{text}\n\n"
@@ -40,7 +41,8 @@ class ContextManager:
             )
         else:
             prompt = (
-                f"Extract key facts from this conversation as bullet points starting with '- '.\n"
+                f"Extract key facts from this conversation as bullet points starting "
+                f"with '- '.\n"
                 f"Focus on user details, topics discussed, preferences.\n"
                 f"Do NOT add any headers or preamble:\n\n{text}"
             )

@@ -3,8 +3,9 @@ from pydantic import BaseModel, Field
 
 class Memory(BaseModel):
     content: str = Field(
-        description="The main content of the memory. \
-            For example: User expressed interest in learning about French or User speaking Russian."
+        description="The main content of the memory. "
+        "For example: User expressed interest in learning about French "
+        "or User speaking Russian."
     )
 
 
