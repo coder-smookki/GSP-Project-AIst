@@ -80,12 +80,45 @@ def get_data_layer() -> SQLAlchemyDataLayer:
     return SQLAlchemyDataLayer(conninfo=async_database_url())
 
 
+async def _ensure_persisted(user: cl.User) -> cl.User:
+    """Заводит пользователя в слое данных до возврата из проверки входа.
+
+    При первом входе любой учётной записи интерфейс запрашивал список
+    диалогов раньше, чем слой данных успевал создать запись пользователя, и
+    показывал красное «Error fetching threads: Not Found: User not found».
+    После перезагрузки страницы ошибка исчезала сама, то есть данные не
+    терялись — но первое, что видел человек при входе, было сообщение об
+    ошибке.
+
+    Вызов идемпотентен: `create_user` сам проверяет, есть ли запись, и
+    только дополняет её.
+
+    Args:
+        user: Пользователь, прошедший проверку.
+
+    Returns:
+        cl.User: Тот же пользователь. Сбой записи не отменяет вход: без неё
+        не покажется список диалогов, но пользоваться ассистентом можно.
+    """
+    try:
+        layer = cl.data.get_data_layer()
+        if layer is not None:
+            await layer.create_user(user)
+    except Exception:
+        logger.exception(
+            "не удалось завести пользователя %s в слое данных", user.identifier
+        )
+    return user
+
+
 @cl.password_auth_callback
 async def auth_callback(username: str, password: str) -> cl.User | None:
     if ADMIN_USERNAME and username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-        return cl.User(
-            identifier=username,
-            metadata={"role": "admin", "provider": "admin_env"},
+        return await _ensure_persisted(
+            cl.User(
+                identifier=username,
+                metadata={"role": "admin", "provider": "admin_env"},
+            )
         )
 
     try:
@@ -108,17 +141,21 @@ async def auth_callback(username: str, password: str) -> cl.User | None:
         ok = await create_user(username, password)
         if ok:
             logger.info("заведён пользователь %s (разрешена саморегистрация)", username)
-            return cl.User(
-                identifier=username,
-                metadata={"role": "user", "provider": "database"},
+            return await _ensure_persisted(
+                cl.User(
+                    identifier=username,
+                    metadata={"role": "user", "provider": "database"},
+                )
             )
         logger.info("не удалось завести пользователя %s", username)
         return None
 
     if user and bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
-        return cl.User(
-            identifier=username,
-            metadata={"role": user["role"], "provider": "database"},
+        return await _ensure_persisted(
+            cl.User(
+                identifier=username,
+                metadata={"role": user["role"], "provider": "database"},
+            )
         )
     logger.info("Login failed for %s", username)
     return None

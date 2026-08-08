@@ -38,6 +38,7 @@ import re
 import statistics
 import sys
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -232,7 +233,16 @@ async def run_unanswerable(search, items: list[dict], agent=None) -> list[Outcom
 
         if agent is not None:
             state = {"messages": [{"role": "human", "content": item["question"]}]}
-            final = await agent.ainvoke(state)
+            # Свой thread_id на каждый вопрос: чекпоинтер его требует, а
+            # общий на весь замер тянул бы историю предыдущих вопросов в
+            # контекст и портил результат.
+            config = {
+                "configurable": {
+                    "thread_id": f"eval-{uuid.uuid4()}",
+                    "user_id": "evaluate",
+                }
+            }
+            final = await agent.ainvoke(state, config=config)
             text = str(final["messages"][-1].content)
             outcome.answer = text
             outcome.refused = REFUSAL in text.lower().replace("ё", "е")

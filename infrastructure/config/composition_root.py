@@ -28,4 +28,5 @@ def create_application():
         search=get_search(settings),
         grading=settings.grading_enabled,
         grading_keep_partial=settings.grading_keep_partial,
+        verify_numbers=settings.verify_numbers,
     )

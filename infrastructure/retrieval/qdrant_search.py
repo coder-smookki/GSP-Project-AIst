@@ -29,6 +29,7 @@ from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
 from infrastructure.retrieval.bm25 import DENSE_VECTOR, SPARSE_VECTOR, bm25_document
+from infrastructure.retrieval.rerank import RerankerUnavailable
 from infrastructure.retrieval.search import Chunk, Search
 
 logger = logging.getLogger(__name__)
@@ -236,7 +237,19 @@ class QdrantSearch(Search):
         ]
 
         if self._reranker is not None and hits:
-            hits = self._reranker.rerank(text, hits, effective_limit)
+            try:
+                hits = self._reranker.rerank(text, hits, effective_limit)
+            except RerankerUnavailable as exc:
+                # Переоценку включили, а пакет не поставили. Ронять на этом
+                # каждый запрос нельзя: поиск без переоценки работает и даёт
+                # осмысленный ответ, просто хуже ранжированный. Отключаем на
+                # весь процесс, чтобы не писать одно и то же в каждый запрос.
+                logger.error(
+                    "переоценка отключена до перезапуска: %s",
+                    exc,
+                )
+                self._reranker = None
+                hits = hits[:effective_limit]
         else:
             hits = hits[:effective_limit]
 
