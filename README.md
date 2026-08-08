@@ -22,9 +22,36 @@ open http://localhost:3000
 
 ## Резюме
 
-**Что уже есть.** Собран и работает базовый каркас: Chainlit-интерфейс (:8000) общается с агентом на LangGraph через Aegra (:2026), модели живут в Ollama на хосте, история — в Postgres, поверх — опциональная трассировка OpenLIT. На этой базе выстроен RAG-контур: в графе появился узел `retrieve`, в состоянии — выбранные разделы (`sections`), найденные источники (`retrieved`) и подсказки (`followups`); агенту идут кастомные события (aist) и панель «Источники (N)», клики по follow-up работают без второго вызова LLM. Поиск пока синтетический (MockSearch) — ядро RAG, слой данных, ещё не подключён.
+**Что уже есть.** Работает базовый каркас: Chainlit-интерфейс (:8000) общается с агентом на LangGraph через Aegra (:2026), модели живут в Ollama на хосте, история — в Postgres, поверх — опциональная трассировка OpenLIT. В графе есть узел `retrieve`, в состоянии — выбранные разделы, найденные источники и подсказки; агент шлёт кастомные события и панель «Источники (N)».
 
-**Что дальше.** Следующий большой шаг — настоящий слой данных: свой парсер .docx + чанкинг (issue #11), деанонимизация (issue #12), загрузка в Qdrant с payload (§6.1, issue #13) и гибридный поиск dense+BM25+RRF (issue #14), подключённый за протоколом `Search` (issue #8). Параллельно GUI: стартеры-подсказки (#1), мультичаты и персистентность диалогов (#2, #3). Потом агентский уровень — Corrective RAG с грейдером и rewrite (#5) и адаптация к временным запросам (#7). Завершает план eval на золотом наборе (метрики ретрива и честных отказов) — до этого момента ретривер работает на фейке, потому что ему нужен реальный Qdrant.
+Поверх этого собран **слой данных**: клиент к API базы знаний заказчика (вход, обновление токена, повторы), протокол `DataSource` с двумя реализациями (API и локальный каталог), разбор HTML-статей, пофайловая деанонимизация, чанкинг, схема Qdrant с гибридным поиском dense + BM25 и CLI индексации. На реальном корпусе раздела 44030 конвейер даёт **20 документов → 1446 чанков**.
+
+**Что дальше.** Подключить `QdrantSearch` за фабрикой вместо заглушки (issue #8) и прогнать слой на живом контейнере Qdrant: серверный BM25 недоступен в локальном режиме клиента, поэтому гибридный поиск пока покрыт только тестами формы запроса. Затем Corrective RAG с грейдером (#5), реранкер (#6) и eval на золотом наборе. Параллельно GUI: стартеры (#1), мультичаты и персистентность (#2, #3).
+
+## Индексация корпуса
+
+Корпус приходит из базы знаний заказчика по API либо из локального каталога. Выгрузка всех 20 статей раздела 44030 уже лежит в `tests/fixtures/corpus/`, поэтому проверить конвейер можно **без доступа к API и без поднятого Qdrant**:
+
+```sh
+uv run python scripts/ingest.py --dry-run --source files --corpus-dir tests/fixtures/corpus
+```
+
+Полная индексация в новое поколение коллекции с переключением алиаса:
+
+```sh
+export KB_EMAIL=... KB_PASSWORD=...          # в .env, в git не попадает
+uv run python scripts/ingest.py --source api --generation 1 --switch-alias
+```
+
+| Флаг | Назначение |
+| --- | --- |
+| `--source api\|files` | источник корпуса |
+| `--limit N` | обработать не более N документов |
+| `--generation N` | писать в коллекцию `<алиас>_v<N>` |
+| `--switch-alias` | переключить алиас после успешного прогона |
+| `--dry-run` | разобрать и посчитать чанки, ничего не записывая |
+
+Коды возврата: `0` — всё обработано, `1` — часть документов не обработана (подробности в отчёте), `2` — прогон не начался. Одна битая статья не роняет прогон, но **алиас не переключается, если были ошибки**: неполное поколение в прод не уезжает.
 
 ## Структура проекта
 
@@ -44,7 +71,20 @@ infrastructure/
   config/                       #   settings.py, model_registry.py, composition_root.py
   llm/                          #   клиенты: openai_compat, ollama, llamacpp
   embeddings/                   #   эмбеддинги: ollama, llamacpp
-  retrieval/search.py           #   протокол Search + формат Citation
+  ingest/                       # офлайн-конвейер построения индекса
+    patterns.py                 #   регулярки разбора регламентов (единая точка правды)
+    html_parse.py               #   HTML статьи -> разделы и атомы
+    deanon.py                   #   пофайловый словарь [ОРГАНИЗАЦИЯ_N] -> расшифровка
+    chunker.py                  #   атомы -> чанки, breadcrumb вместо overlap
+    areas.py                    #   предметные области знаний (в источнике их нет)
+    pipeline.py                 #   оркестрация прогона и отчёт
+  retrieval/
+    search.py                   #   протокол Search + формат Citation
+    kb_client.py                #   HTTP-клиент базы знаний: вход, refresh, повторы
+    source.py                   #   DataSource: ApiSource и FilesSource
+    bm25.py                     #   опции серверного BM25 (одни для записи и запроса)
+    store.py                    #   коллекция Qdrant, загрузка, уборка, поколения
+    qdrant_search.py            #   гибридный поиск dense + BM25, слияние RRF
   observability/tracer.py       #   OpenTelemetry/OpenLIT
 
 gui/                            # Chainlit (:8000)
@@ -53,7 +93,7 @@ gui/                            # Chainlit (:8000)
   db.py                         #   БД GUI (пользователи)
 
 deploy/                         # Docker: compose, Dockerfile, aegra_entry, README
-scripts/                        # cli_chat, server_cli, get_graph_visualization
+scripts/                        # ingest (индексация), cli_chat, server_cli, get_graph_visualization
 tests/                          # pytest: fakes, test_agent, test_gui, test_infrastructure
 docs/demo/graph.png             #   схема графа (генерация: scripts/get_graph_visualization.py)
 
@@ -99,11 +139,14 @@ uv run ruff check .                 # линт (E/F/I/UP/B/SIM/ASYNC/RUF)
 
 | Маркер | Тесты | Требования |
 | --- | --- | --- |
-| *(нет маркера)* | 51 юнит-тест | Ничего. Фейковые модели/поиск, без сервисов |
+| *(нет маркера)* | 91 юнит-тест | Ничего. Фейковые модели/поиск, без сервисов и без сети |
+| `corpus` | 11 регрессионных | Выгрузка корпуса в `tests/fixtures/corpus/` (в репозитории) |
 | `llm` | 3 теста клиента | Ollama с `LLM_MODEL` |
 | `embeddings` | 3 теста эмбеддингов | Ollama с `EMBEDDING_MODEL` |
+| `qdrant` | пока нет | Живой сервер Qdrant; серверный BM25 недоступен в режиме `:memory:` |
 
-- Быстро: `pytest -m "not llm and not embeddings"`
+- Быстро: `pytest -m "not llm and not embeddings and not corpus"`
+- С регрессией на корпусе: `pytest -m "not llm and not embeddings"`
 - Полный прогон (нужен Ollama на хосте): `pytest`
 - CI на PR (`.github/workflows/ci.yml`): `uv sync --extra dev --frozen` + `pytest -m "not llm and not embeddings"`
 
@@ -126,14 +169,14 @@ uv run ruff check .                 # линт (E/F/I/UP/B/SIM/ASYNC/RUF)
 
 **В работе (issues):**
 
-| Issue | Задача | Пункт | Слой |
-| --- | --- | --- | --- |
-| [#9](https://github.com/coder-smookki/GSP-Project-AIst/issues/9) | FilesSource — загрузка документов из папки | 5.4 | ingest |
-| [#10](https://github.com/coder-smookki/GSP-Project-AIst/issues/10) | ApiSource — загрузка через API | 5.4 | ingest |
-| [#11](https://github.com/coder-smookki/GSP-Project-AIst/issues/11) | docx-парсер + чанкинг атомов | 4.2–4.5 | ingest |
-| [#12](https://github.com/coder-smookki/GSP-Project-AIst/issues/12) | Деанонимизация пофайловым словарём | 4.4 | ingest |
-| [#13](https://github.com/coder-smookki/GSP-Project-AIst/issues/13) | Qdrant: коллекция + payload + загрузка | 6, 6.1 | retrieval |
-| [#14](https://github.com/coder-smookki/GSP-Project-AIst/issues/14) | Qdrant: гибридный поиск dense+BM25+RRF | 6 | retrieval |
+| Issue | Задача | Пункт | Слой | Статус |
+| --- | --- | --- | --- | --- |
+| [#9](https://github.com/coder-smookki/GSP-Project-AIst/issues/9) | FilesSource — загрузка документов из папки | 5.4 | ingest | частично: источник готов, разбор .docx остаётся |
+| ~~[#10](https://github.com/coder-smookki/GSP-Project-AIst/issues/10)~~ | ApiSource — загрузка через API | 5.4 | ingest | **готово** |
+| [#11](https://github.com/coder-smookki/GSP-Project-AIst/issues/11) | docx-парсер + чанкинг атомов | 4.2–4.5 | ingest | частично: HTML-парсер и чанкинг готовы |
+| ~~[#12](https://github.com/coder-smookki/GSP-Project-AIst/issues/12)~~ | Деанонимизация пофайловым словарём | 4.4 | ingest | **готово** |
+| [#13](https://github.com/coder-smookki/GSP-Project-AIst/issues/13) | Qdrant: коллекция + payload + загрузка | 6, 6.1 | retrieval | реализовано, ждёт живого сервера |
+| [#14](https://github.com/coder-smookki/GSP-Project-AIst/issues/14) | Qdrant: гибридный поиск dense+BM25+RRF | 6 | retrieval | реализовано, ждёт живого сервера |
 | [#8](https://github.com/coder-smookki/GSP-Project-AIst/issues/8) | Search facade — Qdrant за протоколом Search | 5.2–5.4 | retrieval |
 | [#6](https://github.com/coder-smookki/GSP-Project-AIst/issues/6) | Реранкер (опциональный, RERANK_ENABLED) | D-07 | retrieval |
 | [#5](https://github.com/coder-smookki/GSP-Project-AIst/issues/5) | Corrective RAG: grader + rewrite | 3.1, 7.2 | agent |
