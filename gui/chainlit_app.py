@@ -97,6 +97,50 @@ async def auth_callback(username: str, password: str) -> cl.User | None:
     return None
 
 
+@cl.set_starters
+async def set_starters() -> list[cl.Starter]:
+    """Возвращает подсказки, с которых можно начать диалог.
+
+    Нужны не для красоты: на защите пустое поле ввода заставляет думать, что
+    спросить, а неудачная формулировка первого вопроса портит впечатление о
+    поиске. Формулировки взяты из тем реального корпуса раздела 44030.
+
+    Returns:
+        list[cl.Starter]: Подсказки для стартового экрана.
+    """
+    return [
+        cl.Starter(
+            label="Действия при пожаре",
+            message="Что должен сделать работник при обнаружении пожара?",
+        ),
+        cl.Starter(
+            label="Наряд-допуск",
+            message="Кто выдаёт наряд-допуск на работы повышенной опасности?",
+        ),
+        cl.Starter(
+            label="Средства защиты",
+            message=(
+                "Какие средства индивидуальной защиты обязательны "
+                "на объекте строительства?"
+            ),
+        ),
+        cl.Starter(
+            label="Обучение по ГО и ЧС",
+            message="Как организовано обучение работников по гражданской обороне?",
+        ),
+        cl.Starter(
+            label="Расследование происшествий",
+            message=("В каком порядке расследуется несчастный случай на производстве?"),
+        ),
+        cl.Starter(
+            label="Оценка условий труда",
+            message=(
+                "Как проводится специальная оценка условий труда на рабочих местах?"
+            ),
+        ),
+    ]
+
+
 @cl.on_chat_start
 async def on_chat_start():
     await init_db()
@@ -104,14 +148,16 @@ async def on_chat_start():
 
     app_user = cl.user_session.get("user")
     if app_user is None:
-        await cl.Message(content="Authentication required. Please log in.").send()
+        await cl.Message(content="Требуется вход в систему.").send()
         return
     user_id = app_user.identifier
 
     client = get_client(url=AEGRA_URL)
     assistants = await client.assistants.search()
     if not assistants:
-        await cl.Message(content="Error: no assistants found on Aegra server").send()
+        await cl.Message(
+            content="Сервис агента недоступен: не найден ни один ассистент."
+        ).send()
         return
 
     thread = await client.threads.create()
@@ -135,7 +181,13 @@ async def on_chat_start():
     await chat_settings.send()
 
     await cl.Message(
-        content=f"Hello **{user_id}**! I'm your AI assistant. Ask me anything."
+        content=(
+            f"Здравствуйте, **{user_id}**. Я АИст — помощник по корпоративной базе "
+            "знаний: охрана труда, промышленная и пожарная безопасность, "
+            "гражданская оборона и ЧС.\n\n"
+            "Задайте вопрос своими словами. В ответе будут ссылки на документ "
+            "и пункт регламента, а если сведений в базе нет — я так и скажу."
+        )
     ).send()
 
 
@@ -159,7 +211,9 @@ async def on_message(message: cl.Message):
     user_id: str | None = cl.user_session.get("user_id")
 
     if client is None or assistant_id is None or thread_id is None:
-        await cl.Message(content="Session error: not initialized").send()
+        await cl.Message(
+            content="Сессия не инициализирована. Обновите страницу."
+        ).send()
         return
 
     msg = cl.Message(content="")
@@ -266,10 +320,21 @@ async def on_message(message: cl.Message):
 
 @cl.action_callback("followup")
 async def on_followup(action: cl.Action):
+    """Обрабатывает клик по подсказке следующего вопроса.
+
+    Args:
+        action: Действие с текстом вопроса в поле ``payload["text"]``.
+    """
     text = str(action.payload.get("text") or "").strip()
     if not text:
         return
-    await on_message(cl.Message(content=text))
+
+    # Сообщение надо ОТПРАВИТЬ, а не просто передать обработчику: иначе в
+    # переписке появляется ответ без вопроса, и её нельзя перечитать —
+    # непонятно, на что именно система отвечала.
+    question = cl.Message(content=text, type="user_message")
+    await question.send()
+    await on_message(question)
 
 
 _password_router = APIRouter()
