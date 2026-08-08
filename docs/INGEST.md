@@ -579,3 +579,125 @@ uv run python scripts/ingest.py --source api --limit 3
   исчезновения.
 - Обрыв источника нельзя использовать для «уборки» индекса — `drop_documents`
   применяется только после успешного обхода.
+
+## Оркестрация через Prefect — `infrastructure/orchestration/`
+
+Конвейер можно вести не только через CLI (`scripts/ingest.py`), но и через
+Prefect: каждый документ становится задачей (task) с собственным журналом и
+именем, а весь прогон — потоком (flow), видимым в UI сервера
+(`http://127.0.0.1:4200`). Так индексацию видно на уровне отдельных
+документов, а не одним чёрным ящиком.
+
+Пакет по той же конвенции, что и `infrastructure/ingest/`: комментариев в
+коде нет, всё объяснение — здесь.
+
+### Почему Prefect опционален
+
+`prefect==3.8.2` объявлен отдельной группой опциональных зависимостей
+(`pyproject.toml:35`, `orchestration`), а не основными зависимостями:
+тянуть оркестратор в передаваемый образу незачем. Импорт устроен так, что без
+установленного пакета модуль продолжает быть импортабельным
+(`ingest_flow.py:27..38`):
+
+- `try: from prefect import flow, task` / `except ImportError` — вместо
+  декораторов подставляются тождественные функции, и `ingest_flow` работает
+  как обычная асинхронная функция;
+- `get_run_logger` при отсутствии Prefect возвращает обычный логгер
+  `aist.ingest`.
+
+Базовый конвейер (`infrastructure/ingest/`) Prefect **не импортирует вовсе**:
+пакет `orchestration` подключается только там, где это нужно явно.
+
+### Логирование в прогон
+
+Чтобы журнал шагов конвейера (`infrastructure.*` и `aist.*`) попадал в журнал
+прогона Prefect, в `pyproject.toml:75` (секция `[tool.prefect]`) задан
+`logging.extra_loggers = ["infrastructure", "aist"]`. Без этого logging шагов
+шли бы только в консоль, а в UI было бы видно лишь события самого Prefect.
+
+Помимо этого у задач включён `log_prints=True`, а внутри потока и задачи
+используется `get_run_logger()`: журнал пишется не в корневой логгер процесса,
+а в журнал конкретного файла запуска.
+
+### Поток `ingest_flow`
+
+`infrastructure/orchestration/ingest_flow.py:143`. Имя регистрируется как
+`aist-ingest`; аргументы повторяют опции CLI `scripts/ingest.py`
+(`source_kind`, `corpus_dir`, `section_id`, `collection`, `generation`,
+`limit`, `dry_run`, `full`, `switch_alias`, `sync_tag`, `pipeline_version`).
+Выполнение:
+
+1. `build_source` (`ingest_flow.py:87`) — источник по `source_kind`: для
+   `files` — `FilesSource`, для `api` — `ApiSource` с учётными данными из
+   настроек. Недостаток учётных данных — `ValueError`.
+2. Только при обычном прогоне (`not dry_run`): `build_index`
+   (`ingest_flow.py:117`) собирает клиент Qdrant, `QdrantStore` и эмбеддер
+   через реестр моделей; вычисляется размерность эмбеддера
+   (`asyncio.to_thread(lambda...)`) и вызывается `create_generation`.
+3. Инкрементальный режим: если не `full`, состояние прошлого прогона читается
+   через `load_index_state`.
+4. `pipeline.ingest` с `step=ingest_document_step` — каждый документ
+   обрабатывается задачей, а не внутри цикла.
+5. `switch_alias`: как и в CLI, при ошибках прогона алиас не переключается,
+   только предупреждением в журнал.
+6. `finally` — закрытие источника и клиента.
+
+### Шаг-задача `ingest_document_step`
+
+`ingest_flow.py:56`. Декорированная через `@task` версия
+`IngestPipeline.process_document` (`pipeline.py:175`): принимает конвейер,
+источник, хранилище, эмбеддер и карточку документа и через `get_run_logger`
+журналирует начало и исход обработки. Ошибки обрабатывает не задача, а сам
+`process_document` (собирает в `DocumentOutcome`) — то же, что и CLI.
+
+Сама обработка одного документа вынесена в `pipeline.py:175`
+(`process_document`) из цикла `ingest`, а у `ingest` появился необязательный
+параметр `step` (`pipeline.py:122`): если он передан, цикл вызывает его как
+функцию `step(self, source, store, embedder, ref, ...)`, тем самым одну и ту
+же логику шага используют и CLI, и Prefect — без расхождения поведения.
+
+### Имя задачи
+
+`@task(name=..., task_run_name=_document_ref_id)` — колбэк
+(`ingest_flow.py:41`) из словаря параметров достаёт `ref.doc_id` и формирует
+имя задачи вида `документ 88498.json`. Prefect вызывает колбэк через
+`resolve_custom_task_run_name` с аргументом `parameters`; без этого у всех
+задач было бы одно имя и три потока в UI выглядело бы одинаково.
+
+### Запуск
+
+```bash
+prefect server start                                   # UI на :4200
+PREFECT_API_URL="http://127.0.0.1:4200/api" uv run python -m infrastructure.orchestration --source files --dry-run
+```
+
+CLI `infrastructure/orchestration/__main__.py` принимает те же опции, что
+`scripts/ingest.py` (`--source`, `--corpus-dir`, `--section`, `--collection`,
+`--generation`, `--limit`, `--dry-run`, `--full`, `--switch-alias`,
+`--verbose`). Без сервера (без `PREFECT_API_URL`) прогон выполняется локально,
+просто без сохранения в UI: потоки — обычные функции процесса.
+
+### Тесты оркестрации
+
+`tests/test_infrastructure/orchestration/test_orchestration.py`. Весь набор
+пропускается (`pytest.importorskip("prefect")`), если Prefect не установлен, —
+обычное dev-окружение его не имеет. Автоматическая фикстура отключает
+встроенный временный сервер Prefect (`PREFECT_SERVER_EPHEMERAL_ENABLED=0`,
+пустой `PREFECT_API_URL`), чтобы прогон выполнялся локально без ожидания
+остановки сервера.
+
+- `test_ingest_flow_dry_run_counts_chunks` — сухой прогон по реальной
+  фикстуре корпуса (`tests/fixtures/corpus`) через Prefect считает чанки и не
+  пишет в индекс.
+- `test_ingest_flow_is_a_prefect_flow` — `ingest_flow` — именно объект
+  `prefect.flows.Flow`, а не обычная функция.
+- `test_ingest_document_step_is_a_prefect_task` — шаг обработки документа
+  обёрнут именно в `prefect.tasks.Task`.
+- `test_document_ref_id_is_resilient_without_parameters` — колбэк имени задачи
+  выживает при первом вызове без словаря параметров (возвращает `документ ?`),
+  не падая.
+- `test_missing_corpus_raises` — несуществующий каталог корпуса даёт
+  понятное `ValueError` и через поток.
+
+В самих тестах пояснения сохранены (докстринги): тесты — это и есть
+доказательная база поведения, их читают чаще, чем код.

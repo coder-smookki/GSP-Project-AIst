@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
@@ -119,7 +119,8 @@ class IngestPipeline:
         dry_run: bool = False,
         progress: Callable[[str, int, int], None] | None = None,
         known_hashes: dict[str, str] | None = None,
-    ):
+        step: Callable[..., Awaitable[DocumentOutcome]] | None = None,
+    ) -> IngestReport:
         refs = await source.list_documents()
         if limit is not None:
             refs = refs[:limit]
@@ -136,38 +137,29 @@ class IngestPipeline:
         for number, ref in enumerate(refs, start=1):
             if progress:
                 progress(ref.title or ref.doc_id, number, total)
-            outcome = DocumentOutcome(doc_id=ref.doc_id, title=ref.title)
-            try:
-                raw = await source.fetch_document(ref.doc_id)
-                document = self.parse_raw(raw)
-                chunks = self.chunker.chunk(document)
-                areas = self.classifier.classify(document.doc_title)
-
-                outcome.doc_code = document.doc_code
-                outcome.areas = areas
-                outcome.title = document.doc_title or outcome.title
-
-                fingerprint = self.repository.fingerprint(document)
-
-                if not chunks:
-                    outcome.error = "конвейер не дал ни одного чанка"
-                elif (
-                    known_hashes is not None
-                    and known_hashes.get(document.doc_id) == fingerprint
-                ):
-                    outcome.skipped = True
-                    outcome.chunks = 0
-                elif dry_run:
-                    outcome.chunks = len(chunks)
-                else:
-                    vectors = await embedder.aembed([chunk.text for chunk in chunks])
-                    outcome.chunks = await store.upsert_chunks(
-                        collection, chunks, vectors, areas, sync_tag, fingerprint
-                    )
-                    await store.sweep_document(collection, document.doc_id, sync_tag)
-            except Exception as exc:
-                outcome.error = f"{type(exc).__name__}: {exc}"
-                logger.exception("документ %s: обработка не удалась", ref.doc_id)
+            if step is not None:
+                outcome = await step(
+                    self,
+                    source,
+                    store,
+                    embedder,
+                    ref,
+                    collection=collection,
+                    sync_tag=sync_tag,
+                    dry_run=dry_run,
+                    known_hashes=known_hashes,
+                )
+            else:
+                outcome = await self.process_document(
+                    source,
+                    store,
+                    embedder,
+                    ref,
+                    collection=collection,
+                    sync_tag=sync_tag,
+                    dry_run=dry_run,
+                    known_hashes=known_hashes,
+                )
             report.outcomes.append(outcome)
 
         logger.info(
@@ -179,6 +171,52 @@ class IngestPipeline:
             len(report.failed),
         )
         return report
+
+    async def process_document(
+        self,
+        source: DataSource,
+        store: VectorStore,
+        embedder: _Embedder,
+        ref,
+        *,
+        collection: str,
+        sync_tag: str,
+        dry_run: bool = False,
+        known_hashes: dict[str, str] | None = None,
+    ) -> DocumentOutcome:
+        outcome = DocumentOutcome(doc_id=ref.doc_id, title=ref.title)
+        try:
+            raw = await source.fetch_document(ref.doc_id)
+            document = self.parse_raw(raw)
+            chunks = self.chunker.chunk(document)
+            areas = self.classifier.classify(document.doc_title)
+
+            outcome.doc_code = document.doc_code
+            outcome.areas = areas
+            outcome.title = document.doc_title or outcome.title
+
+            fingerprint = self.repository.fingerprint(document)
+
+            if not chunks:
+                outcome.error = "конвейер не дал ни одного чанка"
+            elif (
+                known_hashes is not None
+                and known_hashes.get(document.doc_id) == fingerprint
+            ):
+                outcome.skipped = True
+                outcome.chunks = 0
+            elif dry_run:
+                outcome.chunks = len(chunks)
+            else:
+                vectors = await embedder.aembed([chunk.text for chunk in chunks])
+                outcome.chunks = await store.upsert_chunks(
+                    collection, chunks, vectors, areas, sync_tag, fingerprint
+                )
+                await store.sweep_document(collection, document.doc_id, sync_tag)
+        except Exception as exc:
+            outcome.error = f"{type(exc).__name__}: {exc}"
+            logger.exception("документ %s: обработка не удалась", ref.doc_id)
+        return outcome
 
 
 async def ingest_documents(
