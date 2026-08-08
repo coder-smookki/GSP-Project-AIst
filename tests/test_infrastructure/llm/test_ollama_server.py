@@ -44,12 +44,14 @@ class TestOllamaClient:
         )
 
     @pytest.mark.llm
+    @pytest.mark.integration
     def test_invoke_returns_response(self, client):
         result = client.invoke([{"role": "user", "content": "Say 'hello' in one word"}])
         assert isinstance(result.content, str)
         assert len(result.content) > 0
 
     @pytest.mark.llm
+    @pytest.mark.integration
     def test_invoke_accepts_tools(self, client):
         tools = [
             {
@@ -69,6 +71,7 @@ class TestOllamaClient:
 
     @pytest.mark.asyncio
     @pytest.mark.llm
+    @pytest.mark.integration
     async def test_astream_returns_chunks(self, client):
         chunks = []
         async for chunk in client.astream(
