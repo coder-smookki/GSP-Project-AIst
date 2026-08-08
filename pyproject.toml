@@ -36,7 +36,8 @@ markers = [
     "integration: tests that require a live server",
     "llm: requires a real LLM model (Ollama) - excluded from fast CI",
     "embeddings: requires a real embedding model (Ollama) - excluded from fast CI",
-    "tools: tests ai agents tool"
+    "tools: tests ai agents tool",
+    "corpus: runs the ingest pipeline over the real knowledge base dump"
 ]
 asyncio_mode = "auto"
 
