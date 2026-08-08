@@ -25,11 +25,24 @@ AEGRA_URL = os.getenv("AEGRA_URL", "http://aegra:2026")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
-SECTION_CHOICES = {
-    "Процедуры": "procedura",
-    "Сокращения": "sokrashcheniya",
+# Области знаний — предметная ось, которую выбирает пользователь.
+# Раньше здесь были типы разделов документа (procedura, sokrashcheniya):
+# это другая, служебная ось, и она не отвечала требованию кейса «выбор
+# областей знаний». Хуже того, выбор по умолчанию отсекал 71 % корпуса,
+# а значения sokrashcheniya не существует вовсе — оно не находило ничего.
+AREA_CHOICES = {
+    "Пожарная безопасность": "pozharnaya_bezopasnost",
+    "Охрана труда": "ohrana_truda",
+    "Гражданская оборона и ЧС": "go_i_chs",
+    "Промышленная безопасность": "promyshlennaya_bezopasnost",
+    "Производственная безопасность": "proizvodstvennaya_bezopasnost",
+    "Работы повышенной опасности": "raboty_povyshennoy_opasnosti",
+    "Прочее": "prochee",
 }
-DEFAULT_SECTIONS = list(SECTION_CHOICES.values())
+
+# Пустой список = искать по всей базе. Непустой список по умолчанию
+# молча сузил бы поиск, и пользователь не понял бы, почему ответа нет.
+DEFAULT_AREAS: list[str] = []
 
 
 @cl.password_auth_callback
@@ -88,15 +101,15 @@ async def on_chat_start():
     cl.user_session.set("assistant_id", assistants[0]["assistant_id"])
     cl.user_session.set("thread_id", thread["thread_id"])
     cl.user_session.set("user_id", user_id)
-    cl.user_session.set("sections", DEFAULT_SECTIONS)
+    cl.user_session.set("areas", DEFAULT_AREAS)
 
     chat_settings = cl.ChatSettings(
         inputs=[
             MultiSelect(
-                id="sections",
-                label="Разделы знаний",
-                items=SECTION_CHOICES,
-                initial=DEFAULT_SECTIONS,
+                id="areas",
+                label="Области знаний",
+                items=AREA_CHOICES,
+                initial=DEFAULT_AREAS,
             )
         ]
     )
@@ -109,14 +122,14 @@ async def on_chat_start():
 
 @cl.on_settings_update
 async def on_settings_update(settings: dict):
-    raw = settings.get("sections")
+    raw = settings.get("areas")
     if isinstance(raw, list):
-        sections = raw
+        areas = raw
     elif raw is None or raw == "":
-        sections = []
+        areas = []
     else:
-        sections = [raw]
-    cl.user_session.set("sections", sections)
+        areas = [raw]
+    cl.user_session.set("areas", areas)
 
 
 @cl.on_message
@@ -133,7 +146,7 @@ async def on_message(message: cl.Message):
     msg = cl.Message(content="")
     await msg.send()
 
-    sections: list[str] | None = cl.user_session.get("sections")
+    areas: list[str] | None = cl.user_session.get("areas")
     sources_items: list[dict] = []
     followups: list[str] = []
     partials: dict[str, str] = {}
@@ -144,7 +157,7 @@ async def on_message(message: cl.Message):
         async for chunk in client.runs.stream(
             thread_id=thread_id,
             assistant_id=assistant_id,
-            input=build_input(message.content, sections),
+            input=build_input(message.content, areas=areas),
             config={"configurable": {"user_id": user_id or "anonymous"}},
             stream_mode=["messages", "updates", "custom"],
             version="v1",

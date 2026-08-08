@@ -5,6 +5,7 @@ from agent.graph import create_app_agent
 from domain.context import ContextManager
 from infrastructure.config.model_registry import get_model, setup_registry
 from infrastructure.config.settings import get_settings
+from infrastructure.retrieval.factory import get_search
 from infrastructure.observability.tracer import setup_tracing
 
 
@@ -22,4 +23,7 @@ def create_application():
         store=InMemoryStore(),
         checkpointer=MemorySaver(),
         max_memories_count=15,
+        # Без этого CLI-сборка агента шла вообще без поиска: узел retrieve
+        # молча возвращал пустоту, и агент отвечал по памяти модели.
+        search=get_search(settings),
     )

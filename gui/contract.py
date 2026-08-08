@@ -1,8 +1,26 @@
-def build_input(content: str, sections: list[str] | None = None) -> dict:
-    """Payload for runs.stream: human message + (optional) sections filter."""
+def build_input(
+    content: str,
+    sections: list[str] | None = None,
+    areas: list[str] | None = None,
+) -> dict:
+    """Собирает полезную нагрузку для ``client.runs.stream``.
+
+    Args:
+        content: Текст сообщения пользователя.
+        sections: Типы разделов документа — служебная ось (назначение,
+            термины, процедура). Из интерфейса не задаётся, оставлена для
+            отладки и тестов.
+        areas: Предметные области знаний, выбранные пользователем. Пустой
+            список означает поиск по всей базе, а не по пустому множеству.
+
+    Returns:
+        dict: Нагрузка запуска графа.
+    """
     payload: dict = {"messages": [{"type": "human", "content": content}]}
     if sections:
         payload["sections"] = sections
+    if areas:
+        payload["areas"] = areas
     return payload
 
 
