@@ -12,6 +12,7 @@ from domain.memory import MemoryCollection
 from infrastructure.retrieval.qdrant_search import SearchUnavailable
 from infrastructure.retrieval.search import Search, to_citation
 
+from .correction import rewrite_query
 from .events import emit
 from .state import AgentState
 
@@ -207,6 +208,31 @@ def create_app_agent(
             logger.error("поиск недоступен: %s", exc)
             emit("trace", {"stage": "retrieve", "status": "unavailable"})
             return {"retrieved": [], "followups": [], "retrieval_failed": True}
+
+        if not hits and support_model is not None:
+            # Коррекция запроса — только при пустой выдаче. На обычных
+            # вопросах этот путь не выполняется вовсе, поэтому средняя цена
+            # по всем запросам близка к нулю, а спасает он ровно тот случай,
+            # ради которого задуман: вопрос задан житейскими словами, а
+            # регламент написан канцелярскими. Круг ровно один: второй стоит
+            # ещё вызова модели и ещё поиска при малых шансах на успех.
+            emit("trace", {"stage": "retrieve", "status": "rewriting"})
+            rewritten = await rewrite_query(support_model, query)
+            if rewritten:
+                try:
+                    hits = await search.query(
+                        rewritten,
+                        sections=state.get("sections"),
+                        areas=state.get("areas"),
+                    )
+                except SearchUnavailable as exc:
+                    logger.error("поиск недоступен после коррекции: %s", exc)
+                    return {
+                        "retrieved": [],
+                        "followups": [],
+                        "retrieval_failed": True,
+                    }
+                logger.info("коррекция запроса дала %d источников", len(hits))
 
         items = [
             to_citation(chunk, n, score).to_dict()
