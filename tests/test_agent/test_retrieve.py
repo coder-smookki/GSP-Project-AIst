@@ -202,3 +202,111 @@ class TestModelFailure:
 
         result = await app.ainvoke(state)
         assert "недоступен" in result["messages"][-1].content
+
+
+class _FirstQueryEmptySearch(MockSearch):
+    """Первый поиск пуст, повторный (после переписывания) находит."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls: list[str] = []
+
+    async def query(self, query, sections=None, limit=None, areas=None):
+        self.calls.append(query)
+        if len(self.calls) == 1:
+            return []
+        return await super().query(query, sections=sections, limit=limit, areas=areas)
+
+
+class TestCorrectiveRAGRewrite:
+    """Пустой первый поиск уходит в отдельный узел переписывания запроса."""
+
+    @pytest.mark.asyncio
+    async def test_loop_runs_search_twice_and_returns_results(self):
+        search = _FirstQueryEmptySearch()
+        app = create_app_agent(
+            model=FakeModel(),
+            support_model=FakeModel(answer=""),
+            store=InMemoryStore(),
+            search=search,
+        )
+        state: AgentState = {
+            "messages": [{"role": "human", "content": "Как часто проводится СОУТ?"}]
+        }
+
+        result = await app.ainvoke(state)
+
+        assert len(search.calls) == 2
+        assert search.calls[0] == "Как часто проводится СОУТ?"
+        assert result.get("retrieved"), "повторный поиск должен дать источники"
+        assert not result.get("retrieval_failed")
+
+    @pytest.mark.asyncio
+    async def test_loop_stops_after_one_rewrite(self):
+        seen: list[str] = []
+
+        class NeverHits(MockSearch):
+            async def query(self, *args, **kwargs):
+                seen.append("query")
+                return []
+
+        app = create_app_agent(
+            model=FakeModel(),
+            support_model=FakeModel(answer="снова ничего"),
+            store=InMemoryStore(),
+            search=NeverHits(),
+        )
+        state: AgentState = {
+            "messages": [{"role": "human", "content": "СОУТ"}]
+        }
+
+        result = await app.ainvoke(state)
+
+        # 1 исходный запрос + 1 после переписывания, без бесконечного цикла
+        assert len(seen) <= 2
+        assert not result.get("retrieval_failed")
+
+    @pytest.mark.asyncio
+    async def test_max_rewrites_zero_disables_correction(self):
+        seen: list[str] = []
+
+        class NeverHits(MockSearch):
+            async def query(self, *args, **kwargs):
+                seen.append("query")
+                return []
+
+        app = create_app_agent(
+            model=FakeModel(),
+            support_model=FakeModel(answer="снова ничего"),
+            store=InMemoryStore(),
+            search=NeverHits(),
+            max_rewrites=0,
+        )
+        state: AgentState = {"messages": [{"role": "human", "content": "СОУТ"}]}
+
+        await app.ainvoke(state)
+
+        assert len(seen) == 1, "без коррекции узел rewrite_query не должен запускаться"
+
+    @pytest.mark.asyncio
+    async def test_max_rewrites_two_allows_additional_retry(self):
+        seen: list[str] = []
+
+        class NeverHit(MockSearch):
+            async def query(self, *args, **kwargs):
+                seen.append("query")
+                return []
+
+        app = create_app_agent(
+            model=FakeModel(),
+            support_model=FakeModel(answer="снова ничего"),
+            store=InMemoryStore(),
+            search=NeverHit(),
+            max_rewrites=2,
+        )
+        state: AgentState = {"messages": [{"role": "human", "content": "СОУТ"}]}
+
+        await app.ainvoke(state)
+
+        # 1 исходный поиск + 2 переписывания = ровно 3 обращения к поиску
+        assert len(seen) == 3

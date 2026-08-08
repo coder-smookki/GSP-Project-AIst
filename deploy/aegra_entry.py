@@ -35,6 +35,7 @@ def graph():
         support_model,
         context_manager,
         max_memories_count=15,
+        max_rewrites=settings.retrieval_max_rewrites,
         search=get_search(settings),
         grading=settings.grading_enabled,
         grading_keep_partial=settings.grading_keep_partial,

@@ -17,7 +17,7 @@ from domain.memory import MemoryCollection
 from infrastructure.retrieval.qdrant_search import SearchUnavailable
 from infrastructure.retrieval.search import Search, to_citation
 
-from .correction import rewrite_query
+from .correction import rewrite_query as rewrite_query_model
 from .events import emit
 from .grading import grade_chunks
 from .memory_gate import worth_extracting
@@ -112,6 +112,19 @@ def should_extract_memory(state: AgentState) -> str:
     return END
 
 
+def route_after_retrieve(state: AgentState) -> str:
+    if state.get("needs_rewrite"):
+        return "rewrite"
+    return "assistant"
+
+
+def query_from_state(state: AgentState) -> str:
+    last = (state.get("messages") or [])[-1]
+    if not hasattr(last, "content"):
+        return ""
+    return str(last["content"] if isinstance(last, dict) else last.content).strip()
+
+
 def create_app_agent(
     model,
     support_model,
@@ -119,6 +132,7 @@ def create_app_agent(
     store=None,
     checkpointer=None,
     max_memories_count: int = 10,
+    max_rewrites: int = 1,
     search: Search | None = None,
     grading: bool = False,
     grading_keep_partial: bool = False,
@@ -126,6 +140,14 @@ def create_app_agent(
 ):
 
     graph = StateGraph(AgentState)
+
+    async def reset_turn(state: AgentState):
+        return {
+            "query": "",
+            "rewrite_attempts": 0,
+            "needs_rewrite": False,
+            "retrieval_failed": False,
+        }
 
     async def assistant(state: AgentState, config: RunnableConfig, *, store: BaseStore):
 
@@ -192,10 +214,9 @@ def create_app_agent(
     async def retrieve(state: AgentState):
         if not search:
             return {}
-        last = state["messages"][-1]
-        query = str(last.content) if hasattr(last, "content") else ""
+        query = state.get("query") or query_from_state(state)
         if not query:
-            return {}
+            return {"needs_rewrite": False}
 
         try:
             hits = await search.query(
@@ -206,33 +227,23 @@ def create_app_agent(
         except SearchUnavailable as exc:
             logger.error("поиск недоступен: %s", exc)
             emit("trace", {"stage": "retrieve", "status": "unavailable"})
-            return {"retrieved": [], "followups": [], "retrieval_failed": True}
-
-        if not hits and support_model is not None:
-            emit("trace", {"stage": "retrieve", "status": "rewriting"})
-            rewritten = await rewrite_query(support_model, query)
-            if rewritten:
-                try:
-                    hits = await search.query(
-                        rewritten,
-                        sections=state.get("sections"),
-                        areas=state.get("areas"),
-                    )
-                except SearchUnavailable as exc:
-                    logger.error("поиск недоступен после коррекции: %s", exc)
-                    return {
-                        "retrieved": [],
-                        "followups": [],
-                        "retrieval_failed": True,
-                    }
-                logger.info("коррекция запроса дала %d источников", len(hits))
+            return {
+                "query": query,
+                "retrieved": [],
+                "followups": [],
+                "retrieval_failed": True,
+                "needs_rewrite": False,
+            }
 
         items = [
             to_citation(chunk, n, score).to_dict()
             for n, (chunk, score) in enumerate(hits, 1)
         ]
 
-        if grading and items and support_model is not None:
+        grading_before_rewrite = (
+            grading and items and support_model is not None
+        )
+        if grading_before_rewrite:
             emit("trace", {"stage": "retrieve", "status": "grading"})
             graded = await grade_chunks(
                 support_model,
@@ -243,12 +254,32 @@ def create_app_agent(
             if graded is not None:
                 items = [dict(item, n=n) for n, item in enumerate(graded, 1)]
 
+        if not items and support_model is not None and state.get("rewrite_attempts", 0) < max_rewrites:
+            emit("trace", {"stage": "retrieve", "status": "rewriting"})
+            return {"query": query, "needs_rewrite": True}
+
         emit("sources", {"items": items})
 
         followups = build_followups(items)
         if followups:
             emit("followups", {"items": followups})
-        return {"retrieved": items, "followups": followups}
+        return {
+            "query": query,
+            "retrieved": items,
+            "followups": followups,
+            "needs_rewrite": False,
+        }
+
+    async def rewrite_query(state: AgentState):
+        query = state.get("query") or ""
+        rewritten = await rewrite_query_model(support_model, query)
+        if rewritten:
+            logger.info("коррекция запроса дала источник: %s", rewritten[:80])
+        return {
+            "query": rewritten or query,
+            "rewrite_attempts": state.get("rewrite_attempts", 0) + 1,
+            "needs_rewrite": False,
+        }
 
     async def condense_context(state: AgentState):
         if not context_manager:
@@ -325,14 +356,22 @@ def create_app_agent(
 
         return {}
 
+    graph.add_node("reset_turn", reset_turn)
     graph.add_node("assistant", assistant)
     graph.add_node("retrieve", retrieve)
+    graph.add_node("rewrite_query", rewrite_query)
     graph.add_node("condense_context", condense_context)
     graph.add_node("write_memory", write_memory)
 
-    graph.add_edge(START, "condense_context")
+    graph.add_edge(START, "reset_turn")
+    graph.add_edge("reset_turn", "condense_context")
     graph.add_edge("condense_context", "retrieve")
-    graph.add_edge("retrieve", "assistant")
+    graph.add_conditional_edges(
+        "retrieve",
+        route_after_retrieve,
+        {"rewrite": "rewrite_query", "assistant": "assistant"},
+    )
+    graph.add_edge("rewrite_query", "retrieve")
     graph.add_conditional_edges(
         "assistant",
         should_extract_memory,

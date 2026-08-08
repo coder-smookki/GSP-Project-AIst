@@ -65,6 +65,9 @@ class Settings(BaseSettings):
 
     retrieval_min_relevance: float = 0.55
 
+    #: Сколько раз переписывать запрос при пустой выдаче (0 = без коррекции).
+    retrieval_max_rewrites: int = 1
+
     # ------------------------------------------------------- переоценка
     rerank_enabled: bool = False
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
