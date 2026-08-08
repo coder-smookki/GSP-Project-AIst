@@ -19,7 +19,10 @@ _db_initialized = False
 #:
 #: Взята из документации Chainlit по SQLAlchemyDataLayer и приводится
 #: дословно: слой обращается к этим таблицам и колонкам по именам, поэтому
-#: отступление от схемы даёт ошибку в рантайме, а не при старте.
+#: отступление от схемы даёт ошибку в рантайме, а не при старте. Если
+#: очередная версия Chainlit добавила колонку, её надо дописать и в
+#: `CHAINLIT_SCHEMA`, и в `CHAINLIT_MIGRATIONS` (иначе на существующих базах
+#: дефект вернётся).
 #:
 #: Таблица `users` не конфликтует с нашей `gui_users`: первая нужна Chainlit
 #: для привязки диалогов к пользователю, вторая хранит пароли для входа.
@@ -67,6 +70,7 @@ CHAINLIT_SCHEMA: tuple[str, ...] = (
         "language" TEXT,
         "indent" INT,
         "defaultOpen" BOOLEAN,
+        "autoCollapse" BOOLEAN,
         "modes" JSONB,
         FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
     )
@@ -101,6 +105,26 @@ CHAINLIT_SCHEMA: tuple[str, ...] = (
     )
     """,
 )
+
+
+#: Колонки, которые могли добавиться в новых версиях Chainlit после создания
+#: таблицы. База могла быть инициализирована старой версией, и
+#: ``CREATE TABLE IF NOT EXISTS`` существующую таблицу не меняет, поэтому
+#: недостающие колонки добавляются отдельной миграцией. Имя квотится, чтобы
+#: иначе Postgres свёл ``autoCollapse`` к ``autocollapse`` (см. issue о
+#: пропадающих сообщениях после перезагрузки страницы).
+CHAINLIT_MIGRATIONS: tuple[str, ...] = (
+    'ALTER TABLE "steps" ADD COLUMN IF NOT EXISTS "autoCollapse" BOOLEAN',
+)
+
+
+async def _apply_migrations(conn):
+    for statement in CHAINLIT_MIGRATIONS:
+        try:
+            await conn.execute(statement)
+        except asyncpg.UndefinedTableError:
+            # Таблица появится в init_db ниже, миграция применится в пр.
+            continue
 
 
 def async_database_url() -> str:
@@ -151,6 +175,7 @@ async def init_db():
         """)
         for statement in CHAINLIT_SCHEMA:
             await conn.execute(statement)
+        await _apply_migrations(conn)
     finally:
         await conn.close()
     _db_initialized = True
