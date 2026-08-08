@@ -116,7 +116,7 @@ class MockSearch(Search):
         self,
         query: str,
         sections: list[str] | None = None,
-        limit: int = 8,
+        limit: int | None = None,
         areas: list[str] | None = None,
     ) -> list[tuple[Chunk, float]]:
         """Ищет по пересечению слов запроса и чанка.
@@ -124,7 +124,7 @@ class MockSearch(Search):
         Args:
             query: Текст запроса.
             sections: Типы разделов для фильтрации.
-            limit: Число результатов.
+            limit: Число результатов; ``None`` — из настроек.
             areas: Предметные области. Заглушка их не различает — параметр
                 принимается ради совместимости с боевой реализацией.
 
@@ -145,4 +145,4 @@ class MockSearch(Search):
                 scored.append((chunk, len(overlap) / len(wanted)))
 
         scored.sort(key=lambda item: item[1], reverse=True)
-        return scored[:limit]
+        return scored[: limit or 8]

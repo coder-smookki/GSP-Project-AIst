@@ -115,6 +115,22 @@ class Settings(BaseSettings):
     #: биэнкодерный косинус не разделяет.
     retrieval_min_relevance: float = 0.55
 
+    # ------------------------------------------------------- переоценка
+    #: Переоценка кандидатов кросс-энкодером.
+    #:
+    #: Выключена по умолчанию: тянет sentence-transformers с torch, а он не
+    #: должен попадать в передаваемый образ, пока переоценка не нужна.
+    #: Ставится отдельной группой: `uv sync --extra rerank`.
+    rerank_enabled: bool = False
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_device: str = ""  # mps | cuda | cpu; пусто = выбор библиотекой
+    rerank_half_precision: bool = True
+
+    #: Сколько верхних кандидатов переоценивать. Время растёт линейно
+    #: (fp16, MacBook 16 ГБ: 5 -> 427 мс, 10 -> 880 мс, 30 -> 1914 мс),
+    #: а нужный фрагмент почти всегда в верхней части списка.
+    rerank_candidates: int = 10
+
     #: Размер батча загрузки точек в Qdrant.
     ingest_batch_size: int = 128
 

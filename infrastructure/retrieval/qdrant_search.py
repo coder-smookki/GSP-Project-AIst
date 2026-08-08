@@ -59,6 +59,7 @@ class QdrantSearch(Search):
         rrf_k: int = 60,
         query_instruction: str = "",
         min_relevance: float = 0.0,
+        reranker=None,
     ) -> None:
         """Создаёт поиск.
 
@@ -86,6 +87,11 @@ class QdrantSearch(Search):
                 посторонний запрос выдаёт то же максимальное значение, что и
                 на релевантный. Косинус разделяет чисто: на замере по корпусу
                 релевантные запросы дают 0,68-0,72, посторонние — 0,28-0,46.
+            reranker: Переоценщик кандидатов или ``None``. Когда задан,
+                поиск берёт из индекса больше кандидатов, чем нужно, и
+                отдаёт лучшие после переоценки: гибридный поиск сортирует
+                хорошо, но отличить релевантное от нерелевантного внутри
+                выдачи не может — счета там почти плоские.
         """
         self._client = client
         self._embedder = embedder
@@ -95,6 +101,7 @@ class QdrantSearch(Search):
         self._rrf_k = rrf_k
         self._query_instruction = query_instruction
         self._min_relevance = min_relevance
+        self._reranker = reranker
 
     @staticmethod
     def _build_filter(
@@ -152,7 +159,7 @@ class QdrantSearch(Search):
         self,
         query: str,
         sections: list[str] | None = None,
-        limit: int = 8,
+        limit: int | None = None,
         areas: list[str] | None = None,
     ) -> list[tuple[Chunk, float]]:
         """Выполняет гибридный поиск.
@@ -176,7 +183,14 @@ class QdrantSearch(Search):
             return []
 
         effective_limit = limit or self._top_k
-        prefetch_limit = max(self._prefetch, effective_limit)
+        # С переоценкой из индекса берём больше кандидатов, чем отдадим:
+        # кросс-энкодеру нужен запас, из которого он выберет лучшие.
+        fetch_limit = (
+            max(effective_limit, self._reranker._candidates)
+            if self._reranker is not None
+            else effective_limit
+        )
+        prefetch_limit = max(self._prefetch, fetch_limit)
         query_filter = self._build_filter(areas, sections)
 
         try:
@@ -203,7 +217,7 @@ class QdrantSearch(Search):
                     ),
                 ],
                 query=models.RrfQuery(rrf=models.Rrf(k=self._rrf_k)),
-                limit=effective_limit,
+                limit=fetch_limit,
                 with_payload=True,
                 with_vectors=False,
             )
@@ -220,6 +234,11 @@ class QdrantSearch(Search):
         hits = [
             (self._to_chunk(point.payload), point.score) for point in response.points
         ]
+
+        if self._reranker is not None and hits:
+            hits = self._reranker.rerank(text, hits, effective_limit)
+        else:
+            hits = hits[:effective_limit]
 
         if hits and self._min_relevance > 0:
             best = await self._best_dense_score(dense_vector, query_filter)

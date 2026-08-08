@@ -82,10 +82,26 @@ def to_citation(chunk: Chunk, n: int, score: float = 0.0) -> Citation:
 
 
 class Search:
+    """Протокол поиска по базе знаний."""
+
     async def query(
         self,
         query: str,
         sections: list[str] | None = None,
-        limit: int = 8,
+        limit: int | None = None,
+        areas: list[str] | None = None,
     ) -> list[tuple[Chunk, float]]:
+        """Ищет фрагменты, отвечающие на запрос.
+
+        Args:
+            query: Текст запроса пользователя.
+            sections: Типы разделов документа — служебная ось фильтрации.
+            limit: Число результатов. ``None`` означает «взять из настроек»:
+                значение по умолчанию в сигнатуре перекрывало бы настройку
+                молча, и `RETRIEVAL_TOP_K` не действовал бы вовсе.
+            areas: Предметные области знаний, выбранные пользователем.
+
+        Returns:
+            list[tuple[Chunk, float]]: Пары «фрагмент, счёт» по убыванию.
+        """
         raise NotImplementedError

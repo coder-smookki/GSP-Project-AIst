@@ -48,6 +48,7 @@ def get_search(settings) -> Search:
 
     from infrastructure.config.model_registry import get_embedding
     from infrastructure.retrieval.qdrant_search import QdrantSearch
+    from infrastructure.retrieval.rerank import build_reranker
 
     if _client is None:
         _client = AsyncQdrantClient(
@@ -66,6 +67,7 @@ def get_search(settings) -> Search:
         rrf_k=settings.retrieval_rrf_k,
         query_instruction=settings.embedding_query_instruction,
         min_relevance=settings.retrieval_min_relevance,
+        reranker=build_reranker(settings),
     )
     logger.info(
         "поиск: Qdrant, алиас %s, top_k=%d, prefetch=%d, rrf_k=%d",
