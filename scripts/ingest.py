@@ -1,25 +1,3 @@
-"""CLI индексации корпуса базы знаний.
-
-Примеры:
-
-    # проверить конвейер без записи и без поднятого Qdrant
-    uv run python scripts/ingest.py --dry-run --source files
-
-    # полная индексация из API в новое поколение с переключением алиаса
-    uv run python scripts/ingest.py --source api --switch-alias
-
-    # первые три документа, без переключения алиаса
-    uv run python scripts/ingest.py --source api --limit 3
-
-Коды возврата:
-
-===  ==========================================================
-0    все документы обработаны
-1    часть документов не обработана (подробности в отчёте)
-2    прогон не начался: ошибка конфигурации или недоступный сервис
-===  ==========================================================
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -52,11 +30,6 @@ logger = logging.getLogger("aist.ingest")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Собирает разбор аргументов командной строки.
-
-    Returns:
-        argparse.ArgumentParser: Настроенный разборщик.
-    """
     parser = argparse.ArgumentParser(
         prog="ingest",
         description="Индексация корпуса базы знаний в Qdrant",
@@ -109,11 +82,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def setup_logging(verbose: bool) -> None:
-    """Настраивает журналирование.
-
-    Args:
-        verbose: Признак подробного режима.
-    """
     logging.basicConfig(
         level=logging.DEBUG if verbose else logging.INFO,
         format="%(message)s",
@@ -124,18 +92,6 @@ def setup_logging(verbose: bool) -> None:
 
 
 def build_source(args: argparse.Namespace, settings):
-    """Создаёт источник корпуса по аргументам командной строки.
-
-    Args:
-        args: Разобранные аргументы.
-        settings: Настройки приложения.
-
-    Returns:
-        ApiSource | FilesSource: Готовый источник.
-
-    Raises:
-        ValueError: Если для источника API не заданы учётные данные.
-    """
     if args.source == "files":
         return FilesSource(args.corpus_dir or settings.corpus_dir)
 
@@ -157,14 +113,6 @@ def build_source(args: argparse.Namespace, settings):
 
 
 async def run(args: argparse.Namespace) -> int:
-    """Выполняет прогон индексации.
-
-    Args:
-        args: Разобранные аргументы командной строки.
-
-    Returns:
-        int: Код возврата процесса.
-    """
     settings = get_settings()
 
     try:
@@ -211,10 +159,6 @@ async def run(args: argparse.Namespace) -> int:
 
     sync_tag = f"run-{int(time.time())}"
 
-    # Инкремент: читаем отпечатки документов, уже лежащих в коллекции.
-    # Признак изменения — хеш содержимого, а не updated_at источника:
-    # у всех статей выгрузки отметка времени попадает в один интервал
-    # массовой заливки и смысловых правок не отражает.
     known_hashes: dict[str, str] | None = None
     if store is not None and not args.full:
         from infrastructure.ingest.incremental import load_index_state
@@ -222,13 +166,6 @@ async def run(args: argparse.Namespace) -> int:
         known_hashes = await load_index_state(client, collection)
 
     def show(title: str, number: int, total: int) -> None:
-        """Печатает ход обработки.
-
-        Args:
-            title: Название документа.
-            number: Порядковый номер документа.
-            total: Общее число документов.
-        """
         console.print(f"[dim]{number:>3}/{total}[/dim] {title[:70]}")
 
     try:
@@ -264,11 +201,6 @@ async def run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    """Точка входа CLI.
-
-    Returns:
-        int: Код возврата процесса.
-    """
     args = build_parser().parse_args()
     setup_logging(args.verbose)
     try:

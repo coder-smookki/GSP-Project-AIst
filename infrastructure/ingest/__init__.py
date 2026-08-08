@@ -1,5 +1,3 @@
-"""Офлайн-конвейер построения индекса: источник -> разбор -> деанонимизация -> чанки."""
-
 from infrastructure.ingest.models import (
     Atom,
     IngestChunk,
