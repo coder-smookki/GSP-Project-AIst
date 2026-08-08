@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import replace
 
 from infrastructure.config.settings import get_settings
@@ -11,6 +12,7 @@ from infrastructure.ingest.config import (
     PIPELINE_VERSION,
     IncrementalConfig,
 )
+from infrastructure.ingest.models import IngestChunk, ParsedDocument
 from infrastructure.ingest.pipeline import (
     DocumentOutcome,
     IngestPipeline,
@@ -23,10 +25,14 @@ from infrastructure.retrieval.source import (
     FilesSource,
 )
 
+logger = logging.getLogger("aist.ingest")
+
 try:
     from prefect import flow, task
+    from prefect.cache_policies import NO_CACHE
     from prefect.logging import get_run_logger
 except ImportError:
+    NO_CACHE = None
 
     def flow(func=None, **kwargs):
         return func if func is not None else (lambda fn: fn)
@@ -48,10 +54,118 @@ def _document_ref_id(
     return f"документ {doc_id}"
 
 
+def _phase_ref_id(label: str) -> Callable[[dict[str, object] | None], str]:
+    def _name(parameters: dict[str, object] | None = None, **_kwargs: object) -> str:
+        params = parameters or {}
+        ref = params.get("ref")
+        doc_id = getattr(ref, "doc_id", "?") if ref is not None else "?"
+        return f"{label}: {doc_id}"
+
+    return _name
+
+
+@task(
+    name="Загрузка и разбор",
+    task_run_name=_phase_ref_id("загрузка и разбор"),
+    log_prints=True,
+    cache_policy=NO_CACHE,
+)
+async def fetch_and_parse_step(
+    pipeline: IngestPipeline,
+    source: DataSource,
+    ref: DocumentRef,
+) -> ParsedDocument:
+    run_logger = get_run_logger()
+    run_logger.info("документ %s: загрузка исходника", ref.doc_id)
+    raw = await source.fetch_document(ref.doc_id)
+    document = pipeline.parse_raw(raw)
+    run_logger.info(
+        "документ %s: разобран, разделов %d", ref.doc_id, len(document.sections)
+    )
+    return document
+
+
+@task(
+    name="Разбиение на чанки",
+    task_run_name=_phase_ref_id("разбиение на чанки"),
+    log_prints=True,
+    cache_policy=NO_CACHE,
+)
+async def chunk_step(
+    pipeline: IngestPipeline,
+    document: ParsedDocument,
+    ref: DocumentRef,
+) -> list[IngestChunk]:
+    run_logger = get_run_logger()
+    chunks = pipeline.chunker.chunk(document)
+    run_logger.info("документ %s: чанков %d", ref.doc_id, len(chunks))
+    return chunks
+
+
+@task(
+    name="Классификация областей",
+    task_run_name=_phase_ref_id("классификация областей"),
+    log_prints=True,
+    cache_policy=NO_CACHE,
+)
+async def classify_step(
+    pipeline: IngestPipeline,
+    document: ParsedDocument,
+    ref: DocumentRef,
+) -> list[str]:
+    run_logger = get_run_logger()
+    areas = pipeline.classifier.classify(document.doc_title)
+    run_logger.info("документ %s: области %s", ref.doc_id, ", ".join(areas))
+    return areas
+
+
+@task(
+    name="Эмбеддинги",
+    task_run_name=_phase_ref_id("эмбеддинги"),
+    log_prints=True,
+    cache_policy=NO_CACHE,
+)
+async def embed_step(
+    embedder,
+    chunks: list[IngestChunk],
+    ref: DocumentRef,
+) -> list[list[float]]:
+    run_logger = get_run_logger()
+    vectors = await embedder.aembed([chunk.text for chunk in chunks])
+    run_logger.info("документ %s: эмбеддингов %d", ref.doc_id, len(vectors))
+    return vectors
+
+
+@task(
+    name="Запись в Qdrant",
+    task_run_name=_phase_ref_id("запись"),
+    log_prints=True,
+    cache_policy=NO_CACHE,
+)
+async def upsert_step(
+    store,
+    collection: str,
+    sync_tag: str,
+    chunks: list[IngestChunk],
+    vectors: list[list[float]],
+    areas: list[str],
+    fingerprint: str,
+    ref: DocumentRef,
+) -> int:
+    run_logger = get_run_logger()
+    written = await store.upsert_chunks(
+        collection, chunks, vectors, areas, sync_tag, fingerprint
+    )
+    await store.sweep_document(collection, ref.doc_id, sync_tag)
+    run_logger.info("документ %s: записано %d", ref.doc_id, written)
+    return written
+
+
 @task(
     name="Индексация документа",
     task_run_name=_document_ref_id,
     log_prints=True,
+    cache_policy=NO_CACHE,
 )
 async def ingest_document_step(
     pipeline: IngestPipeline,
@@ -67,16 +181,43 @@ async def ingest_document_step(
 ) -> DocumentOutcome:
     run_logger = get_run_logger()
     run_logger.info("документ %s: начало обработки", ref.doc_id)
-    outcome = await pipeline.process_document(
-        source,
-        store,
-        embedder,
-        ref,
-        collection=collection,
-        sync_tag=sync_tag,
-        dry_run=dry_run,
-        known_hashes=known_hashes,
-    )
+    outcome = DocumentOutcome(doc_id=ref.doc_id, title=ref.title)
+    try:
+        document = await fetch_and_parse_step(pipeline, source, ref)
+        outcome.doc_code = document.doc_code
+        outcome.title = document.doc_title or outcome.title
+
+        chunks = await chunk_step(pipeline, document, ref)
+        fingerprint = pipeline.repository.fingerprint(document)
+
+        if not chunks:
+            outcome.error = "конвейер не дал ни одного чанка"
+        elif (
+            known_hashes is not None
+            and known_hashes.get(document.doc_id) == fingerprint
+        ):
+            outcome.skipped = True
+            outcome.chunks = 0
+        elif dry_run:
+            outcome.chunks = len(chunks)
+        else:
+            areas = await classify_step(pipeline, document, ref)
+            vectors = await embed_step(embedder, chunks, ref)
+            outcome.chunks = await upsert_step(
+                store,
+                collection,
+                sync_tag,
+                chunks,
+                vectors,
+                areas,
+                fingerprint,
+                ref,
+            )
+            outcome.areas = areas
+    except Exception as exc:
+        outcome.error = f"{type(exc).__name__}: {exc}"
+        logger.exception("документ %s: обработка не удалась", ref.doc_id)
+
     if outcome.ok:
         run_logger.info("документ %s: готово, чанков %d", ref.doc_id, outcome.chunks)
     else:
@@ -204,5 +345,33 @@ async def ingest_flow(
         await source.close()
         if client is not None:
             await client.close()
+
+    try:
+        from prefect.artifacts import create_markdown_artifact
+
+        lines = [
+            "## Отчёт прогона",
+            "",
+            f"- Источник: `{source_kind}`",
+            f"- Коллекция: `{effective_collection}`",
+            f"- Документов: **{len(report.outcomes)}**",
+            f"- Чанков: **{report.total_chunks}**",
+            f"- Ошибок: **{len(report.failed)}**",
+            f"- Dry-run: `{dry_run}`",
+        ]
+        if report.switched_from:
+            lines.append(
+                f"- Алиас переключён: `{report.switched_from}` → "
+                f"`{effective_collection}`"
+            )
+        await create_markdown_artifact(
+            key="ingest-report",
+            description="Итог последнего прогона индексации",
+            markdown="\n".join(lines),
+        )
+    except ImportError:
+        pass
+    except (RuntimeError, ValueError):
+        pass
 
     return report

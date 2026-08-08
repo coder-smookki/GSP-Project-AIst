@@ -1,0 +1,85 @@
+services:
+  prefect-server:
+    # Версия пинуется и совпадает с `prefect==3.8.2` в pyproject.toml, чтобы
+    # сервер и клиент (раннер) говорили на одном API. Отдельный круг Python
+    # Prefect здесь не нужен — образ официальный и уже содержит CLI.
+    image: prefecthq/prefect:3.8.2-python3.12
+    restart: unless-stopped
+    profiles: ["orc"]
+    # В образе нет команды по умолчанию: entrypoint без аргументов уходит в
+    # интерактивный bash, который в компоузе мгновенно завершается (exit 0).
+    # Поэтому сервер запускается явной командой.
+    command: ["prefect", "server", "start", "--host", "0.0.0.0", "--port", "4200"]
+    environment:
+      # Метаданные — локальный SQLite в volume; Postgres не нужен, пока планировщик
+      # один и история прогонов маленькая.
+      PREFECT_HOME: "/root/.prefect"
+      PREFECT_SERVER_DATABASE_CONNECTION_URL: "sqlite+aiosqlite:////root/.prefect/prefect.db"
+      PREFECT_API_DATABASE_CONNECTION_URL: "sqlite+aiosqlite:////root/.prefect/prefect.db"
+      PREFECT_UI_ENABLED: "true"
+      PREFECT_SERVER_API_HOST: "0.0.0.0"
+      PREFECT_SERVER_API_PORT: "4200"
+    ports:
+      # Только на петлевой интерфейс: UI без аутентификации отдаёт прогоны и
+      # параметры flow — наружу торчать ему незачем. Раннер ходит по внутренней
+      # сети docker.
+      - "127.0.0.1:${PREFECT_UI_PORT:-4200}:4200"
+    volumes:
+      - prefect_data:/root/.prefect
+    healthcheck:
+      # healthcheck на python-файле, а не на curl: bash в это образе не
+      # гарантирован, а urllib есть всегда. /api/health отвечает 200, как
+      # только сервер поднял приложение.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health', timeout=5)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  prefect-runner:
+    # Исполняет flow индексации как долгоживущий процесс: `serve` регистрирует
+    # deployment «aist-ingest» на сервере и держит воркер, ждущий запусков.
+    # Параметры прогона задаются переменными AIST_* (см. README).
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.orchestration
+    restart: unless-stopped
+    profiles: ["orc"]
+    environment:
+      # Куда стучаться за деплойментами: имя сервиса из того же compose-файла.
+      PREFECT_API_URL: http://prefect-server:4200/api
+      # Индекс и эмбеддинги — сервисы основного стека и Ollama на хосте.
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-aist_chunks}
+      OLLAMA_LOCAL_BASE_URL: ${OLLAMA_LOCAL_BASE_URL:-http://host.docker.internal:11434}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama-local}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
+      # Расписание и параметры deployment (наследует значения .env основного стека).
+      AIST_CRON: ${AIST_CRON:-}
+      AIST_SOURCE_KIND: ${AIST_SOURCE_KIND:-files}
+      AIST_CORPUS_DIR: ${AIST_CORPUS_DIR:-/corpus}
+      AIST_SECTION_ID: ${AIST_SECTION_ID:-}
+      AIST_LIMIT: ${AIST_LIMIT:-}
+      AIST_DRY_RUN: ${AIST_DRY_RUN:-0}
+      AIST_FULL: ${AIST_FULL:-0}
+      AIST_SWITCH_ALIAS: ${AIST_SWITCH_ALIAS:-1}
+      AIST_DEPLOYMENT_NAME: ${AIST_DEPLOYMENT_NAME:-aist-ingest}
+      # Учётные данные базы знаний для --source api: те же, что у основного
+      # стека (KB_EMAIL / KB_PASSWORD в deploy/.env).
+      KB_BASE_URL: ${KB_BASE_URL:-}
+      KB_EMAIL: ${KB_EMAIL:-}
+      KB_PASSWORD: ${KB_PASSWORD:-}
+      KB_SECTION_ID: ${KB_SECTION_ID:-44030}
+      KB_TOKEN_NAME: ${KB_TOKEN_NAME:-aist}
+      KB_PER_PAGE: ${KB_PER_PAGE:-100}
+      KB_MAX_RETRIES: ${KB_MAX_RETRIES:-3}
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+    volumes:
+      # Каталог корпуса для --source files монтируется с хоста; ядро внутри
+      # контейнера нельзя считать надёжным источником выгрузки.
+      - ${AIST_CORPUS_MOUNT:-../corpus}:/corpus:ro
+
+volumes:
+  prefect_data:

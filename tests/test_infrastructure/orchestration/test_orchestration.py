@@ -19,6 +19,7 @@ from infrastructure.orchestration.ingest_flow import (  # noqa: E402
     ingest_document_step,
     ingest_flow,
 )
+from infrastructure.orchestration.serve import _deployment_kwargs  # noqa: E402
 
 CORPUS = Path(__file__).resolve().parents[2] / "fixtures" / "corpus"
 
@@ -71,3 +72,35 @@ async def test_missing_corpus_raises() -> None:
     """Несуществующий каталог корпуса даёт понятную ошибку."""
     with pytest.raises(ValueError, match="каталог корпуса не найден"):
         await ingest_flow(source_kind="files", corpus_dir="/нет/такого/пути")
+
+
+def test_deployment_kwargs_defaults_and_env(monkeypatch) -> None:
+    """Сборка параметров deployment для serve опирается на AIST_* окружение.
+
+    Без переменных — значения по умолчанию; заданные переменные попадают
+    в параметры прогона и расписание. Это то, что контейнер раннера читает
+    из `docker-compose.orchestration.yml`.
+    """
+    for key in ("AIST_CRON", "AIST_INTERVAL", "AIST_SECTION_ID", "AIST_LIMIT"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("AIST_SOURCE_KIND", "files")
+    monkeypatch.setenv("AIST_SWITCH_ALIAS", "1")
+
+    kwargs = _deployment_kwargs()
+    params = kwargs["parameters"]
+    assert isinstance(kwargs["parameters"], dict)
+    assert params["source_kind"] == "files"
+    assert params["generation"] == 1
+    assert params["dry_run"] is False
+    assert params["switch_alias"] is True
+    assert params["limit"] is None
+    assert "cron" not in kwargs
+    assert "interval" not in kwargs
+
+    monkeypatch.setenv("AIST_CRON", "0 2 * * *")
+    monkeypatch.setenv("AIST_LIMIT", "10")
+    monkeypatch.setenv("AIST_SECTION_ID", "7")
+    kwargs = _deployment_kwargs()
+    assert kwargs["cron"] == "0 2 * * *"
+    assert kwargs["parameters"]["limit"] == 10
+    assert kwargs["parameters"]["section_id"] == 7

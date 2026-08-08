@@ -216,6 +216,7 @@ infrastructure/
     rerank.py                   #   переоценка кросс-энкодером (выключена, см. замер внутри)
     mock_search.py              #   синтетическая заглушка для отладки интерфейса
   observability/tracer.py       #   OpenTelemetry/OpenLIT
+  orchestration/                 #   Prefect-обёртки: ingest_flow + serve (опционально)
 
 gui/                            # Chainlit (:8000)
   chainlit_app.py               #   сообщения, стрим, панель источников, вход, настройки
@@ -223,6 +224,7 @@ gui/                            # Chainlit (:8000)
   db.py                         #   БД GUI (пользователи, схема истории диалогов)
 
 deploy/                         # Docker: compose, Dockerfile, Dockerfile.gui, aegra_entry, README
+  docker-compose.orchestration.yml  # Prefect-стек (профиль orc, см. deploy/README.md)
 scripts/
   ingest.py                     #   индексация корпуса (поколения, алиас, инкрементальный режим)
   evaluate.py                   #   замер качества на золотом наборе: hit@k, MRR, отказы
@@ -303,6 +305,7 @@ CI на PR (`.github/workflows/ci.yml`): `uv sync --extra dev --frozen` + `pytes
 | 5.3 | Схема цитаты | `Citation`/`to_citation` по полям (n, doc_code, clause, chunk_id, score, snippet): `infrastructure/retrieval/search.py` |
 | 7.1 | Профили моделей | Слоты fast/quality (D-27): `LLM_SUPPORT_MODEL` + реестр `infrastructure/config/model_registry.py` |
 | 9.3 | Наблюдаемость: расщепление по лицензиям | OpenLIT/OTLP только в overlay-файле (obs), в базовом стеке нет: `deploy/docker-compose.observability.yml` |
+| 9.4 | Оркестрация индексации Prefect (Apache-2.0) | UI `:4200` + deployment-воркер: `deploy/docker-compose.orchestration.yml`, `infrastructure/orchestration/` |
 | 9.6 | Тесты графа без Ollama | MockSearch/FakeEmbedding, юнит-тесты: `tests/`, маркеры `llm`/`embeddings` |
 | 13.2 | Демо-сценарий (частич.) | Панель источников до первого токена + follow-up из пунктов чанков: `gui/chainlit_app.py` |
 
