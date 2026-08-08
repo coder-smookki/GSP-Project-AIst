@@ -1,14 +1,14 @@
 # ai_agent_project
 
-ИИ-поиск по корпоративной базе знаний (регламенты ИСМ.СМОЗиОБТ) с адаптивным RAG. Полностью on-premise: Chainlit → Aegra/LangGraph → Ollama → Postgres, векторный слой — Qdrant (в разработке, issues #13/#14).
+ИИ-поиск по корпоративной базе знаний (регламенты ИСМ.СМОЗиОБТ) с адаптивным RAG. Полностью on-premise: Chainlit → Aegra/LangGraph → Ollama → Postgres, векторный слой — Qdrant (гибридный поиск dense + BM25 + RRF).
 
 Полное руководство по запуску и эксплуатации — [deploy/README.md](deploy/README.md).
 
 ```sh
 cd deploy
-cp .env.example .env
-docker compose up -d                # базовый стек: postgres + aegra + gui
-open http://localhost:8000          # GUI: admin / admin
+cp .env.example .env                # заполнить KB_EMAIL / KB_PASSWORD
+docker compose up -d                # postgres + qdrant + aegra + gui
+open http://localhost:8000          # интерфейс: admin / admin
 ```
 
 Наблюдаемость (OpenLIT, опционально):

@@ -15,7 +15,12 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/6333 && echo ok >&3 || exit 1"]
+      # Именно bash, а не CMD-SHELL: /dev/tcp — возможность bash, а `sh` в
+      # этом образе указывает на dash, где такой проверки нет. С CMD-SHELL
+      # healthcheck падал с «cannot create /dev/tcp: Directory nonexistent»,
+      # контейнер навсегда оставался unhealthy, и зависящие от него aegra и
+      # gui не стартовали вообще. curl и wget в образ не входят.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
       interval: 10s
       timeout: 5s
       retries: 10
