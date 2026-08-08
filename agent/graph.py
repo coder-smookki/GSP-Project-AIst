@@ -20,6 +20,7 @@ from infrastructure.retrieval.search import Search, to_citation
 from .correction import rewrite_query
 from .events import emit
 from .grading import grade_chunks
+from .memory_gate import worth_extracting
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -91,18 +92,30 @@ MODEL_SYSTEM_MESSAGE = """Ты — ассистент АИст, работающ
 Память о пользователях (долгосрочные факты):
 {memory}"""
 
-MEMORY_EXTRACT_PROMPT = """Extract key facts about the user from the conversation below.
+MEMORY_EXTRACT_PROMPT = """Ты ведёшь досье фактов о пользователе для корпоративного ассистента.
 
-Current memories ({count} of {max_allowed} max):
+Запоминай ТОЛЬКО устойчивые сведения о самом человеке:
+- имя и как к нему обращаться;
+- должность, подразделение, участок, объект;
+- обязанности и допуски (например, ответственный за пожарную безопасность);
+- явно высказанные предпочтения в общении.
+
+НЕ ЗАПОМИНАЙ, о чём он спрашивал. Записи вида «Пользователь интересуется \
+сроком расследования» или «Пользователь спрашивал про огнетушители» — это \
+журнал вопросов, а не факты о человеке. Они бесполезны при ответе и \
+вытесняют настоящие сведения, потому что список ограничен. Если в разговоре \
+нет ничего о самом пользователе, верни список без изменений.
+
+Текущая память ({count} из {max_allowed}):
 {existing_text}
 
-Recent conversation:
+Последние сообщения:
 {conversation}
 
-Return a JSON object with an updated list of memories (max {max_allowed}).
-Merge similar facts, remove duplicates, keep the most relevant.
-Format:
-{{"memories": [{{"content": "fact about user"}}]}}
+Верни JSON с обновлённым списком (не больше {max_allowed}). Объединяй \
+близкое, убирай повторы.
+Формат:
+{{"memories": [{{"content": "факт о пользователе"}}]}}
 
 JSON:"""
 
@@ -379,6 +392,12 @@ def create_app_agent(
             if existing_items
             else "None yet"
         )
+
+        if not worth_extracting(state["messages"]):
+            # Вопрос по регламенту сведений о человеке не содержит, и вызов
+            # модели здесь только тратит время после уже готового ответа.
+            logger.debug("извлечение памяти пропущено: личных сведений нет")
+            return {}
 
         user_msgs = list(state["messages"])
         while user_msgs and not isinstance(user_msgs[-1], HumanMessage):
