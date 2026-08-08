@@ -42,6 +42,12 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# При прямом запуске (`python scripts/evaluate.py`) в sys.path попадает
+# каталог scripts, а не корень репозитория, и импорт `infrastructure`
+# падает. Полагаться на редактируемую установку нельзя: она отваливается
+# при пересборке окружения, а команда описана в README как рабочая.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 logger = logging.getLogger("evaluate")
 
 #: Путь к золотому набору по умолчанию.
