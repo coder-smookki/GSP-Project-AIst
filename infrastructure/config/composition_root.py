@@ -26,4 +26,6 @@ def create_application():
         # Без этого CLI-сборка агента шла вообще без поиска: узел retrieve
         # молча возвращал пустоту, и агент отвечал по памяти модели.
         search=get_search(settings),
+        grading=settings.grading_enabled,
+        grading_keep_partial=settings.grading_keep_partial,
     )

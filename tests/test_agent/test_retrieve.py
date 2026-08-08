@@ -133,3 +133,72 @@ class TestTodayInjection:
             memory="", context="", today="09.08.2026"
         )
         assert "09.08.2026" in rendered
+
+
+class _FailingModel:
+    """Модель, всегда падающая заданной ошибкой."""
+
+    def __init__(self, error: BaseException):
+        self._error = error
+
+    async def ainvoke(self, messages=None, **kwargs):
+        """Всегда бросает заготовленную ошибку.
+
+        Args:
+            messages: Сообщения запроса.
+            **kwargs: Прочие параметры вызова.
+
+        Raises:
+            BaseException: Заготовленная ошибка.
+        """
+        raise self._error
+
+
+class TestModelFailure:
+    """Недоступность модели не должна ронять запрос.
+
+    Раньше граф ловил только `SearchUnavailable`, поэтому таймаут генерации
+    или выгруженная из памяти модель приводили к трассировке вместо ответа,
+    а диалог оставался без реплики ассистента.
+    """
+
+    @pytest.mark.asyncio
+    async def test_timeout_yields_service_message(self):
+        """Таймаут модели превращается в понятное сообщение об аварии."""
+        import httpx
+
+        app = create_app_agent(
+            model=_FailingModel(httpx.ReadTimeout("время вышло")),
+            support_model=FakeModel(),
+            store=InMemoryStore(),
+            search=MockSearch(),
+        )
+        state: AgentState = {
+            "messages": [{"role": "human", "content": "Как часто проводится СОУТ?"}]
+        }
+
+        result = await app.ainvoke(state)
+        answer = result["messages"][-1].content
+
+        assert "недоступен" in answer
+        # Ответ не должен маскироваться под честный отказ: сведения в базе
+        # есть, недоступна именно генерация.
+        assert "В базе знаний информации нет" not in answer
+
+    @pytest.mark.asyncio
+    async def test_connect_error_yields_service_message(self):
+        """Неподнятая Ollama тоже не роняет запрос."""
+        import httpx
+
+        app = create_app_agent(
+            model=_FailingModel(httpx.ConnectError("соединение отклонено")),
+            support_model=FakeModel(),
+            store=InMemoryStore(),
+            search=MockSearch(),
+        )
+        state: AgentState = {
+            "messages": [{"role": "human", "content": "Как часто проводится СОУТ?"}]
+        }
+
+        result = await app.ainvoke(state)
+        assert "недоступен" in result["messages"][-1].content

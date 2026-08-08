@@ -3,7 +3,12 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+)
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.graph import START, StateGraph
 from langgraph.store.base import BaseStore
@@ -14,9 +19,54 @@ from infrastructure.retrieval.search import Search, to_citation
 
 from .correction import rewrite_query
 from .events import emit
+from .grading import grade_chunks
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
+
+
+#: Сбои обращения к модели, которые не должны ронять запрос.
+#:
+#: `httpx` бросает `ReadTimeout` на долгой генерации и `ConnectError`, когда
+#: Ollama не поднята; `ollama` — `ResponseError` на выгруженной модели.
+#: Импорт мягкий: в тестах и в сборке без Ollama этих пакетов может не быть,
+#: а падать из-за отсутствия класса исключения бессмысленно.
+def _model_errors() -> tuple[type[BaseException], ...]:
+    """Собирает классы исключений клиентов модели.
+
+    Returns:
+        tuple[type[BaseException], ...]: Классы, которые ловятся как
+        «модель недоступна». Отсутствующие пакеты просто пропускаются.
+    """
+    errors: list[type[BaseException]] = []
+    try:
+        import httpx
+
+        errors += [httpx.TimeoutException, httpx.ConnectError, httpx.HTTPStatusError]
+    except ImportError:
+        pass
+    try:
+        from ollama._types import ResponseError
+
+        errors.append(ResponseError)
+    except ImportError:
+        pass
+    try:
+        from langchain_core.exceptions import OutputParserException
+
+        errors.append(OutputParserException)
+    except ImportError:
+        pass
+    return tuple(errors)
+
+
+MODEL_ERRORS = _model_errors()
+
+#: Что показать пользователю, когда модель не ответила.
+MODEL_UNAVAILABLE_TEXT = (
+    "Не удалось получить ответ модели: сервис генерации сейчас недоступен. "
+    "Повторите запрос через минуту."
+)
 
 MODEL_SYSTEM_MESSAGE = """Ты — ассистент АИст, работающий на базе корпоративной базы знаний (регламенты ИСМ.СМОЗиОБТ: охрана труда, промышленная безопасность, ГО и ЧС) и долгосрочной памяти о пользователях.
 
@@ -132,7 +182,27 @@ def create_app_agent(
     checkpointer=None,
     max_memories_count: int = 10,
     search: Search | None = None,
+    grading: bool = False,
+    grading_keep_partial: bool = False,
 ):
+    """Собирает граф ассистента.
+
+    Args:
+        model: Модель, пишущая ответ пользователю.
+        support_model: Служебная модель для сжатия истории, переписывания
+            запроса, извлечения памяти и грейдинга.
+        context_manager: Сжатие истории; ``None`` — без сжатия.
+        store: Хранилище долгосрочной памяти.
+        checkpointer: Хранилище состояния диалога.
+        max_memories_count: Предел числа запоминаемых фактов о пользователе.
+        search: Поиск по базе знаний; ``None`` — узел поиска не работает.
+        grading: Отсеивать ли найденные фрагменты моделью перед генерацией.
+            Подробности и замеры — в `agent.grading`.
+        grading_keep_partial: Оставлять ли фрагменты с вердиктом «частично».
+
+    Returns:
+        CompiledStateGraph: Скомпилированный граф.
+    """
 
     graph = StateGraph(AgentState)
 
@@ -185,7 +255,18 @@ def create_app_agent(
                 )
             )
 
-        return {"messages": [await model.ainvoke(messages=all_messages)]}
+        try:
+            answer = await model.ainvoke(messages=all_messages)
+        except MODEL_ERRORS as exc:
+            # Отказ модели — это авария сервиса, а не отсутствие сведений.
+            # Пропускать исключение наверх нельзя: пользователь увидел бы
+            # трассировку вместо ответа, а диалог остался бы без реплики
+            # ассистента и не восстановился при перезагрузке.
+            logger.error("модель не ответила: %s: %s", type(exc).__name__, exc)
+            emit("trace", {"stage": "assistant", "status": "model_unavailable"})
+            return {"messages": [AIMessage(content=MODEL_UNAVAILABLE_TEXT)]}
+
+        return {"messages": [answer]}
 
     async def retrieve(state: AgentState):
         if not search:
@@ -238,6 +319,23 @@ def create_app_agent(
             to_citation(chunk, n, score).to_dict()
             for n, (chunk, score) in enumerate(hits, 1)
         ]
+
+        if grading and items and support_model is not None:
+            # Отсев фрагментов моделью. Смысл — не скорость (грейдинг её
+            # ухудшает), а честный отказ на вопросах, которые проходят порог
+            # близости, но ответа в базе не имеют. Сбой грейдера возвращает
+            # None и означает «оставить выдачу как есть»: молча урезать
+            # источники из-за неудачи служебной модели нельзя.
+            emit("trace", {"stage": "retrieve", "status": "grading"})
+            graded = await grade_chunks(
+                support_model,
+                query,
+                items,
+                keep_partial=grading_keep_partial,
+            )
+            if graded is not None:
+                items = [dict(item, n=n) for n, item in enumerate(graded, 1)]
+
         emit("sources", {"items": items})
 
         followups = build_followups(items)
@@ -248,10 +346,16 @@ def create_app_agent(
     async def condense_context(state: AgentState):
         if not context_manager:
             return {}
-        summary = await context_manager.condense(
-            state["messages"],
-            existing_summary=state.get("summary", ""),
-        )
+        try:
+            summary = await context_manager.condense(
+                state["messages"],
+                existing_summary=state.get("summary", ""),
+            )
+        except MODEL_ERRORS as exc:
+            # Без сжатия история просто останется длинной — это хуже, чем
+            # сжатая, но лучше, чем упавший запрос.
+            logger.warning("история не сжата: %s: %s", type(exc).__name__, exc)
+            return {}
         if summary is None:
             return {}
         removals = [
@@ -293,7 +397,14 @@ def create_app_agent(
             conversation=conversation,
         )
 
-        result = await support_model.ainvoke([SystemMessage(content=prompt)])
+        try:
+            result = await support_model.ainvoke([SystemMessage(content=prompt)])
+        except MODEL_ERRORS as exc:
+            # Память — улучшение, а не условие работоспособности. Ответ
+            # пользователю уже отдан, и ронять запрос из-за неудачи записи
+            # памяти значит терять готовый ответ.
+            logger.warning("память не обновлена: %s: %s", type(exc).__name__, exc)
+            return {}
 
         memories = _parse_memory_json(result.content)
         if memories is None:
