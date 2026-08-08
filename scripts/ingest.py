@@ -160,7 +160,7 @@ async def run(args: argparse.Namespace) -> int:
     sync_tag = f"run-{int(time.time())}"
 
     known_hashes: dict[str, str] | None = None
-    if store is not None and not args.full:
+    if store is not None and client is not None and not args.full:
         from infrastructure.ingest.incremental import load_index_state
 
         known_hashes = await load_index_state(client, collection)
@@ -182,7 +182,12 @@ async def run(args: argparse.Namespace) -> int:
             known_hashes=known_hashes,
         )
 
-        if args.switch_alias and not args.dry_run and not report.failed:
+        if (
+            args.switch_alias
+            and not args.dry_run
+            and not report.failed
+            and store is not None
+        ):
             report.switched_from = await store.switch_generation(collection)
         elif args.switch_alias and report.failed:
             console.print(

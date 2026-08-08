@@ -110,8 +110,8 @@ class IngestPipeline:
     async def ingest(
         self,
         source: DataSource,
-        store: VectorStore,
-        embedder: _Embedder,
+        store: VectorStore | None,
+        embedder: _Embedder | None,
         *,
         collection: str,
         sync_tag: str,
@@ -175,8 +175,8 @@ class IngestPipeline:
     async def process_document(
         self,
         source: DataSource,
-        store: VectorStore,
-        embedder: _Embedder,
+        store: VectorStore | None,
+        embedder: _Embedder | None,
         ref,
         *,
         collection: str,
@@ -207,6 +207,8 @@ class IngestPipeline:
                 outcome.chunks = 0
             elif dry_run:
                 outcome.chunks = len(chunks)
+            elif store is None or embedder is None:
+                outcome.error = "нет индекса или эмбеддера для записи"
             else:
                 vectors = await embedder.aembed([chunk.text for chunk in chunks])
                 outcome.chunks = await store.upsert_chunks(

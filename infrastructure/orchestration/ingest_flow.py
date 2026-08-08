@@ -28,9 +28,9 @@ from infrastructure.retrieval.source import (
 logger = logging.getLogger("aist.ingest")
 
 try:
-    from prefect import flow, task
-    from prefect.cache_policies import NO_CACHE
-    from prefect.logging import get_run_logger
+    from prefect import flow, task  # type: ignore[import-not-found]
+    from prefect.cache_policies import NO_CACHE  # type: ignore[import-not-found]
+    from prefect.logging import get_run_logger  # type: ignore[import-not-found]
 except ImportError:
     NO_CACHE = None
 
@@ -347,7 +347,7 @@ async def ingest_flow(
             await client.close()
 
     try:
-        from prefect.artifacts import create_markdown_artifact
+        from prefect.artifacts import acreate_markdown_artifact
 
         lines = [
             "## Отчёт прогона",
@@ -364,7 +364,7 @@ async def ingest_flow(
                 f"- Алиас переключён: `{report.switched_from}` → "
                 f"`{effective_collection}`"
             )
-        await create_markdown_artifact(
+        await acreate_markdown_artifact(
             key="ingest-report",
             description="Итог последнего прогона индексации",
             markdown="\n".join(lines),

@@ -30,7 +30,13 @@ def _deployment_kwargs() -> dict[str, object]:
 
 
 def main() -> None:
-    ingest_flow.serve(
+    serve = getattr(ingest_flow, "serve", None)
+    if serve is None:
+        raise RuntimeError(
+            "Prefect не установлен: serve недоступен; "
+            "установите группу orchestration (uv sync --extra orchestration)"
+        )
+    serve(
         name=os.environ.get("AIST_DEPLOYMENT_NAME", "aist-ingest"),
         tags=["aist", "ingest"],
         **_deployment_kwargs(),
