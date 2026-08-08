@@ -65,6 +65,7 @@ def get_search(settings) -> Search:
         prefetch=settings.retrieval_prefetch,
         rrf_k=settings.retrieval_rrf_k,
         query_instruction=settings.embedding_query_instruction,
+        min_relevance=settings.retrieval_min_relevance,
     )
     logger.info(
         "поиск: Qdrant, алиас %s, top_k=%d, prefetch=%d, rrf_k=%d",

@@ -58,6 +58,7 @@ class QdrantSearch(Search):
         prefetch: int = 30,
         rrf_k: int = 60,
         query_instruction: str = "",
+        min_relevance: float = 0.0,
     ) -> None:
         """Создаёт поиск.
 
@@ -75,6 +76,16 @@ class QdrantSearch(Search):
             query_instruction: Инструкция, добавляемая к тексту запроса перед
                 кодированием. Нужна моделям qwen3-embedding, для bge-m3
                 остаётся пустой.
+            min_relevance: Порог косинусной близости лучшего попадания, ниже
+                которого выдача считается пустой. Ноль отключает проверку.
+
+                Порог нужен потому, что гибридный поиск **всегда** возвращает
+                запрошенное число чанков: на вопрос «какая столица Австралии»
+                придут восемь настоящих пунктов регламента. Счёт RRF для
+                отсечения непригоден — он зависит только от рангов, и на
+                посторонний запрос выдаёт то же максимальное значение, что и
+                на релевантный. Косинус разделяет чисто: на замере по корпусу
+                релевантные запросы дают 0,68-0,72, посторонние — 0,28-0,46.
         """
         self._client = client
         self._embedder = embedder
@@ -83,6 +94,7 @@ class QdrantSearch(Search):
         self._prefetch = prefetch
         self._rrf_k = rrf_k
         self._query_instruction = query_instruction
+        self._min_relevance = min_relevance
 
     @staticmethod
     def _build_filter(
@@ -208,6 +220,18 @@ class QdrantSearch(Search):
         hits = [
             (self._to_chunk(point.payload), point.score) for point in response.points
         ]
+
+        if hits and self._min_relevance > 0:
+            best = await self._best_dense_score(dense_vector, query_filter)
+            if best < self._min_relevance:
+                logger.info(
+                    "запрос «%s»: лучшая близость %.3f ниже порога %.3f — "
+                    "считаем, что ответа в базе нет",
+                    text[:60],
+                    best,
+                    self._min_relevance,
+                )
+                return []
         logger.info(
             "поиск «%s»: найдено %d (области: %s, разделы: %s)",
             text[:60],
@@ -216,6 +240,38 @@ class QdrantSearch(Search):
             ", ".join(sections) if sections else "все",
         )
         return hits
+
+    async def _best_dense_score(
+        self, vector: list[float], query_filter: models.Filter | None
+    ) -> float:
+        """Возвращает косинусную близость лучшего попадания dense-канала.
+
+        Отдельный запрос нужен потому, что после слияния RRF исходные счета
+        каналов недоступны: в ответе лежит только счёт слияния.
+
+        Args:
+            vector: Вектор запроса.
+            query_filter: Фильтр выдачи или ``None``.
+
+        Returns:
+            float: Близость лучшего попадания; ``0.0``, если попаданий нет
+            или запрос не удался — в последнем случае порог просто не
+            применяется, и выдача остаётся как есть.
+        """
+        try:
+            probe = await self._client.query_points(
+                collection_name=self._collection,
+                query=vector,
+                using=DENSE_VECTOR,
+                query_filter=query_filter,
+                limit=1,
+                with_payload=False,
+                with_vectors=False,
+            )
+        except Exception as exc:
+            logger.warning("проверка порога релевантности не выполнена: %s", exc)
+            return 0.0
+        return probe.points[0].score if probe.points else 0.0
 
     async def preflight(self) -> None:
         """Проверяет готовность индекса до начала работы.

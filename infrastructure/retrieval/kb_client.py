@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Any, Self
@@ -41,9 +42,18 @@ logger = logging.getLogger(__name__)
 #: Коды, при которых имеет смысл повторить запрос.
 RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 
+#: Значения полей, которые нельзя показывать даже в отладочном логе:
+#: сервер эхом возвращает присланные учётные данные.
+_SECRET_ECHO = re.compile(
+    r'("(?:password|token|access_token|refresh_token)"\s*:\s*)"[^"]*"', re.I
+)
+
 #: Предел размера ответа. Одна статья корпуса весит до 1 МБ; всё, что сильно
 #: больше, — аномалия, которую нельзя молча тянуть в память индексатора.
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+
+#: Предел числа страниц при перечислении статей.
+MAX_PAGES = 1000
 
 
 class KnowledgeBaseError(RuntimeError):
@@ -330,10 +340,18 @@ class KnowledgeBaseClient:
                 if response.status_code in RETRYABLE_STATUS:
                     last_error = f"HTTP {response.status_code}"
                 else:
-                    raise TransportError(
-                        f"{method} {url}: HTTP {response.status_code} — "
-                        f"{self._safe_excerpt(response)}"
+                    # Тело ответа в текст ошибки НЕ включаем: при неудачном
+                    # входе сервер возвращает эхо запроса вместе с паролем,
+                    # а текст исключения печатается в консоль и попадает в
+                    # журналы. Тело уходит только в отладочный лог, где оно
+                    # маскируется.
+                    logger.debug(
+                        "%s %s: тело ответа %s",
+                        method,
+                        url,
+                        self._safe_excerpt(response),
                     )
+                    raise TransportError(f"{method} {url}: HTTP {response.status_code}")
 
             if attempt < attempts:
                 delay = self._backoff_delay(attempt, locals().get("response"))
@@ -405,9 +423,10 @@ class KnowledgeBaseClient:
             str: Начало тела ответа без переводов строк.
         """
         try:
-            return response.text[:limit].replace("\n", " ")
+            body = response.text[:limit].replace("\n", " ")
         except Exception:
             return "<нечитаемое тело ответа>"
+        return _SECRET_ECHO.sub(r"\1<скрыто>", body)
 
     @staticmethod
     def _as_json(response: httpx.Response) -> dict[str, Any]:
@@ -449,7 +468,7 @@ class KnowledgeBaseClient:
         section = self._config.section_id if section_id is None else section_id
         articles: list[dict] = []
         page = 1
-        while True:
+        while page <= MAX_PAGES:
             response = await self._request(
                 "GET",
                 f"api/knowledgebase/section/{section}/articles",
@@ -468,6 +487,14 @@ class KnowledgeBaseClient:
             if not isinstance(last_page, int) or page >= last_page or not batch:
                 break
             page += 1
+        else:
+            # Сервер с постоянно растущим last_page увёл бы обход в
+            # бесконечный цикл и съел бы память индексатора.
+            logger.warning(
+                "раздел %s: достигнут предел в %d страниц, обход прерван",
+                section,
+                MAX_PAGES,
+            )
 
         logger.info("раздел %s: получено статей — %d", section, len(articles))
         return articles
