@@ -10,7 +10,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from langchain_core.runnables.config import RunnableConfig
-from langgraph.graph import START, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.store.base import BaseStore
 
 from domain.memory import MemoryCollection
@@ -104,6 +104,12 @@ def build_followups(items: list[dict], limit: int = 3) -> list[str]:
             out.append("Что искать в базе знаний?")
 
     return out[:limit]
+
+
+def should_extract_memory(state: AgentState) -> str:
+    if worth_extracting(state.get("messages") or []):
+        return "write_memory"
+    return END
 
 
 def create_app_agent(
@@ -279,10 +285,6 @@ def create_app_agent(
             else "None yet"
         )
 
-        if not worth_extracting(state["messages"]):
-            logger.debug("извлечение памяти пропущено: личных сведений нет")
-            return {}
-
         user_msgs = list(state["messages"])
         while user_msgs and not isinstance(user_msgs[-1], HumanMessage):
             user_msgs.pop()
@@ -331,7 +333,11 @@ def create_app_agent(
     graph.add_edge(START, "condense_context")
     graph.add_edge("condense_context", "retrieve")
     graph.add_edge("retrieve", "assistant")
-    graph.add_edge("assistant", "write_memory")
+    graph.add_conditional_edges(
+        "assistant",
+        should_extract_memory,
+        {"write_memory": "write_memory", END: END},
+    )
 
     compile_kwargs = {}
     if checkpointer:
