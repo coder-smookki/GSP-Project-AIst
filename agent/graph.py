@@ -10,36 +10,25 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from langchain_core.runnables.config import RunnableConfig
-from langgraph.graph import START, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.store.base import BaseStore
 
 from domain.memory import MemoryCollection
 from infrastructure.retrieval.qdrant_search import SearchUnavailable
 from infrastructure.retrieval.search import Search, to_citation
 
-from .correction import rewrite_query
+from .correction import rewrite_query as rewrite_query_model
 from .events import emit
 from .grading import grade_chunks
 from .memory_gate import worth_extracting
 from .numbers import annotate as annotate_numbers
+from .prompts import MEMORY_EXTRACT_PROMPT, MODEL_SYSTEM_MESSAGE
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
 
 
-#: Сбои обращения к модели, которые не должны ронять запрос.
-#:
-#: `httpx` бросает `ReadTimeout` на долгой генерации и `ConnectError`, когда
-#: Ollama не поднята; `ollama` — `ResponseError` на выгруженной модели.
-#: Импорт мягкий: в тестах и в сборке без Ollama этих пакетов может не быть,
-#: а падать из-за отсутствия класса исключения бессмысленно.
 def _model_errors() -> tuple[type[BaseException], ...]:
-    """Собирает классы исключений клиентов модели.
-
-    Returns:
-        tuple[type[BaseException], ...]: Классы, которые ловятся как
-        «модель недоступна». Отсутствующие пакеты просто пропускаются.
-    """
     errors: list[type[BaseException]] = []
     try:
         import httpx
@@ -64,83 +53,15 @@ def _model_errors() -> tuple[type[BaseException], ...]:
 
 MODEL_ERRORS = _model_errors()
 
-#: Что показать пользователю, когда модель не ответила.
 MODEL_UNAVAILABLE_TEXT = (
     "Не удалось получить ответ модели: сервис генерации сейчас недоступен. "
     "Повторите запрос через минуту."
 )
 
-MODEL_SYSTEM_MESSAGE = """Ты — ассистент АИст, работающий на базе корпоративной базы знаний (регламенты ИСМ.СМОЗиОБТ: охрана труда, промышленная безопасность, ГО и ЧС) и долгосрочной памяти о пользователях.
-
-Рассуждай и отвечай только по-русски.
-
-Блок CONTEXT содержит выдержки из регламентов с номерами источников:
-
-{context}
-
-Правила:
-1. Отвечай на русском. Первое предложение — прямой ответ, затем детали списком, без воды.
-2. Вопрос про регламенты (охрана труда, промбезопасность, ГО и ЧС): если в CONTEXT есть нужные сведения — отвечай по ним, каждое утверждение с маркером [n] и ссылкой на документ и пункт (например, «Р-У2-59, п. 4.3»); если источник табличный — ссылайся на раздел.
-3. Вопрос про регламенты, но в CONTEXT нужных сведений нет — верни ровно: «В базе знаний информации нет». Не выдумывай.
-4. Вопрос о пользователе (имя, предпочтения, факты из прошлых диалогов): отвечай по блоку «Память» ниже. Если в памяти таких сведений нет — честно скажи, что пока не помнишь, и предложи уточнить.
-5. Приветствие, благодарность, вопрос о твоих возможностях — отвечай коротко и естественно, без ссылок на регламенты.
-6. ЛЮБОЙ фактический вопрос, ответа на который нет в CONTEXT, — верни ровно: «В базе знаний информации нет». Это правило действует, даже если ты знаешь ответ из своих общих знаний. Ты отвечаешь только по базе знаний организации: ответ из памяти модели пользователь не отличит от ответа по регламенту, а проверить его не сможет.
-6.1. ТЕКСТ ПО ТЕМЕ — ЭТО ЕЩЁ НЕ ОТВЕТ. Поиск подбирает выдержки по совпадению слов, поэтому в CONTEXT почти всегда есть что-то на тему вопроса. Прежде чем отвечать, найди в CONTEXT ту самую строку, где сказано именно то, о чём спросили. Не нашёл — правило 3, отказ. Соседний по смыслу пункт, определение термина или ссылка на другой документ ответом не являются.
-6.2. КАЖДОЕ ЧИСЛО — ИЗ CONTEXT, ДОСЛОВНО. Срок, периодичность, количество, размер: перед тем как написать число, убедись, что видишь его в тексте CONTEXT. Если числа там нет — не подставляй правдоподобное и не бери из общих знаний, а откажись. Выдуманное число со ссылкой на источник — худшая из возможных ошибок: пользователь примет его за требование регламента.
-6.3. Если CONTEXT ссылается на документ, которого в нём самом нет («порядок установлен положением N»), то ответа у тебя нет. Назови документ, в котором следует искать, и не пересказывай его содержание по памяти.
-7. Никогда не показывай плейсхолдеры вида [ОРГАНИЗАЦИЯ_12] — вместо них пиши «(наименование скрыто)».
-8. Не показывай внутренние рассуждения — только итоговый ответ.
-
-Сегодняшняя дата: {today}. Опирайся на неё в вопросах о сроках и периодичности; не выдумывай даты, которых нет в CONTEXT.
-
-Память о пользователях (долгосрочные факты):
-{memory}"""
-
-MEMORY_EXTRACT_PROMPT = """Ты ведёшь досье фактов о пользователе для корпоративного ассистента.
-
-Запоминай ТОЛЬКО устойчивые сведения о самом человеке:
-- имя и как к нему обращаться;
-- должность, подразделение, участок, объект;
-- обязанности и допуски (например, ответственный за пожарную безопасность);
-- явно высказанные предпочтения в общении.
-
-НЕ ЗАПОМИНАЙ, о чём он спрашивал. Записи вида «Пользователь интересуется \
-сроком расследования» или «Пользователь спрашивал про огнетушители» — это \
-журнал вопросов, а не факты о человеке. Они бесполезны при ответе и \
-вытесняют настоящие сведения, потому что список ограничен. Если в разговоре \
-нет ничего о самом пользователе, верни список без изменений.
-
-Текущая память ({count} из {max_allowed}):
-{existing_text}
-
-Последние сообщения:
-{conversation}
-
-Верни JSON с обновлённым списком (не больше {max_allowed}). Объединяй \
-близкое, убирай повторы.
-Формат:
-{{"memories": [{{"content": "факт о пользователе"}}]}}
-
-JSON:"""
-
-
-#: Часовой пояс, в котором работает заказчик.
 MSK = timezone(timedelta(hours=3))
 
 
 def today_msk(config: RunnableConfig | None = None) -> str:
-    """Возвращает сегодняшнюю дату в московском времени.
-
-    Дату можно передать снаружи через ``config["configurable"]["today"]`` —
-    это нужно тестам: без фиксированной даты ответы на вопросы о сроках
-    невоспроизводимы, и тест на них написать нельзя.
-
-    Args:
-        config: Конфигурация запуска графа.
-
-    Returns:
-        str: Дата в формате ``ДД.ММ.ГГГГ``.
-    """
     if config:
         supplied = (config.get("configurable") or {}).get("today")
         if supplied:
@@ -162,12 +83,6 @@ def _parse_memory_json(text: str) -> list[dict] | None:
 
 
 def build_followups(items: list[dict], limit: int = 3) -> list[str]:
-    """Детерминированные подсказки следующего вопроса по retrieved-цитатам.
-
-    - по пункту: «Подробнее по пункту X (DOC)»
-    - по документу (без пункта): «Список положений из DOC»
-    - если остался слот: «Список всех найденных документов по охране труда»
-    """
     out: list[str] = []
     seen: set[tuple] = set()
 
@@ -191,6 +106,25 @@ def build_followups(items: list[dict], limit: int = 3) -> list[str]:
     return out[:limit]
 
 
+def should_extract_memory(state: AgentState) -> str:
+    if worth_extracting(state.get("messages") or []):
+        return "write_memory"
+    return END
+
+
+def route_after_retrieve(state: AgentState) -> str:
+    if state.get("needs_rewrite"):
+        return "rewrite"
+    return "assistant"
+
+
+def query_from_state(state: AgentState) -> str:
+    last = (state.get("messages") or [])[-1]
+    if not hasattr(last, "content"):
+        return ""
+    return str(last["content"] if isinstance(last, dict) else last.content).strip()
+
+
 def create_app_agent(
     model,
     support_model,
@@ -198,32 +132,22 @@ def create_app_agent(
     store=None,
     checkpointer=None,
     max_memories_count: int = 10,
+    max_rewrites: int = 1,
     search: Search | None = None,
     grading: bool = False,
     grading_keep_partial: bool = False,
     verify_numbers: bool = True,
 ):
-    """Собирает граф ассистента.
-
-    Args:
-        model: Модель, пишущая ответ пользователю.
-        support_model: Служебная модель для сжатия истории, переписывания
-            запроса, извлечения памяти и грейдинга.
-        context_manager: Сжатие истории; ``None`` — без сжатия.
-        store: Хранилище долгосрочной памяти.
-        checkpointer: Хранилище состояния диалога.
-        max_memories_count: Предел числа запоминаемых фактов о пользователе.
-        search: Поиск по базе знаний; ``None`` — узел поиска не работает.
-        grading: Отсеивать ли найденные фрагменты моделью перед генерацией.
-            Подробности и замеры — в `agent.grading`.
-        grading_keep_partial: Оставлять ли фрагменты с вердиктом «частично».
-        verify_numbers: Помечать ли в ответе числа, которых нет в выдержках.
-
-    Returns:
-        CompiledStateGraph: Скомпилированный граф.
-    """
 
     graph = StateGraph(AgentState)
+
+    async def reset_turn(state: AgentState):
+        return {
+            "query": "",
+            "rewrite_attempts": 0,
+            "needs_rewrite": False,
+            "retrieval_failed": False,
+        }
 
     async def assistant(state: AgentState, config: RunnableConfig, *, store: BaseStore):
 
@@ -246,8 +170,6 @@ def create_app_agent(
         else:
             context = (
                 "\n\n".join(
-                    # Полный текст чанка, а не короткая выдержка:
-                    # snippet обрезан до 400 символов ради панели источников.
                     f"[{n}] {c.get('text') or c['snippet']}"
                     for n, c in enumerate(state.get("retrieved", []), start=1)
                 )
@@ -277,19 +199,11 @@ def create_app_agent(
         try:
             answer = await model.ainvoke(messages=all_messages)
         except MODEL_ERRORS as exc:
-            # Отказ модели — это авария сервиса, а не отсутствие сведений.
-            # Пропускать исключение наверх нельзя: пользователь увидел бы
-            # трассировку вместо ответа, а диалог остался бы без реплики
-            # ассистента и не восстановился при перезагрузке.
             logger.error("модель не ответила: %s: %s", type(exc).__name__, exc)
             emit("trace", {"stage": "assistant", "status": "model_unavailable"})
             return {"messages": [AIMessage(content=MODEL_UNAVAILABLE_TEXT)]}
 
         if verify_numbers and not state.get("retrieval_failed"):
-            # Детерминированная проверка поверх модели: срок или количество,
-            # которого нет в выдержках, помечается прямо в ответе. Замер
-            # показал, что модель выдаёт такие числа со ссылкой на источник,
-            # то есть неотличимо от настоящего требования регламента.
             text = str(getattr(answer, "content", "") or "")
             marked = annotate_numbers(text, context)
             if marked != text:
@@ -300,10 +214,9 @@ def create_app_agent(
     async def retrieve(state: AgentState):
         if not search:
             return {}
-        last = state["messages"][-1]
-        query = str(last.content) if hasattr(last, "content") else ""
+        query = state.get("query") or query_from_state(state)
         if not query:
-            return {}
+            return {"needs_rewrite": False}
 
         try:
             hits = await search.query(
@@ -312,49 +225,25 @@ def create_app_agent(
                 areas=state.get("areas"),
             )
         except SearchUnavailable as exc:
-            # Третий исход, отличимый от «ничего не найдено». Пустая выдача
-            # заставила бы ассистента ответить «В базе знаний информации
-            # нет» — авария замаскировалась бы под правильный ответ.
             logger.error("поиск недоступен: %s", exc)
             emit("trace", {"stage": "retrieve", "status": "unavailable"})
-            return {"retrieved": [], "followups": [], "retrieval_failed": True}
-
-        if not hits and support_model is not None:
-            # Коррекция запроса — только при пустой выдаче. На обычных
-            # вопросах этот путь не выполняется вовсе, поэтому средняя цена
-            # по всем запросам близка к нулю, а спасает он ровно тот случай,
-            # ради которого задуман: вопрос задан житейскими словами, а
-            # регламент написан канцелярскими. Круг ровно один: второй стоит
-            # ещё вызова модели и ещё поиска при малых шансах на успех.
-            emit("trace", {"stage": "retrieve", "status": "rewriting"})
-            rewritten = await rewrite_query(support_model, query)
-            if rewritten:
-                try:
-                    hits = await search.query(
-                        rewritten,
-                        sections=state.get("sections"),
-                        areas=state.get("areas"),
-                    )
-                except SearchUnavailable as exc:
-                    logger.error("поиск недоступен после коррекции: %s", exc)
-                    return {
-                        "retrieved": [],
-                        "followups": [],
-                        "retrieval_failed": True,
-                    }
-                logger.info("коррекция запроса дала %d источников", len(hits))
+            return {
+                "query": query,
+                "retrieved": [],
+                "followups": [],
+                "retrieval_failed": True,
+                "needs_rewrite": False,
+            }
 
         items = [
             to_citation(chunk, n, score).to_dict()
             for n, (chunk, score) in enumerate(hits, 1)
         ]
 
-        if grading and items and support_model is not None:
-            # Отсев фрагментов моделью. Смысл — не скорость (грейдинг её
-            # ухудшает), а честный отказ на вопросах, которые проходят порог
-            # близости, но ответа в базе не имеют. Сбой грейдера возвращает
-            # None и означает «оставить выдачу как есть»: молча урезать
-            # источники из-за неудачи служебной модели нельзя.
+        grading_before_rewrite = (
+            grading and items and support_model is not None
+        )
+        if grading_before_rewrite:
             emit("trace", {"stage": "retrieve", "status": "grading"})
             graded = await grade_chunks(
                 support_model,
@@ -365,12 +254,32 @@ def create_app_agent(
             if graded is not None:
                 items = [dict(item, n=n) for n, item in enumerate(graded, 1)]
 
+        if not items and support_model is not None and state.get("rewrite_attempts", 0) < max_rewrites:
+            emit("trace", {"stage": "retrieve", "status": "rewriting"})
+            return {"query": query, "needs_rewrite": True}
+
         emit("sources", {"items": items})
 
         followups = build_followups(items)
         if followups:
             emit("followups", {"items": followups})
-        return {"retrieved": items, "followups": followups}
+        return {
+            "query": query,
+            "retrieved": items,
+            "followups": followups,
+            "needs_rewrite": False,
+        }
+
+    async def rewrite_query(state: AgentState):
+        query = state.get("query") or ""
+        rewritten = await rewrite_query_model(support_model, query)
+        if rewritten:
+            logger.info("коррекция запроса дала источник: %s", rewritten[:80])
+        return {
+            "query": rewritten or query,
+            "rewrite_attempts": state.get("rewrite_attempts", 0) + 1,
+            "needs_rewrite": False,
+        }
 
     async def condense_context(state: AgentState):
         if not context_manager:
@@ -381,8 +290,6 @@ def create_app_agent(
                 existing_summary=state.get("summary", ""),
             )
         except MODEL_ERRORS as exc:
-            # Без сжатия история просто останется длинной — это хуже, чем
-            # сжатая, но лучше, чем упавший запрос.
             logger.warning("история не сжата: %s: %s", type(exc).__name__, exc)
             return {}
         if summary is None:
@@ -409,12 +316,6 @@ def create_app_agent(
             else "None yet"
         )
 
-        if not worth_extracting(state["messages"]):
-            # Вопрос по регламенту сведений о человеке не содержит, и вызов
-            # модели здесь только тратит время после уже готового ответа.
-            logger.debug("извлечение памяти пропущено: личных сведений нет")
-            return {}
-
         user_msgs = list(state["messages"])
         while user_msgs and not isinstance(user_msgs[-1], HumanMessage):
             user_msgs.pop()
@@ -435,9 +336,6 @@ def create_app_agent(
         try:
             result = await support_model.ainvoke([SystemMessage(content=prompt)])
         except MODEL_ERRORS as exc:
-            # Память — улучшение, а не условие работоспособности. Ответ
-            # пользователю уже отдан, и ронять запрос из-за неудачи записи
-            # памяти значит терять готовый ответ.
             logger.warning("память не обновлена: %s: %s", type(exc).__name__, exc)
             return {}
 
@@ -458,15 +356,27 @@ def create_app_agent(
 
         return {}
 
+    graph.add_node("reset_turn", reset_turn)
     graph.add_node("assistant", assistant)
     graph.add_node("retrieve", retrieve)
+    graph.add_node("rewrite_query", rewrite_query)
     graph.add_node("condense_context", condense_context)
     graph.add_node("write_memory", write_memory)
 
-    graph.add_edge(START, "condense_context")
+    graph.add_edge(START, "reset_turn")
+    graph.add_edge("reset_turn", "condense_context")
     graph.add_edge("condense_context", "retrieve")
-    graph.add_edge("retrieve", "assistant")
-    graph.add_edge("assistant", "write_memory")
+    graph.add_conditional_edges(
+        "retrieve",
+        route_after_retrieve,
+        {"rewrite": "rewrite_query", "assistant": "assistant"},
+    )
+    graph.add_edge("rewrite_query", "retrieve")
+    graph.add_conditional_edges(
+        "assistant",
+        should_extract_memory,
+        {"write_memory": "write_memory", END: END},
+    )
 
     compile_kwargs = {}
     if checkpointer:

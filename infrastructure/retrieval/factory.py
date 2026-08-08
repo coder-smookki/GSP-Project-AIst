@@ -1,13 +1,3 @@
-"""Выбор и жизненный цикл реализации поиска.
-
-Фабрика скрывает от графа, что под протоколом `Search`: заглушка или
-Qdrant. Граф получает объект и ничего не знает о его устройстве.
-
-Ресурсы (клиент Qdrant) создаются один раз на процесс и закрываются при
-остановке: открывать соединение на каждый запрос дорого, а оставлять
-незакрытым — значит копить сокеты.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -17,23 +7,10 @@ from infrastructure.retrieval.search import Search
 
 logger = logging.getLogger(__name__)
 
-#: Единственный на процесс клиент Qdrant. Закрывается через `shutdown()`.
 _client = None
 
 
 def get_search(settings) -> Search:
-    """Создаёт реализацию поиска по настройкам.
-
-    Args:
-        settings: Настройки приложения (`infrastructure.config.settings`).
-
-    Returns:
-        Search: `QdrantSearch` в бою, `MockSearch` при выборе заглушки.
-        При недоступности Qdrant возвращается **не** заглушка: подмена
-        боевого поиска синтетическим корпусом из четырёх чанков выглядела бы
-        как работающая система и обманула бы и нас, и жюри. Ошибка вылезет
-        на первом же запросе как `SearchUnavailable`, что честно.
-    """
     global _client
 
     provider = settings.resolved_retrieval_provider()
@@ -80,7 +57,6 @@ def get_search(settings) -> Search:
 
 
 async def shutdown() -> None:
-    """Закрывает клиент Qdrant, если он создавался."""
     global _client
     if _client is not None:
         await _client.close()

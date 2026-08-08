@@ -12,3 +12,6 @@ class AgentState(TypedDict):
     followups: NotRequired[list[str]]
     areas: NotRequired[list[str]]
     retrieval_failed: NotRequired[bool]
+    query: NotRequired[str]
+    rewrite_attempts: NotRequired[int]
+    needs_rewrite: NotRequired[bool]

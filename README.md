@@ -186,6 +186,7 @@ agent/                          # граф: START→condense_context→retrieve�
   grading.py                    #   отсев фрагментов моделью (выключен, см. замер внутри)
   numbers.py                    #   сверка чисел ответа с контекстом
   memory_gate.py                #   нужно ли вообще извлекать память из сообщения
+  prompts.py                    #   все большие промпты агента в одном месте
 
 domain/
   context/manager.py            #   суммаризация истории диалога
@@ -232,6 +233,7 @@ scripts/
 tests/                          # pytest: fakes, test_agent, test_gui, test_infrastructure
   fixtures/corpus/              #   выгрузка 20 статей раздела 44030
   fixtures/golden/questions.json  # золотой набор: 41 вопрос с эталоном + 10 без ответа
+docs/RETRIEVE.md                #   описание логики retrieve/search (промпты — agent/prompts.py)
 docs/demo/graph.png             #   схема графа (scripts/get_graph_visualization.py)
 
 .github/workflows/ci.yml        #   CI: юнит-тесты на каждый PR

@@ -23,6 +23,7 @@ def create_application():
         store=InMemoryStore(),
         checkpointer=MemorySaver(),
         max_memories_count=15,
+        max_rewrites=settings.retrieval_max_rewrites,
         # Без этого CLI-сборка агента шла вообще без поиска: узел retrieve
         # молча возвращал пустоту, и агент отвечал по памяти модели.
         search=get_search(settings),
