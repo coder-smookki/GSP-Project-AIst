@@ -16,6 +16,7 @@ def setup_registry(settings) -> None:
             base_url=settings.ollama_local_base_url,
             num_ctx=settings.llm_num_ctx,
             repeat_penalty=settings.llm_repeat_penalty,
+            reasoning=settings.llm_reasoning,
         )
         if settings.llm_support_model != "None":
             _MODELS["support"] = OllamaClient(
@@ -23,6 +24,7 @@ def setup_registry(settings) -> None:
                 base_url=settings.ollama_local_base_url,
                 num_ctx=settings.llm_num_ctx,
                 repeat_penalty=settings.llm_repeat_penalty,
+                reasoning=settings.llm_reasoning,
             )
         else:
             _MODELS["support"] = _MODELS["default"]

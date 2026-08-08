@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     llm_num_ctx: int = 16384
     llm_repeat_penalty: float = 1.1
 
+    #: Размышления модели перед ответом.
+    #:
+    #: Выключены по умолчанию: на qwen3:8b они стоят шестикратного времени
+    #: ответа (16,3 с против 2,5 с на одном и том же вопросе) при том же
+    #: тексте ответа. Скорость входит в оценку жюри напрямую.
+    #: Включать только если замер покажет выигрыш в качестве.
+    llm_reasoning: bool = False
+
     ollama_local_base_url: str = "http://localhost:11434"
     llamacpp_base_url: str = "http://localhost:8080"
     vllm_base_url: str = "http://localhost:8000"

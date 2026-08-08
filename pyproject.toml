@@ -19,6 +19,7 @@ dependencies = [
     "rich>=15.0.0",
     "httpx>=0.28.1",
     "qdrant-client==1.19.0",
+    "langchain-ollama>=1.0.0",
 ]
 
 [project.optional-dependencies]
