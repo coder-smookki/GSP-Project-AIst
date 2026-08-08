@@ -128,7 +128,9 @@ def create_app_agent(
         else:
             context = (
                 "\n\n".join(
-                    f"[{n}] {c['snippet']}"
+                    # Полный текст чанка, а не короткая выдержка:
+                    # snippet обрезан до 400 символов ради панели источников.
+                    f"[{n}] {c.get('text') or c['snippet']}"
                     for n, c in enumerate(state.get("retrieved", []), start=1)
                 )
                 or "В базе знаний нет выдержек для этого запроса."

@@ -24,6 +24,7 @@ import logging
 import re
 from html import unescape
 from html.parser import HTMLParser
+from typing import Final
 
 from infrastructure.ingest.models import (
     Atom,
@@ -172,6 +173,78 @@ def extract_blocks(html: str) -> list[tuple[str, str]]:
             "разбор HTML прерван, используем то, что успели собрать: %s", exc
         )
     return parser.blocks
+
+
+#: Заголовок раздела, утонувший в конец абзаца.
+#:
+#: Источник иногда не выделяет заголовок тегом, а приклеивает его к концу
+#: предыдущего абзаца, теряя при этом первую цифру номера:
+#: ``…более 0,45 м. 0. Требования к электроустановкам``. Дальше все пункты
+#: приписываются предыдущему разделу, и цитата указывает на несуществующий
+#: пункт. Признаки заголовка: стоит после конца предложения, начинается с
+#: номера, продолжается с заглавной буквы и не оканчивается точкой.
+_GLUED_HEADING: Final[re.Pattern[str]] = re.compile(
+    r"(?<=[.:;])\s+(?P<no>\d{1,2})\.\s+(?P<title>[А-ЯЁ][^.]{8,120})\s*$"
+)
+
+
+def recover_glued_headings(
+    blocks: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """Вытаскивает заголовки разделов, приклеенные к концу абзацев.
+
+    Номер восстанавливается по ожидаемому следующему разделу: если у
+    найденного заголовка номер не совпадает с ожидаемым, но ожидаемый
+    оканчивается на него (``10`` против ``0``), значит срезана первая цифра.
+    Без такой сверки заголовок «0. Требования к электроустановкам» дал бы
+    раздел с номером 0 и пункты вида ``0.1``.
+
+    Args:
+        blocks: Пары ``(тег, текст)`` после извлечения из разметки.
+
+    Returns:
+        list[tuple[str, str]]: Блоки, где найденные заголовки вынесены
+        отдельными элементами с тегом ``h2``.
+    """
+    result: list[tuple[str, str]] = []
+    current = 0
+    recovered = 0
+
+    for tag, text in blocks:
+        if tag == "h2":
+            head = SECTION_HEAD.match(text)
+            if head:
+                current = int(head.group("no"))
+            result.append((tag, text))
+            continue
+
+        if tag != "p":
+            result.append((tag, text))
+            continue
+
+        found = _GLUED_HEADING.search(text)
+        if not found or not current:
+            result.append((tag, text))
+            continue
+
+        expected = current + 1
+        number = int(found.group("no"))
+        if number != expected and not str(expected).endswith(str(number)):
+            # Число похоже на заголовок, но не продолжает нумерацию —
+            # скорее всего это часть текста. Не трогаем.
+            result.append((tag, text))
+            continue
+
+        body = text[: found.start()].strip()
+        if body:
+            result.append(("p", body))
+        result.append(("h2", f"{expected}. {found.group('title').strip()}"))
+        current = expected
+        recovered += 1
+
+    if recovered:
+        logger.info("восстановлено приклеенных заголовков разделов: %d", recovered)
+    return result
 
 
 def _split_clauses(text: str, section_no: str) -> list[tuple[str | None, str]]:
@@ -453,7 +526,7 @@ def parse_article(article: dict, *, source: str = "api") -> ParsedDocument:
 
     raw_title = str(article.get("name") or "").strip()
     document = build_document(
-        extract_blocks(content),
+        recover_glued_headings(extract_blocks(content)),
         doc_id=article_id,
         doc_code=_doc_code(article_id, raw_title),
         doc_title=_clean_title(raw_title),
