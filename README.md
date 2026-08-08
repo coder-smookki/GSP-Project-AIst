@@ -48,7 +48,9 @@ open http://localhost:3000
 
 **Переоценка кросс-энкодером** (`RERANK_ENABLED`, выключена). Единственный механизм, способный отделить релевантное от нерелевантного *внутри* выдачи: счета dense-канала там почти плоские (0,666 против 0,613 между первой и восьмой позицией), а кросс-энкодер даёт 0,964 против 0,000. Выключена потому, что на текущем железе стоит 4,5 с и не сокращает контекст — решение пересматривается на демо-машине.
 
-Чего сознательно нет: грейдера релевантности на каждый запрос. Замер показал 10–23 с на оценку пяти фрагментов при экономии 9 с — убыточно.
+**Грейдер релевантности** (`GRADING_ENABLED`, выключен). Реализован и замерен, но на этом корпусе не даёт ничего, и это показал живой прогон, а не рассуждение. Внедоменные вопросы отсекает порог 0,55 **ещё до грейдера** — поиск возвращает ноль фрагментов, и модель не вызывается вовсе; на вопросах, которые порог пропускает, грейдер отказа не дал. Зато с отсевом «частично относящихся» он устойчиво терял ответ в 2 случаях из 4: нужный фрагмент оба раза получал вердикт «частично», то есть искомое живёт именно в отбрасываемой категории. С `GRADING_KEEP_PARTIAL=1` он безвреден, но не меняет выдачу. Оставлен как заготовка под другой корпус или более сильную служебную модель — методика и тесты для повторного замера готовы.
+
+Отдельный урок замера: **число фрагментов нельзя резать вслепую**. На вопросе о сроке расследования несчастного случая нужный фрагмент стоял пятым; при пяти фрагментах ответ верный («15 календарных дней»), при двух-трёх модель выдавала «в течение 10 дней» — числа, которого в корпусе нет ни в одном документе про расследование. Обрезка контекста не ухудшает ответ постепенно, а превращает верный в уверенную выдумку, поэтому `RETRIEVAL_TOP_K` ниже пяти опускать можно только вместе с переоценкой, которая поднимает нужный фрагмент наверх.
 
 ## Замеры на живом стенде
 
@@ -217,21 +219,31 @@ uv run ruff check .                 # линт (E/F/I/UP/B/SIM/ASYNC/RUF)
 
 Дополнительно: CI на PR (`pytest -m "not llm and not embeddings"`), ruff==0.16.1 + pre-commit hook, `uv.lock` закоммичен.
 
-**В работе (issues):**
+**Issues: закрыто 17 из 18.**
 
-| Issue | Задача | Пункт | Слой | Статус |
-| --- | --- | --- | --- | --- |
-| [#9](https://github.com/coder-smookki/GSP-Project-AIst/issues/9) | FilesSource — загрузка документов из папки | 5.4 | ingest | частично: источник готов, разбор .docx остаётся |
-| ~~[#10](https://github.com/coder-smookki/GSP-Project-AIst/issues/10)~~ | ApiSource — загрузка через API | 5.4 | ingest | **готово** |
-| [#11](https://github.com/coder-smookki/GSP-Project-AIst/issues/11) | docx-парсер + чанкинг атомов | 4.2–4.5 | ingest | частично: HTML-парсер и чанкинг готовы |
-| ~~[#12](https://github.com/coder-smookki/GSP-Project-AIst/issues/12)~~ | Деанонимизация пофайловым словарём | 4.4 | ingest | **готово** |
-| [#13](https://github.com/coder-smookki/GSP-Project-AIst/issues/13) | Qdrant: коллекция + payload + загрузка | 6, 6.1 | retrieval | реализовано, ждёт живого сервера |
-| [#14](https://github.com/coder-smookki/GSP-Project-AIst/issues/14) | Qdrant: гибридный поиск dense+BM25+RRF | 6 | retrieval | реализовано, ждёт живого сервера |
-| [#8](https://github.com/coder-smookki/GSP-Project-AIst/issues/8) | Search facade — Qdrant за протоколом Search | 5.2–5.4 | retrieval |
-| [#6](https://github.com/coder-smookki/GSP-Project-AIst/issues/6) | Реранкер (опциональный, RERANK_ENABLED) | D-07 | retrieval |
-| [#5](https://github.com/coder-smookki/GSP-Project-AIst/issues/5) | Corrective RAG: grader + rewrite | 3.1, 7.2 | agent |
-| [#7](https://github.com/coder-smookki/GSP-Project-AIst/issues/7) | Дата/время для временных запросов | 6.1 | agent |
-| [#1](https://github.com/coder-smookki/GSP-Project-AIst/issues/1) | ChatStarter presets | 13.1–13.2 | gui |
-| [#2](https://github.com/coder-smookki/GSP-Project-AIst/issues/2) | Персистентность диалогов | 3.2 | gui |
-| [#3](https://github.com/coder-smookki/GSP-Project-AIst/issues/3) | Мультичаты + именование | 5.2 | gui |
-| [#4](https://github.com/coder-smookki/GSP-Project-AIst/issues/4) | Fork + replay (опционально) | 12.1 | gui |
+| Issue | Задача | Слой | Итог |
+| --- | --- | --- | --- |
+| ~~[#1](https://github.com/coder-smookki/GSP-Project-AIst/issues/1)~~ | ChatStarter presets | gui | готово |
+| ~~[#2](https://github.com/coder-smookki/GSP-Project-AIst/issues/2)~~ | Персистентность диалогов | gui | готово |
+| ~~[#3](https://github.com/coder-smookki/GSP-Project-AIst/issues/3)~~ | Мультичаты + именование | gui | готово |
+| [#4](https://github.com/coder-smookki/GSP-Project-AIst/issues/4) | Fork + replay | gui | **открыт**, помечен автором как необязательный |
+| ~~[#5](https://github.com/coder-smookki/GSP-Project-AIst/issues/5)~~ | Corrective RAG: грейдер + переписывание | agent | переписывание включено; грейдер реализован, замерен и выключен — на этом корпусе не окупается |
+| ~~[#6](https://github.com/coder-smookki/GSP-Project-AIst/issues/6)~~ | Реранкер (`RERANK_ENABLED`) | retrieval | реализован, выключен по цене; решение пересматривается на демо-машине |
+| ~~[#7](https://github.com/coder-smookki/GSP-Project-AIst/issues/7)~~ | Дата/время для временных запросов | agent | готово |
+| ~~[#8](https://github.com/coder-smookki/GSP-Project-AIst/issues/8)~~ | Search facade за протоколом `Search` | retrieval | готово |
+| ~~[#9](https://github.com/coder-smookki/GSP-Project-AIst/issues/9)~~ | FilesSource | ingest | готово |
+| ~~[#10](https://github.com/coder-smookki/GSP-Project-AIst/issues/10)~~ | ApiSource | ingest | готово |
+| ~~[#11](https://github.com/coder-smookki/GSP-Project-AIst/issues/11)~~ | docx-парсер + чанкинг атомов | ingest | готово |
+| ~~[#12](https://github.com/coder-smookki/GSP-Project-AIst/issues/12)~~ | Деанонимизация пофайловым словарём | ingest | готово |
+| ~~[#13](https://github.com/coder-smookki/GSP-Project-AIst/issues/13)~~ | Qdrant: коллекция + payload + загрузка | retrieval | готово, проверено на живом сервере |
+| ~~[#14](https://github.com/coder-smookki/GSP-Project-AIst/issues/14)~~ | Qdrant: гибридный поиск dense+BM25+RRF | retrieval | готово, проверено на живом сервере |
+| ~~[#15](https://github.com/coder-smookki/GSP-Project-AIst/issues/15)~~ | Убрать авторегистрацию, закрыть смену пароля | gui | готово |
+| ~~[#16](https://github.com/coder-smookki/GSP-Project-AIst/issues/16)~~ | Панель источников отставала на вызов модели | gui | готово |
+| ~~[#17](https://github.com/coder-smookki/GSP-Project-AIst/issues/17)~~ | Корректность разбора документов | ingest | готово |
+| ~~[#18](https://github.com/coder-smookki/GSP-Project-AIst/issues/18)~~ | Прогон связки целиком, три дефекта | всё | готово |
+
+**Что осталось сделать.**
+
+- Золотой набор вопросов с эталонными ответами: сейчас качество подтверждается точечными замерами, а не воспроизводимой метрикой.
+- Перезамер на демо-машине (M5 Pro): реранкер, `RETRIEVAL_TOP_K` и грейдер выключены/зафиксированы по цене на 16 ГБ, и на другом железе решения могут поменяться.
+- Запись памяти вынести из синхронного пути ответа.
