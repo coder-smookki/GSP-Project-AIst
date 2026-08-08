@@ -146,8 +146,9 @@ def test_point_id_survives_document_code_change() -> None:
 def test_filter_lives_in_prefetch_not_in_query_filter() -> None:
     """Фильтр собирается отдельно, чтобы уйти внутрь каждой ветки предвыборки.
 
-    Верхнеуровневый ``query_filter`` при слиянии RRF не применяется, поэтому
-    единственное безопасное место фильтра — сам `Prefetch`.
+    Ограничение выражается там, где отбираются кандидаты, и потому не зависит
+    от того, проталкивает ли конкретная версия сервера верхний фильтр в ветки
+    слияния (v1.19.0 проталкивает, см. живой набор тестов).
     """
     built = QdrantSearch._build_filter(["ohrana_truda"], ["procedura"])
     assert isinstance(built, models.Filter)
