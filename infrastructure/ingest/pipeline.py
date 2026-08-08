@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from infrastructure.ingest.areas import classify_areas
 from infrastructure.ingest.chunker import chunk_document
 from infrastructure.ingest.deanon import deanonymize
+from infrastructure.ingest.docx_parse import parse_docx
 from infrastructure.ingest.html_parse import parse_article
 from infrastructure.ingest.models import ParsedDocument
 from infrastructure.retrieval.source import DataSource, RawDocument
@@ -134,9 +135,14 @@ def parse_raw(document: RawDocument) -> ParsedDocument:
             "updated_at": document.updated_at,
         }
         return deanonymize(parse_article(article, source="api"))
-    raise NotImplementedError(
-        f"разбор формата {document.kind!r} пока не реализован "
-        "(документ {document.doc_id})"
+
+    if document.kind == "docx":
+        # Для .docx источник кладёт в content путь к файлу: парсер читает
+        # архив сам, чтобы не держать его целиком в памяти дважды.
+        return deanonymize(parse_docx(document.content, source="files"))
+
+    raise ValueError(
+        f"документ {document.doc_id}: неизвестный формат {document.kind!r}"
     )
 
 

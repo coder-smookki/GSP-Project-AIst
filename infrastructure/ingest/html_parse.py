@@ -293,35 +293,34 @@ def _clean_title(title: str) -> str:
     return numbered.group("title").strip() if numbered else title.strip()
 
 
-def parse_article(article: dict, *, source: str = "api") -> ParsedDocument:
-    """Разбирает статью базы знаний в структурированный документ.
+def build_document(
+    blocks: list[tuple[str, str]],
+    *,
+    doc_id: str,
+    doc_code: str,
+    doc_title: str,
+    source: str,
+    updated_at: str | None = None,
+) -> ParsedDocument:
+    """Собирает документ из плоского списка блоков.
+
+    Общая часть для всех парсеров: HTML статьи и .docx приходят в разной
+    разметке, но после извлечения блоков логика одинаковая — заголовки
+    открывают разделы, абзацы режутся на пункты, продолжения приклеиваются.
 
     Args:
-        article: Объект статьи из API — поле ``data`` ответа
-            ``GET /api/knowledgebase/article/{id}``. Обязательны ключи
-            ``id`` и ``content``; ``name`` и ``updated_at`` необязательны.
-        source: Идентификатор источника, попадает в метаданные чанков.
+        blocks: Пары ``(тег, текст)``; теги — ``h1``, ``h2``, ``h3``, ``p``,
+            ``li``, ``td``.
+        doc_id: Идентификатор документа в источнике.
+        doc_code: Код документа для цитат.
+        doc_title: Название документа.
+        source: Идентификатор источника.
+        updated_at: Отметка последнего изменения.
 
     Returns:
-        ParsedDocument: Документ с разделами и атомами. Словарь
-        деанонимизации не заполняется — это задача шага `deanon`.
-
-    Raises:
-        ValueError: Если в статье нет идентификатора или содержимого.
+        ParsedDocument: Документ с разделами и атомами; словарь
+        деанонимизации не заполняется.
     """
-    article_id = str(article.get("id") or "").strip()
-    if not article_id:
-        raise ValueError("в статье отсутствует идентификатор")
-    content = article.get("content")
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError(f"статья {article_id}: пустое содержимое")
-
-    raw_title = str(article.get("name") or "").strip()
-    blocks = extract_blocks(content)
-
-    doc_title = _clean_title(raw_title)
-    doc_code = _doc_code(article_id, raw_title)
-
     sections: list[ParsedSection] = []
     current_no = ""
     current_title = ""
@@ -329,6 +328,7 @@ def parse_article(article: dict, *, source: str = "api") -> ParsedDocument:
     atoms: list[Atom] = []
     pending_clause: str | None = None
     order = 0
+    title = doc_title
 
     def close_section() -> None:
         """Закрывает текущий раздел и добавляет его в результат."""
@@ -346,8 +346,8 @@ def parse_article(article: dict, *, source: str = "api") -> ParsedDocument:
 
     for tag, text in blocks:
         if tag == "h1":
-            if not SECTION_HEAD.match(text) and not doc_title:
-                doc_title = text
+            if not SECTION_HEAD.match(text) and not title:
+                title = text
             continue
 
         if tag == "h3":
@@ -418,18 +418,53 @@ def parse_article(article: dict, *, source: str = "api") -> ParsedDocument:
 
     close_section()
 
-    document = ParsedDocument(
-        doc_id=article_id,
+    return ParsedDocument(
+        doc_id=doc_id,
         doc_code=doc_code,
-        doc_title=doc_title or doc_code,
+        doc_title=title or doc_code,
         source=source,
-        updated_at=str(article.get("updated_at") or "") or None,
+        updated_at=updated_at,
         sections=tuple(sections),
     )
+
+
+def parse_article(article: dict, *, source: str = "api") -> ParsedDocument:
+    """Разбирает статью базы знаний в структурированный документ.
+
+    Args:
+        article: Объект статьи из API — поле ``data`` ответа
+            ``GET /api/knowledgebase/article/{id}``. Обязательны ключи
+            ``id`` и ``content``; ``name`` и ``updated_at`` необязательны.
+        source: Идентификатор источника, попадает в метаданные чанков.
+
+    Returns:
+        ParsedDocument: Документ с разделами и атомами. Словарь
+        деанонимизации не заполняется — это задача шага `deanon`.
+
+    Raises:
+        ValueError: Если в статье нет идентификатора или содержимого.
+    """
+    article_id = str(article.get("id") or "").strip()
+    if not article_id:
+        raise ValueError("в статье отсутствует идентификатор")
+    content = article.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError(f"статья {article_id}: пустое содержимое")
+
+    raw_title = str(article.get("name") or "").strip()
+    document = build_document(
+        extract_blocks(content),
+        doc_id=article_id,
+        doc_code=_doc_code(article_id, raw_title),
+        doc_title=_clean_title(raw_title),
+        source=source,
+        updated_at=str(article.get("updated_at") or "") or None,
+    )
+
     logger.info(
         "разобрана статья %s (%s): разделов %d, атомов %d",
         article_id,
-        doc_code,
+        document.doc_code,
         len(document.sections),
         len(document.atoms()),
     )
