@@ -62,7 +62,12 @@ _AREA_RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
             r"охран\w+\s+труда|услов\w+\s+труда|соут|специальн\w+\s+оценк", re.I
         ),
     ),
-    ("promyshlennaya_bezopasnost", re.compile(r"промышленн\w+\s+безопасн", re.I)),
+    (
+        "promyshlennaya_bezopasnost",
+        # Между определением и «безопасностью» бывают другие слова:
+        # «промышленной И ПОЖАРНОЙ безопасности» — реальный заголовок корпуса.
+        re.compile(r"промышленн\w+(?:\s+\w+){0,3}\s+безопасн", re.I),
+    ),
     (
         "proizvodstvennaya_bezopasnost",
         re.compile(

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,7 @@ from infrastructure.retrieval.kb_client import (
 logger = logging.getLogger(__name__)
 
 #: Расширения файлов, которые умеет читать `FilesSource`.
-SUPPORTED_SUFFIXES = frozenset({".docx", ".html", ".htm"})
+SUPPORTED_SUFFIXES = frozenset({".docx", ".html", ".htm", ".json"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,8 +72,8 @@ class RawDocument:
     Args:
         doc_id: Идентификатор документа в источнике.
         title: Название документа.
-        kind: Формат содержимого: ``html`` или ``docx``. По нему конвейер
-            выбирает парсер.
+        kind: Формат содержимого: ``html``, ``docx`` или ``article_json``
+            (выгрузка ответа API). По нему конвейер выбирает парсер.
         content: Содержимое. Для ``html`` — разметка строкой, для ``docx`` —
             путь к файлу строкой (парсер .docx читает файл сам).
         section_id: Идентификатор раздела.
@@ -362,17 +363,46 @@ class FilesSource:
 
         ref = self._ref(candidate)
         suffix = candidate.suffix.lower()
+
         if suffix == ".docx":
-            content = str(candidate)
-            kind = "docx"
-        else:
-            content = candidate.read_text(encoding="utf-8", errors="replace")
-            kind = "html"
+            # Парсер .docx читает файл сам, поэтому передаём путь.
+            return RawDocument(
+                doc_id=ref.doc_id,
+                title=ref.title,
+                kind="docx",
+                content=str(candidate),
+                section_id=ref.section_id,
+                updated_at=ref.updated_at,
+            )
+
+        text = candidate.read_text(encoding="utf-8", errors="replace")
+
+        if suffix == ".json":
+            # Выгрузка ответа API: тот же документ, что пришёл бы по сети.
+            # Позволяет индексировать корпус без доступа к базе знаний.
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"файл {doc_id!r}: некорректный JSON — {exc}") from exc
+            article = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(article, dict):
+                article = payload if isinstance(payload, dict) else {}
+            if not article.get("content"):
+                raise ValueError(f"файл {doc_id!r}: в выгрузке нет поля content")
+            return RawDocument(
+                doc_id=str(article.get("id") or ref.doc_id),
+                title=str(article.get("name") or ref.title),
+                kind="html",
+                content=str(article["content"]),
+                section_id=str(article.get("section_id") or "") or ref.section_id,
+                updated_at=str(article.get("updated_at") or "") or ref.updated_at,
+            )
+
         return RawDocument(
             doc_id=ref.doc_id,
             title=ref.title,
-            kind=kind,
-            content=content,
+            kind="html",
+            content=text,
             section_id=ref.section_id,
             updated_at=ref.updated_at,
         )
