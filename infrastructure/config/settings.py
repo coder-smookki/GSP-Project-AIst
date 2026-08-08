@@ -1,10 +1,19 @@
+"""Настройки приложения.
+
+Значения читаются из окружения и файла ``.env``. Секреты (пароль к базе
+знаний) в репозиторий не попадают: ``.env`` в ``.gitignore``.
+"""
+
 from functools import lru_cache
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # LLM
+    """Конфигурация всех слоёв: модели, поиск, источник корпуса."""
+
+    # ------------------------------------------------------------------ LLM
     llm_provider: str = "ollama-local"  # ollama-local | llamacpp | vllm
     llm_model: str = "qwen3.6:35b-a3b-nvfp4"
     llm_support_model: str = "None"
@@ -15,19 +24,129 @@ class Settings(BaseSettings):
     llamacpp_base_url: str = "http://localhost:8080"
     vllm_base_url: str = "http://localhost:8000"
 
-    # Embeddings
+    # ----------------------------------------------------------- эмбеддинги
     embedding_provider: str = "ollama-local"  # ollama-local | llamacpp | vllm
-    embedding_model: str = "qwen3-embedding:8b"
+    embedding_model: str = "bge-m3"
 
-    # Observability (OpenLIT / OTLP)
-    otlp_endpoint: str = ""  # e.g. http://openlit:4318; empty = tracing disabled
+    #: Инструкция, добавляемая к тексту ЗАПРОСА перед кодированием.
+    #:
+    #: Нужна моделям семейства qwen3-embedding: их карточка прямо
+    #: предупреждает, что без инструкции на стороне запроса качество поиска
+    #: падает. Для bge-m3 инструкция не нужна и поле остаётся пустым —
+    #: у неё запрос и документ кодируются одинаково.
+    embedding_query_instruction: str = ""
 
-    # Retrieval: синтетический поиск (тест-дубль) before real (Qdrant)
+    # ------------------------------------------ наблюдаемость (OpenLIT/OTLP)
+    otlp_endpoint: str = ""  # напр. http://openlit:4318; пусто = трассировка выключена
+
+    # ---------------------------------------------------------------- поиск
+    #: Реализация протокола Search: ``qdrant`` в проде, ``mock`` в тестах и
+    #: при отладке интерфейса без поднятого индекса.
+    retrieval_provider: str = "mock"  # mock | qdrant
+
+    #: Устаревший флаг, оставлен ради совместимости с существующим кодом и
+    #: тестами: при ``True`` перекрывает `retrieval_provider`.
     use_mock_search: bool = False
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    qdrant_url: str = "http://localhost:6333"
+    qdrant_api_key: str = ""
+    qdrant_timeout: float = 10.0
+
+    #: Имя АЛИАСА коллекции, а не самой коллекции. Поколения индекса живут
+    #: под именами ``<alias>_v1``, ``<alias>_v2``; переключение между ними
+    #: атомарно, поэтому приложение всегда обращается только к алиасу.
+    qdrant_collection: str = "aist_chunks"
+
+    #: Число чанков, отдаваемых в контекст модели.
+    retrieval_top_k: int = 8
+
+    #: Сколько кандидатов берёт каждый канал гибрида до слияния.
+    retrieval_prefetch: int = 30
+
+    #: Константа RRF. У Qdrant значение по умолчанию 2, а ранги нумеруются
+    #: с нуля, поэтому классические 60 здесь ведут себя иначе, чем в статьях.
+    #: Значение подбирается замером на золотом наборе, а не по фольклору.
+    retrieval_rrf_k: int = 60
+
+    #: Размер батча загрузки точек в Qdrant.
+    ingest_batch_size: int = 128
+
+    # ------------------------------------------------- источник корпуса (API)
+    kb_base_url: str = "https://hihub.ru/"
+    kb_email: str = ""
+    kb_password: str = Field(default="", repr=False)
+    kb_section_id: int = 44030
+    kb_token_name: str = "aist"
+    kb_per_page: int = 100
+    kb_max_retries: int = 3
+
+    #: Каталог локальной выгрузки корпуса для `FilesSource`.
+    corpus_dir: str = "tests/fixtures/corpus"
+
+    #: Офлайн-режим передаваемого образа. При ``True`` источники, ходящие в
+    #: сеть, не инициализируются вовсе — «0 внешних API» блокирующий критерий
+    #: кейса, и нарушить его молча нельзя.
+    aist_offline: bool = False
+
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
+
+    @field_validator("retrieval_provider")
+    @classmethod
+    def _check_provider(cls, value: str) -> str:
+        """Проверяет, что выбрана известная реализация поиска.
+
+        Args:
+            value: Значение настройки.
+
+        Returns:
+            str: Значение в нижнем регистре.
+
+        Raises:
+            ValueError: Если реализация неизвестна. Опечатка в имени иначе
+                привела бы к молчаливому откату на заглушку, и демо шло бы
+                на синтетическом корпусе.
+        """
+        normalized = value.strip().lower()
+        if normalized not in {"mock", "qdrant"}:
+            raise ValueError(
+                f"неизвестная реализация поиска {value!r}: ожидается mock или qdrant"
+            )
+        return normalized
+
+    @field_validator("retrieval_top_k", "retrieval_prefetch", "ingest_batch_size")
+    @classmethod
+    def _check_positive(cls, value: int) -> int:
+        """Проверяет, что числовая настройка положительна.
+
+        Args:
+            value: Значение настройки.
+
+        Returns:
+            int: Проверенное значение.
+
+        Raises:
+            ValueError: Если значение не положительно.
+        """
+        if value <= 0:
+            raise ValueError(f"значение должно быть положительным, получено {value}")
+        return value
+
+    def resolved_retrieval_provider(self) -> str:
+        """Возвращает фактическую реализацию поиска с учётом старого флага.
+
+        Returns:
+            str: ``mock`` или ``qdrant``.
+        """
+        return "mock" if self.use_mock_search else self.retrieval_provider
 
 
 @lru_cache
 def get_settings() -> Settings:
+    """Возвращает единственный экземпляр настроек.
+
+    Returns:
+        Settings: Настройки приложения; результат кешируется.
+    """
     return Settings()
