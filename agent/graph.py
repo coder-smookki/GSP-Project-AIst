@@ -1,6 +1,7 @@
 import json
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage
 from langchain_core.runnables.config import RunnableConfig
@@ -34,6 +35,8 @@ MODEL_SYSTEM_MESSAGE = """Ты — ассистент АИст, работающ
 7. Никогда не показывай плейсхолдеры вида [ОРГАНИЗАЦИЯ_12] — вместо них пиши «(наименование скрыто)».
 8. Не показывай внутренние рассуждения — только итоговый ответ.
 
+Сегодняшняя дата: {today}. Опирайся на неё в вопросах о сроках и периодичности; не выдумывай даты, которых нет в CONTEXT.
+
 Память о пользователях (долгосрочные факты):
 {memory}"""
 
@@ -51,6 +54,30 @@ Format:
 {{"memories": [{{"content": "fact about user"}}]}}
 
 JSON:"""
+
+
+#: Часовой пояс, в котором работает заказчик.
+MSK = timezone(timedelta(hours=3))
+
+
+def today_msk(config: RunnableConfig | None = None) -> str:
+    """Возвращает сегодняшнюю дату в московском времени.
+
+    Дату можно передать снаружи через ``config["configurable"]["today"]`` —
+    это нужно тестам: без фиксированной даты ответы на вопросы о сроках
+    невоспроизводимы, и тест на них написать нельзя.
+
+    Args:
+        config: Конфигурация запуска графа.
+
+    Returns:
+        str: Дата в формате ``ДД.ММ.ГГГГ``.
+    """
+    if config:
+        supplied = (config.get("configurable") or {}).get("today")
+        if supplied:
+            return str(supplied)
+    return datetime.now(MSK).strftime("%d.%m.%Y")
 
 
 def _parse_memory_json(text: str) -> list[dict] | None:
@@ -138,7 +165,11 @@ def create_app_agent(
             )
 
         all_messages: list = [
-            SystemMessage(MODEL_SYSTEM_MESSAGE.format(memory=info, context=context)),
+            SystemMessage(
+                MODEL_SYSTEM_MESSAGE.format(
+                    memory=info, context=context, today=today_msk(config)
+                )
+            ),
             *state["messages"],
         ]
 

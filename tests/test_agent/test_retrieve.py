@@ -99,3 +99,37 @@ class TestRetrieveNode:
         retrieved = result.get("retrieved")
         assert retrieved
         assert all(r["section_title"] == "2.2" for r in retrieved)
+
+
+class TestTodayInjection:
+    """Дата в рантайме: без неё вопросы о сроках отвечаются вслепую."""
+
+    def test_today_is_deterministic_when_supplied(self):
+        """Переданная снаружи дата побеждает системные часы.
+
+        Без этого тест на вопросы вида «в какие сроки» невоспроизводим:
+        ответ менялся бы каждый день.
+        """
+        from agent.graph import today_msk
+
+        config = {"configurable": {"today": "01.02.2026"}}
+        assert today_msk(config) == "01.02.2026"
+
+    def test_today_falls_back_to_moscow_clock(self):
+        """Без явной даты берётся московское время."""
+        from datetime import datetime
+
+        from agent.graph import MSK, today_msk
+
+        assert today_msk(None) == datetime.now(MSK).strftime("%d.%m.%Y")
+        assert today_msk({}) == datetime.now(MSK).strftime("%d.%m.%Y")
+
+    def test_prompt_has_today_placeholder(self):
+        """Промпт действительно получает дату, а не игнорирует её."""
+        from agent.graph import MODEL_SYSTEM_MESSAGE
+
+        assert "{today}" in MODEL_SYSTEM_MESSAGE
+        rendered = MODEL_SYSTEM_MESSAGE.format(
+            memory="", context="", today="09.08.2026"
+        )
+        assert "09.08.2026" in rendered
