@@ -1,4 +1,5 @@
 import json
+import logging
 import uuid
 
 from langchain_core.messages import HumanMessage, RemoveMessage, SystemMessage
@@ -7,10 +8,13 @@ from langgraph.graph import START, StateGraph
 from langgraph.store.base import BaseStore
 
 from domain.memory import MemoryCollection
+from infrastructure.retrieval.qdrant_search import SearchUnavailable
 from infrastructure.retrieval.search import Search, to_citation
 
 from .events import emit
 from .state import AgentState
+
+logger = logging.getLogger(__name__)
 
 MODEL_SYSTEM_MESSAGE = """Ты — ассистент АИст, работающий на базе корпоративной базы знаний (регламенты ИСМ.СМОЗиОБТ: охрана труда, промышленная безопасность, ГО и ЧС) и долгосрочной памяти о пользователях.
 
@@ -114,13 +118,21 @@ def create_app_agent(
 
         info = "\n".join(f"- {mem.value['content']}" for mem in memories)
 
-        context = (
-            "\n\n".join(
-                f"[{n}] {c['snippet']}"
-                for n, c in enumerate(state.get("retrieved", []), start=1)
+        if state.get("retrieval_failed"):
+            context = (
+                "ПОИСК ПО БАЗЕ ЗНАНИЙ ВРЕМЕННО НЕДОСТУПЕН. Ответь ровно: "
+                "«Поиск по базе знаний временно недоступен, ответить по "
+                "регламентам не могу.» Не отвечай по своим общим знаниям и не "
+                "говори, что информации нет: информация есть, недоступен поиск."
             )
-            or "В базе знаний нет выдержек для этого запроса."
-        )
+        else:
+            context = (
+                "\n\n".join(
+                    f"[{n}] {c['snippet']}"
+                    for n, c in enumerate(state.get("retrieved", []), start=1)
+                )
+                or "В базе знаний нет выдержек для этого запроса."
+            )
 
         all_messages: list = [
             SystemMessage(MODEL_SYSTEM_MESSAGE.format(memory=info, context=context)),
@@ -148,7 +160,20 @@ def create_app_agent(
         if not query:
             return {}
 
-        hits = await search.query(query, sections=state.get("sections"))
+        try:
+            hits = await search.query(
+                query,
+                sections=state.get("sections"),
+                areas=state.get("areas"),
+            )
+        except SearchUnavailable as exc:
+            # Третий исход, отличимый от «ничего не найдено». Пустая выдача
+            # заставила бы ассистента ответить «В базе знаний информации
+            # нет» — авария замаскировалась бы под правильный ответ.
+            logger.error("поиск недоступен: %s", exc)
+            emit("trace", {"stage": "retrieve", "status": "unavailable"})
+            return {"retrieved": [], "followups": [], "retrieval_failed": True}
+
         items = [
             to_citation(chunk, n, score).to_dict()
             for n, (chunk, score) in enumerate(hits, 1)

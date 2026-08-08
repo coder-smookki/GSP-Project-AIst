@@ -10,3 +10,5 @@ class AgentState(TypedDict):
     sections: NotRequired[list[str]]
     retrieved: NotRequired[list[dict]]
     followups: NotRequired[list[str]]
+    areas: NotRequired[list[str]]
+    retrieval_failed: NotRequired[bool]
