@@ -161,6 +161,90 @@ open http://localhost:3000   # OpenLIT UI
 
 > Почему две команды? Compose по умолчанию читает только `docker-compose.yml`. Профиль `obs` и сервисы OpenLIT объявлены в **отдельном файле** `docker-compose.observability.yml`, поэтому его нужно явно указывать флагом `-f` — иначе `--profile obs` молча ничего не поднимет.
 
+### Оркестрация индексации через Prefect (опционально)
+
+Индексацию можно гонять не только по команде (`uv run python scripts/ingest.py`),
+но и как отдельный сервис Prefect: сервер с UI на `:4200` (профиль `orc`),
+деплоймент `aist-ingest`, расписание на cron и запуск по кнопке из браузера.
+Так же, как и наблюдаемость, это дополнение к базовому стеку — все индексы `qdrant`
+и модели Ollama на хосте берутся из него.
+
+```sh
+cd deploy
+cp .env.example .env
+
+# 1. Собрать образ раннера и поднять сервер с воркером:
+docker compose -f docker-compose.yml -f docker-compose.orchestration.yml --profile orc up -d --build
+
+# 2. UI Prefect:
+open http://localhost:4200   # deployments/aist-ingest/aist-ingest
+```
+
+Что происходит: контейнер `prefect-runner` поднимает `infrastructure.orchestration.serve`,
+который регистрирует deployment «aist-ingest» и держит воркер, ждущий запусков.
+Параметры прогона задаются переменными `AIST_*` из `.env` (см. таблицу в конце):
+`AIST_CRON` — расписание, `AIST_SOURCE_KIND` — `files`/`api`, `AIST_SWITCH_ALIAS` —
+принимать ли поколение после успешного прогона.
+
+Ручной запуск из UI: Deployments → aist-ingest → Run. Или по CLI:
+
+```sh
+PREFECT_API_URL=http://127.0.0.1:4200/api uv run prefect deployment run 'aist-ingest/aist-ingest'
+```
+
+Ежедневный запуск настраивается расписанием деплоймента: `AIST_CRON` в `.env`
+(например `AIST_CRON="0 2 * * *"` = каждые сутки в 02:00). После правки —
+пересобрать раннер (`up -d --build prefect-runner`), расписание видно на
+странице Deployments → aist-ingest (Schedule). Дополнительно к хеш-пропуску
+инкремента прогон идёт по `/corpus` (копия выгрузки) — лучше монтировать
+каталог, куда выгрузка складывается перед запуском.
+
+### Как смотреть прогон в UI
+
+Все прогоны собираются в **Runs → Flow runs**: там список, каждый со статусом
+(Scheduled / Running / Completed / Failed), длительностью и кнопками Rerun
+(повторить последние параметры) и Retry (доделать упавший). Открыв прогон:
+
+| Вкладка | Что показывает |
+| --- | --- |
+| **Overview / Runs** | Дерево «Flow → таски»: каждый документ — родительская задача `документ NNNNN.json`, внутри неё ветка из пяти фаз конвейера: `загрузка и разбор`, `разбиение на чанки`, `классификация областей`, `эмбеддинги`, `запись` (+ `sweep` внутри записи). Так в UI видно весь граф шагов индексации, а не только «документ готов». |
+| **Logs** | Журнал прогона: по каждому документу и каждой фазе «начало / готово, чанков N» + предупреждения конвейера. Сюда же попадает вывод конвейера благодаря `[tool.prefect] logging.extra_loggers` в `pyproject.toml`. |
+| **Artifacts** | Markdown-артефакт `ingest-report` — сводка: источник, коллекция, число документов/чанков/ошибок. Создаётся из `create_markdown_artifact` в конце `ingest_flow` (пусто между прогонами, обновляется в каждом). |
+
+То есть всё, что выглядит как «только факт выполнения» — это потому что задачи
+и артефакт живут **внутри** прогона, их надо открыть кликом по конкретной записи
+Flow run в списке Runs. Сразу «шаги и файлы» на главной странице UI не отображаются.
+
+> У одной задачи фазы ветвятся по режиму: в dry-run граф обрывается на
+> «разбиение на чанки» (классификация/эмбеддинги/запись не нужны), в полноценном
+> прогоне с `full=true` видны все пять фаз. Если документ уже в индексе,
+> обработка честно заканчивается «пропущено» до эмбеддингов — это инкремент,
+> а не поломка.
+
+### Как дебажить; куда смотреть
+
+| Симптом | Где искать | Типичная причина |
+| --- | --- | --- |
+| Деплоймента нет в Deployments | `docker logs deploy-prefect-runner-1` | Раннер не успел зарегистрироваться или упал на старте; проверь, что он «serving» в логах |
+| Прогон запланирован, но не бежит | Runs → прогон → Actual starts/finishes; `docker logs deploy-prefect-runner-1` | Раннер не полил очередь (процесс serve упал); рестарт: `docker compose ... restart prefect-runner` |
+| Прогон красный (Failed) | Runs → прогон → Details/Logs | Смотри последние строки логов; чаще всего путь к корпусу (bind-mount берется из `AIST_CORPUS_MOUNT`, внутри он `/corpus`) или учётные данные API |
+| «Документов: 0» в артефакте | Артефакт + `docker logs deploy-prefect-runner-1` | Корпус не виден из контейнера: путь `AIST_CORPUS_MOUNT` не указывает на реальную папку на хосте |
+| Задачи по документам не показываются | Runs → прогон → Task Runs | Обычно просто не открыт сам прогон; если их реально нет — конвейер сработал без `step` (см. tests) |
+| Логи конвейера не видно в прогоне | `dock logs deploy-prefect-runner-1` | Убедись, что `[tool.prefect] logging.extra_loggers` на месте (`pyproject.toml`) и контейнер пересобран после изменения |
+
+Быстрый просмотр логов контейнера (не UI):
+
+```sh
+docker compose -f docker-compose.orchestration.yml --profile orc logs -f prefect-runner   # поток прогонов
+docker compose -f docker-compose.orchestration.yml --profile orc logs prefect-server      # метаданные/API
+```
+
+Метаданные Prefect хранятся в named-volume `prefect_data` (SQLite в контейнере) —
+для одного планировщика этого достаточно, Postgres из основного стека не трогается.
+
+> Образ раннера строится из исходников проекта (`Dockerfile.orchestration`).
+> После изменений кода: `docker compose -f docker-compose.yml -f docker-compose.orchestration.yml --profile orc up -d --build prefect-runner`.
+
 ## Остановка, рестарт, обновление
 
 Все команды выполняются из папки `deploy`.
@@ -238,6 +322,11 @@ docker logs -n 100 deploy-aegra-1 --timestamps  # последние строк�
 | `GRADING_ENABLED` | base | `0` | Отсев фрагментов моделью; на текущем корпусе не окупается |
 | `KB_EMAIL` / `KB_PASSWORD` | base | (пусто) | Доступ к API базы знаний для `--source api` |
 | `AIST_OFFLINE` | base | `0` | `1` запрещает обращения наружу: источник по API не стартует |
+| `AIST_CRON` | orc | (пусто, нет расписания) | Cron-расписание индексации, напр. `0 2 * * *` — ежедневно в 02:00. Пусто = только ручные запуски из UI |
+| `AIST_SOURCE_KIND` | orc | `files` | Источник деплоймента: `files` (локальный корпус) / `api` (база знаний) |
+| `AIST_CORPUS_MOUNT` / `AIST_CORPUS_DIR` | orc | `../corpus` / `/corpus` | Каталог корпуса на хосте и путь внутри раннера |
+| `AIST_SECTION_ID` / `AIST_LIMIT` | orc | (пусто) | Раздел базы знаний / лимит запросов для деплоймента |
+| `AIST_DRY_RUN` / `AIST_FULL` / `AIST_SWITCH_ALIAS` | orc | `0` / `0` / `1` | Сухой прогон / полная переиндексация / переключить алиас после успеха |
 | `OLLAMA_LOCAL_BASE_URL` | base | `http://host.docker.internal:11434` | URL Ollama из Docker |
 | `POSTGRES_USER/PASSWORD/DB/HOST` | base | `postgres/postgres/aegra/postgres` | Подключение к postgres |
 | `GUI_PORT` / `AEGRA_URL` | base | `8000` / `http://aegra:2026` | GUI порт / адрес aegra |

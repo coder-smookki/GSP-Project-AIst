@@ -1,23 +1,3 @@
-"""Разбор HTML-статьи базы знаний в структуру `ParsedDocument`.
-
-Используется стандартная библиотека (`html.parser`): у образа не должно быть
-ни одной зависимости, способной сходить в сеть, а внешний парсер здесь ничего
-не даёт — разметка редактора froala простая и предсказуемая.
-
-Разметка источника (проверено на всех 20 статьях раздела 44030):
-    <title>…</title><section class="cover">…<h1>…</h1></section>
-    <main><nav><ol>…оглавление…</ol></nav>
-      <h2 id="section-1">1. Назначение и область применения</h2>
-      <p>1.1. …</p><p>продолжение пункта…</p>
-      <h2 id="section-2">2. Термины, определения и сокращения</h2>
-      …
-
-Два дефекта конвертера источника обрабатываются явно:
-    1. у первого пункта раздела срезана первая цифра: ``.1.`` вместо ``1.1.``;
-    2. тело пункта разорвано на несколько ``<p>``, а иногда наоборот —
-       два пункта склеены в один абзац.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -26,6 +6,10 @@ from html import unescape
 from html.parser import HTMLParser
 from typing import Final
 
+from infrastructure.ingest.config import (
+    DEFAULT_PARSE,
+    ParsingConfig,
+)
 from infrastructure.ingest.models import (
     Atom,
     ParsedDocument,
@@ -43,39 +27,16 @@ from infrastructure.ingest.patterns import (
     is_false_clause,
     restore_clause,
 )
+from infrastructure.retrieval.source import RawDocument
 
 logger = logging.getLogger(__name__)
 
-#: Теги, содержимое которых не является текстом документа.
-_SKIP_CONTENT = frozenset({"script", "style", "nav"})
-
-#: Блочные теги, порождающие отдельный блок текста.
-_BLOCK_TAGS = frozenset({"p", "li", "h1", "h2", "h3", "h4", "td", "th", "div"})
-
-#: Предел размера статьи. Защищает конвейер от аномального ответа источника:
-#: без него один битый документ съедает память индексатора.
-MAX_CONTENT_CHARS = 4_000_000
-
-#: Предел склейки продолжений в один атом.
-#:
-#: В приложениях и бланках номеров пунктов нет вовсе, поэтому склейка
-#: «продолжение предыдущего пункта» без предела собирает всё приложение в
-#: один атом на десятки тысяч символов. Такой атом бесполезен: он не влезает
-#: в контекст и размывает эмбеддинг. По достижении предела начинается новый
-#: атом с тем же номером пункта.
-MAX_ATOM_CHARS = 1_500
-
 
 class _BlockExtractor(HTMLParser):
-    """Превращает HTML в плоский список блоков ``(тег, текст)``.
-
-    Содержимое ``<nav>`` отбрасывается: это оглавление, дублирующее заголовки
-    разделов. Без отбрасывания оглавление даёт попадание почти на любой
-    запрос по названию раздела и вытесняет содержательные чанки.
-    """
-
-    def __init__(self) -> None:
+    def __init__(self, config: ParsingConfig) -> None:
         super().__init__(convert_charrefs=True)
+        self._skip_content = config.skip_content
+        self._block_tags = config.block_tags
         self.blocks: list[tuple[str, str]] = []
         self._buffer: list[str] = []
         self._tag: str = "p"
@@ -83,13 +44,7 @@ class _BlockExtractor(HTMLParser):
         self._in_table = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        """Обрабатывает открывающий тег.
-
-        Args:
-            tag: Имя тега в нижнем регистре.
-            attrs: Атрибуты тега (не используются, требуются сигнатурой).
-        """
-        if tag in _SKIP_CONTENT:
+        if tag in self._skip_content:
             self._skip_depth += 1
             return
         if tag == "table":
@@ -97,38 +52,27 @@ class _BlockExtractor(HTMLParser):
         if tag == "br":
             self._buffer.append(" ")
             return
-        if tag in _BLOCK_TAGS:
+        if tag in self._block_tags:
             self._flush()
             self._tag = tag
 
     def handle_endtag(self, tag: str) -> None:
-        """Обрабатывает закрывающий тег.
-
-        Args:
-            tag: Имя тега в нижнем регистре.
-        """
-        if tag in _SKIP_CONTENT:
+        if tag in self._skip_content:
             self._skip_depth = max(0, self._skip_depth - 1)
             return
         if tag == "table":
             self._flush()
             self._in_table = False
             return
-        if tag in _BLOCK_TAGS:
+        if tag in self._block_tags:
             self._flush()
 
     def handle_data(self, data: str) -> None:
-        """Накапливает текстовое содержимое текущего блока.
-
-        Args:
-            data: Фрагмент текста между тегами.
-        """
         if self._skip_depth:
             return
         self._buffer.append(data)
 
     def _flush(self) -> None:
-        """Закрывает текущий блок и кладёт его в результат, если он непустой."""
         text = re.sub(r"\s+", " ", unescape("".join(self._buffer))).strip()
         self._buffer.clear()
         if not text:
@@ -141,71 +85,77 @@ class _BlockExtractor(HTMLParser):
         self._tag = "p"
 
     def close(self) -> None:
-        """Завершает разбор, выталкивая незакрытый блок."""
         super().close()
         self._flush()
 
 
-def extract_blocks(html: str) -> list[tuple[str, str]]:
-    """Извлекает из HTML плоский список блоков.
-
-    Args:
-        html: Содержимое поля ``content`` статьи.
-
-    Returns:
-        list[tuple[str, str]]: Пары ``(тег, текст)`` в порядке следования.
-        Пустые блоки отброшены, пробелы схлопнуты.
-
-    Raises:
-        ValueError: Если размер содержимого превышает `MAX_CONTENT_CHARS`.
-    """
-    if len(html) > MAX_CONTENT_CHARS:
-        raise ValueError(
-            f"содержимое статьи слишком велико: {len(html)} симв. "
-            f"при пределе {MAX_CONTENT_CHARS}"
-        )
-    parser = _BlockExtractor()
-    try:
-        parser.feed(html)
-        parser.close()
-    except Exception as exc:
-        logger.warning(
-            "разбор HTML прерван, используем то, что успели собрать: %s", exc
-        )
-    return parser.blocks
-
-
-#: Заголовок раздела, утонувший в конец абзаца.
-#:
-#: Источник иногда не выделяет заголовок тегом, а приклеивает его к концу
-#: предыдущего абзаца, теряя при этом первую цифру номера:
-#: ``…более 0,45 м. 0. Требования к электроустановкам``. Дальше все пункты
-#: приписываются предыдущему разделу, и цитата указывает на несуществующий
-#: пункт. Признаки заголовка: стоит после конца предложения, начинается с
-#: номера, продолжается с заглавной буквы и не оканчивается точкой.
 _GLUED_HEADING: Final[re.Pattern[str]] = re.compile(
     r"(?<=[.:;])\s+(?P<no>\d{1,2})\.\s+(?P<title>[А-ЯЁ][^.]{8,120})\s*$"
 )
 
 
+class HtmlParser:
+    def __init__(self, config: ParsingConfig = DEFAULT_PARSE) -> None:
+        self.config = config
+        self.kind = "html"
+
+    def extract_blocks(self, html: str) -> list[tuple[str, str]]:
+        if len(html) > self.config.max_content_chars:
+            raise ValueError(
+                f"содержимое статьи слишком велико: {len(html)} симв. "
+                f"при пределе {self.config.max_content_chars}"
+            )
+        parser = _BlockExtractor(self.config)
+        try:
+            parser.feed(html)
+            parser.close()
+        except Exception as exc:
+            logger.warning(
+                "разбор HTML прерван, используем то, что успели собрать: %s", exc
+            )
+        return parser.blocks
+
+    def parse(self, raw: RawDocument) -> ParsedDocument:
+        article = {
+            "id": raw.doc_id,
+            "name": raw.title,
+            "content": raw.content,
+            "section_id": raw.section_id,
+            "updated_at": raw.updated_at,
+        }
+        return self.parse_article(article, source="api")
+
+    def parse_article(self, article: dict, *, source: str = "api") -> ParsedDocument:
+        article_id = str(article.get("id") or "").strip()
+        if not article_id:
+            raise ValueError("в статье отсутствует идентификатор")
+        content = article.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError(f"статья {article_id}: пустое содержимое")
+
+        raw_title = str(article.get("name") or "").strip()
+        document = build_document(
+            recover_glued_headings(self.extract_blocks(content)),
+            doc_id=article_id,
+            doc_code=_doc_code(article_id, raw_title),
+            doc_title=_clean_title(raw_title),
+            source=source,
+            updated_at=str(article.get("updated_at") or "") or None,
+        )
+
+        logger.info(
+            "разобрана статья %s (%s): разделов %d, атомов %d",
+            article_id,
+            document.doc_code,
+            len(document.sections),
+            len(document.atoms()),
+        )
+        return document
+
+
 def recover_glued_headings(
     blocks: list[tuple[str, str]],
 ) -> list[tuple[str, str]]:
-    """Вытаскивает заголовки разделов, приклеенные к концу абзацев.
-
-    Номер восстанавливается по ожидаемому следующему разделу: если у
-    найденного заголовка номер не совпадает с ожидаемым, но ожидаемый
-    оканчивается на него (``10`` против ``0``), значит срезана первая цифра.
-    Без такой сверки заголовок «0. Требования к электроустановкам» дал бы
-    раздел с номером 0 и пункты вида ``0.1``.
-
-    Args:
-        blocks: Пары ``(тег, текст)`` после извлечения из разметки.
-
-    Returns:
-        list[tuple[str, str]]: Блоки, где найденные заголовки вынесены
-        отдельными элементами с тегом ``h2``.
-    """
     result: list[tuple[str, str]] = []
     current = 0
     recovered = 0
@@ -230,8 +180,6 @@ def recover_glued_headings(
         expected = current + 1
         number = int(found.group("no"))
         if number != expected and not str(expected).endswith(str(number)):
-            # Число похоже на заголовок, но не продолжает нумерацию —
-            # скорее всего это часть текста. Не трогаем.
             result.append((tag, text))
             continue
 
@@ -248,19 +196,6 @@ def recover_glued_headings(
 
 
 def _split_clauses(text: str, section_no: str) -> list[tuple[str | None, str]]:
-    """Разбивает абзац на пункты по якорным номерам.
-
-    Обрабатывает оба дефекта конвертера: срезанную первую цифру в начале
-    абзаца и номер пункта, приклеенный к концу предыдущего предложения.
-
-    Args:
-        text: Текст одного блока.
-        section_no: Номер текущего раздела для восстановления срезанных номеров.
-
-    Returns:
-        list[tuple[str | None, str]]: Пары ``(номер пункта, текст)``. Номер
-        равен ``None``, если фрагмент является продолжением предыдущего пункта.
-    """
     head = CLAUSE_HEAD.match(text)
     parts: list[tuple[str | None, str]] = []
     cursor = 0
@@ -293,21 +228,7 @@ def _split_clauses(text: str, section_no: str) -> list[tuple[str | None, str]]:
     return parts
 
 
-def _split_oversized(text: str, limit: int = MAX_ATOM_CHARS) -> list[str]:
-    """Режет слишком длинный фрагмент на части по границам предложений.
-
-    В приложениях и бланках источник иногда отдаёт целое приложение одним
-    абзацем в десятки тысяч символов. Такой атом бесполезен: он не влезает в
-    контекст модели, а его эмбеддинг усредняет десяток разных тем.
-
-    Args:
-        text: Текст фрагмента.
-        limit: Предельная длина части в символах.
-
-    Returns:
-        list[str]: Части длиной не более `limit`, кроме случая, когда одно
-        предложение само длиннее предела — оно режется по словам.
-    """
+def _split_oversized(text: str, limit: int) -> list[str]:
     if len(text) <= limit:
         return [text]
 
@@ -332,18 +253,6 @@ def _split_oversized(text: str, limit: int = MAX_ATOM_CHARS) -> list[str]:
 
 
 def _doc_code(article_id: str, title: str) -> str:
-    """Определяет код документа для цитат.
-
-    Args:
-        article_id: Идентификатор статьи в источнике.
-        title: Название статьи.
-
-    Returns:
-        str: Код вида ``Р-У2-59``, если он есть в названии; иначе порядковый
-        номер из названия вида ``(20) …`` как ``ДОК-20``; иначе суррогат
-        ``ДОК-<id>``. Код обязан быть стабильным — на него ссылаются цитаты
-        в ответах и золотой набор eval.
-    """
     found = DOC_CODE.search(title)
     if found:
         return re.sub(r"\s", "", found.group("code")).replace("–", "-")
@@ -354,14 +263,6 @@ def _doc_code(article_id: str, title: str) -> str:
 
 
 def _clean_title(title: str) -> str:
-    """Убирает из названия служебный порядковый префикс.
-
-    Args:
-        title: Название статьи, например ``(20) Регламент …``.
-
-    Returns:
-        str: Название без префикса ``(N)``.
-    """
     numbered = API_TITLE_NO.match(title)
     return numbered.group("title").strip() if numbered else title.strip()
 
@@ -374,26 +275,8 @@ def build_document(
     doc_title: str,
     source: str,
     updated_at: str | None = None,
+    max_atom_chars: int = 1_500,
 ) -> ParsedDocument:
-    """Собирает документ из плоского списка блоков.
-
-    Общая часть для всех парсеров: HTML статьи и .docx приходят в разной
-    разметке, но после извлечения блоков логика одинаковая — заголовки
-    открывают разделы, абзацы режутся на пункты, продолжения приклеиваются.
-
-    Args:
-        blocks: Пары ``(тег, текст)``; теги — ``h1``, ``h2``, ``h3``, ``p``,
-            ``li``, ``td``.
-        doc_id: Идентификатор документа в источнике.
-        doc_code: Код документа для цитат.
-        doc_title: Название документа.
-        source: Идентификатор источника.
-        updated_at: Отметка последнего изменения.
-
-    Returns:
-        ParsedDocument: Документ с разделами и атомами; словарь
-        деанонимизации не заполняется.
-    """
     sections: list[ParsedSection] = []
     current_no = ""
     current_title = ""
@@ -404,7 +287,6 @@ def build_document(
     title = doc_title
 
     def close_section() -> None:
-        """Закрывает текущий раздел и добавляет его в результат."""
         if not current_title and not atoms:
             return
         sections.append(
@@ -424,8 +306,6 @@ def build_document(
             continue
 
         if tag == "h3":
-            # Подзаголовок внутри раздела: раздел не закрывает, но обрывает
-            # склейку — следующий абзац не является продолжением пункта.
             pending_clause = None
             order += 1
             atoms.append(
@@ -461,7 +341,7 @@ def build_document(
                 clause is None
                 and pending_clause is not None
                 and previous is not None
-                and len(previous.text) + len(body) + 1 <= MAX_ATOM_CHARS
+                and len(previous.text) + len(body) + 1 <= max_atom_chars
             )
             if joinable and previous is not None:
                 atoms[-1] = Atom(
@@ -474,7 +354,7 @@ def build_document(
                     order=previous.order,
                 )
                 continue
-            for piece in _split_oversized(body):
+            for piece in _split_oversized(body, max_atom_chars):
                 order += 1
                 atoms.append(
                     Atom(
@@ -501,44 +381,13 @@ def build_document(
     )
 
 
+def extract_blocks(html: str) -> list[tuple[str, str]]:
+    return HtmlParser().extract_blocks(html)
+
+
 def parse_article(article: dict, *, source: str = "api") -> ParsedDocument:
-    """Разбирает статью базы знаний в структурированный документ.
+    return HtmlParser().parse_article(article, source=source)
 
-    Args:
-        article: Объект статьи из API — поле ``data`` ответа
-            ``GET /api/knowledgebase/article/{id}``. Обязательны ключи
-            ``id`` и ``content``; ``name`` и ``updated_at`` необязательны.
-        source: Идентификатор источника, попадает в метаданные чанков.
 
-    Returns:
-        ParsedDocument: Документ с разделами и атомами. Словарь
-        деанонимизации не заполняется — это задача шага `deanon`.
-
-    Raises:
-        ValueError: Если в статье нет идентификатора или содержимого.
-    """
-    article_id = str(article.get("id") or "").strip()
-    if not article_id:
-        raise ValueError("в статье отсутствует идентификатор")
-    content = article.get("content")
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError(f"статья {article_id}: пустое содержимое")
-
-    raw_title = str(article.get("name") or "").strip()
-    document = build_document(
-        recover_glued_headings(extract_blocks(content)),
-        doc_id=article_id,
-        doc_code=_doc_code(article_id, raw_title),
-        doc_title=_clean_title(raw_title),
-        source=source,
-        updated_at=str(article.get("updated_at") or "") or None,
-    )
-
-    logger.info(
-        "разобрана статья %s (%s): разделов %d, атомов %d",
-        article_id,
-        document.doc_code,
-        len(document.sections),
-        len(document.atoms()),
-    )
-    return document
+def parse_raw(document: RawDocument) -> ParsedDocument:
+    return HtmlParser().parse(document)

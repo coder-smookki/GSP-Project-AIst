@@ -1,40 +1,16 @@
-"""Предметные области знаний документа.
-
-Кейс требует, чтобы в интерфейсе можно было выбирать «области знаний»
-(пожарная безопасность, охрана труда, ГО и ЧС). **В источнике этой оси
-нет**: проверено на выгрузке — все 20 статей лежат в одном разделе
-``section_id=44030``, поле ``tags`` у всех пустое. Значит область надо
-выводить самим на этапе индексации.
-
-Важно не путать две оси:
-
-============  ==========================================================
-Ось           Что это
-============  ==========================================================
-`section_type`  структура ДОКУМЕНТА: назначение, термины, процедура,
-                приложение. Служебная ось, нужна для понижения веса
-                оглавления и нормативных ссылок.
-`area`          ПРЕДМЕТНАЯ область. Именно её выбирает пользователь.
-============  ==========================================================
-
-Подмена одной другой уже стоила бы дорого: фильтр по `section_type` со
-значениями «процедуры и сокращения» отсекал 71 % корпуса.
-"""
-
 from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import Final
+
+from infrastructure.ingest.config import DEFAULT_AREA
 
 logger = logging.getLogger(__name__)
 
-#: Код области, в которую попадают документы, не опознанные ни одним
-#: правилом. Пустой список областей запрещён: документ с пустым `area`
-#: невидим при любом выборе пользователя, то есть тихо теряется.
 UNCLASSIFIED: Final[str] = "prochee"
 
-#: Человекочитаемые названия областей для интерфейса.
 AREA_TITLES: Final[dict[str, str]] = {
     "pozharnaya_bezopasnost": "Пожарная безопасность",
     "ohrana_truda": "Охрана труда",
@@ -45,11 +21,6 @@ AREA_TITLES: Final[dict[str, str]] = {
     UNCLASSIFIED: "Прочее",
 }
 
-#: Правила определения области по названию документа.
-#:
-#: Правила не взаимоисключающие: документ может относиться сразу к
-#: нескольким областям, и это нормально — «Регламент проверки знаний
-#: руководителей промышленной и пожарной безопасности» относится к обеим.
 _AREA_RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     ("pozharnaya_bezopasnost", re.compile(r"пожарн", re.I)),
     (
@@ -64,15 +35,13 @@ _AREA_RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     ),
     (
         "promyshlennaya_bezopasnost",
-        # Между определением и «безопасностью» бывают другие слова:
-        # «промышленной И ПОЖАРНОЙ безопасности» — реальный заголовок корпуса.
         re.compile(r"промышленн\w+(?:\s+\w+){0,3}\s+безопасн", re.I),
     ),
     (
         "proizvodstvennaya_bezopasnost",
         re.compile(
             r"производственн\w+\s+безопасн|идентификац\w+\s+опасност"
-            r"|\bриск|происшеств|подрядн\w+\s+организац",
+            r"|\bриск|происшеств|подрядн\w+\s+организ",
             re.I,
         ),
     ),
@@ -83,36 +52,41 @@ _AREA_RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _Rule:
+    code: str
+    pattern: re.Pattern[str]
+
+
+class AreaClassifier:
+    def __init__(self, config=DEFAULT_AREA) -> None:
+        self.config = config
+        with_rules = [
+            _Rule(code, pattern) for code, pattern in (config.rules or _AREA_RULES)
+        ]
+        self._rules = with_rules
+        titles: dict[str, str] = dict(AREA_TITLES)
+        titles.update(config.titles or {})
+        self._titles = titles
+
+    def classify(self, doc_title: str) -> list[str]:
+        matched = [rule.code for rule in self._rules if rule.pattern.search(doc_title)]
+        if not matched:
+            logger.info(
+                "документ %r не отнесён ни к одной области, помечен как %s",
+                doc_title[:80],
+                UNCLASSIFIED,
+            )
+            return [UNCLASSIFIED]
+        return matched
+
+    def title(self, code: str) -> str:
+        return self._titles.get(code, code)
+
+
 def classify_areas(doc_title: str) -> list[str]:
-    """Определяет предметные области документа по его названию.
-
-    Args:
-        doc_title: Название документа, например ``Правила пожарной
-            безопасности``.
-
-    Returns:
-        list[str]: Коды областей в порядке объявления правил. Если ни одно
-        правило не сработало, возвращается ``["prochee"]`` — документ обязан
-        быть виден хотя бы где-то, иначе он молча выпадает из поиска.
-    """
-    matched = [code for code, pattern in _AREA_RULES if pattern.search(doc_title)]
-    if not matched:
-        logger.info(
-            "документ %r не отнесён ни к одной области, помечен как %s",
-            doc_title[:80],
-            UNCLASSIFIED,
-        )
-        return [UNCLASSIFIED]
-    return matched
+    return AreaClassifier().classify(doc_title)
 
 
 def area_title(code: str) -> str:
-    """Возвращает название области для интерфейса.
-
-    Args:
-        code: Код области.
-
-    Returns:
-        str: Человекочитаемое название; сам код, если он неизвестен.
-    """
-    return AREA_TITLES.get(code, code)
+    return AreaClassifier().title(code)

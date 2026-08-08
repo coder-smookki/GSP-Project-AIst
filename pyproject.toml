@@ -29,6 +29,12 @@ dependencies = [
 rerank = [
     "sentence-transformers>=3.0",
 ]
+# Оркестрация индексации: Prefect-обёртки над шагами конвейера
+# (infrastructure.orchestration). Опционально — конвейер работает и без него,
+# обёртки подключаются только когда нужно видеть прогон в Prefect UI.
+orchestration = [
+    "prefect==3.8.2",
+]
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
@@ -65,3 +71,8 @@ extend-ignore = ["RUF001", "RUF002", "RUF003"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["infrastructure*", "agent*", "domain*", "tests*", "gui*"]
+
+[tool.prefect]
+# Логгеры конвейера (infrastructure.*) попадают в журнал прогона Prefect.
+# Без этого шаги пишут только в консоль, и в UI их не видно.
+logging.extra_loggers = ["infrastructure", "aist"]

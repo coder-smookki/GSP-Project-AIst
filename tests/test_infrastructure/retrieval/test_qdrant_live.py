@@ -31,7 +31,7 @@ from infrastructure.retrieval.bm25 import (
 )
 from infrastructure.retrieval.store import QdrantStore
 
-pytestmark = pytest.mark.qdrant
+pytestmark = [pytest.mark.qdrant, pytest.mark.integration]
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 
