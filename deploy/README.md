@@ -48,6 +48,7 @@ sequenceDiagram
 | Сервис      | Роль                                                        | Порты (host)              | Где |
 | ----------- | ----------------------------------------------------------- | -------------------------- | --- |
 | `postgres`  | Postgres + pgvector: чекпоинтеры, состояние, БД GUI          | `5432`                     | base |
+| `qdrant`    | Векторный индекс: гибридный поиск dense + BM25 + RRF          | `6333` (HTTP), `6334` (gRPC) | base |
 | `aegra`     | LangGraph runtime: REST API графа                            | `2026`                     | base |
 | `gui`       | Chainlit-интерфейс для браузера                              | `8000`                     | base |
 | `openlit`   | LLM-наблюдаемость: приём OTLP, UI трасс                     | `3000`, `4317` (gRPC), `4318` (HTTP) | obs |
@@ -60,8 +61,18 @@ sequenceDiagram
 1. **Docker Desktop** (с docker-compose v2).
 2. **Ollama** запущен **на хосте** (не в Docker) и доступен по `http://localhost:11434`.
    - Контейнеры обращаются к нему через `http://host.docker.internal:11434`.
-   - Должны быть скачаны модели: `LLM_MODEL` (по умолчанию `qwen3.6:35b-a3b-nvfp4`) и `EMBEDDING_MODEL` (`qwen3-embedding:8b`).
-3. Свободные порты: `5432, 2026, 8000` (base) и `3000, 4317, 4318, 8123, 9000` (obs).
+   - Должны быть скачаны модели `LLM_MODEL` и `EMBEDDING_MODEL` из `.env`:
+
+     ```sh
+     ollama pull qwen3:8b     # генерация ответа
+     ollama pull bge-m3       # эмбеддинги, 1024 измерения
+     ```
+
+   - Размерность эмбеддера прошита в схему коллекции Qdrant. Смена модели
+     требует нового поколения коллекции и переиндексации, иначе поиск падает
+     с «expected dim: 1024».
+3. Свободные порты: `5432, 6333, 6334, 2026, 8000` (base) и `3000, 4317, 4318, 8123, 9000` (obs).
+4. Около 6 ГБ свободного места на диске под образы и индекс.
 
 ## Первый запуск
 
@@ -79,10 +90,44 @@ docker compose up -d
 Проверка состояния:
 
 ```sh
-docker compose ps          # postgres должен быть (healthy), aegra и gui — Up
-open http://localhost:8000 # GUI: логин admin / admin
+docker compose ps          # postgres и qdrant — (healthy), aegra и gui — Up
+open http://localhost:8000 # интерфейс: логин admin / admin
 open http://localhost:2026/health  # {"status":"healthy",...}
 ```
+
+### 3. Индексация корпуса — обязательный шаг
+
+Без него стек поднимется и интерфейс откроется, но на **любой** вопрос
+ассистент будет честно отвечать «В базе знаний информации нет»: индекс пуст,
+искать не в чем.
+
+```sh
+cd ..                                   # в корень репозитория
+uv run python scripts/ingest.py --source files --switch-alias
+```
+
+Из API базы знаний вместо папки — то же самое с `--source api`; учётные
+данные берутся из `KB_EMAIL` и `KB_PASSWORD` в `.env`.
+
+Индексация занимает около 4-5 минут на 20 документов (1475 фрагментов);
+узкое место — вычисление эмбеддингов, а не загрузка в Qdrant. Повторный
+запуск на неизменившемся корпусе отрабатывает за пару секунд: документы
+сверяются по хешу и переиндексируются только изменившиеся.
+
+Проверка, что индекс на месте:
+
+```sh
+curl -s http://localhost:6333/collections/aist_chunks | grep -o '"points_count":[0-9]*'
+```
+
+### 4. Замер качества (необязательно, но полезно)
+
+```sh
+uv run python scripts/evaluate.py
+```
+
+Считает hit@k, MRR и долю верных отказов на золотом наборе вопросов. Это
+способ убедиться, что после смены модели или настроек качество не просело.
 
 > Важно: первый запуск собирает образы `aegra` и `gui` из исходников
 > (`docker compose build` выполняется автоматически при отсутствии образа).
@@ -179,10 +224,20 @@ docker logs -n 100 deploy-aegra-1 --timestamps  # последние строк�
 | Переменная | Режим | Значение по умолчанию | Описание |
 | ------------------------- | ----- | --------------------- | -------------------------------------- |
 | `LLM_PROVIDER` | base | `ollama-local` | Провайдер реестра моделей |
-| `LLM_MODEL` | base | `qwen3.6:35b-a3b-nvfp4` | Модель для основного агента |
+| `LLM_MODEL` | base | `qwen3:8b` | Модель, пишущая ответ |
+| `LLM_SUPPORT_MODEL` | base | `qwen3:8b` | Служебная: сжатие истории, память, коррекция запроса |
+| `LLM_REASONING` | base | `0` | Размышления модели; включение даёт 16,3 с против 2,5 с при том же ответе |
 | `EMBEDDING_PROVIDER` | base | `ollama-local` | Провайдер эмбеддингов |
-| `EMBEDDING_MODEL` | base | `qwen3-embedding:8b` | Модель эмбеддингов |
-| `LLM_NUM_CTX` | base | `32768` | Окно контекста |
+| `EMBEDDING_MODEL` | base | `bge-m3` | Эмбеддинги, 1024 измерения; смена требует переиндексации |
+| `LLM_NUM_CTX` | base | `16384` | Окно контекста |
+| `RETRIEVAL_PROVIDER` | base | `qdrant` | `qdrant` в бою; `mock` — заглушка на 4 фрагмента, только для тестов интерфейса |
+| `QDRANT_URL` / `QDRANT_COLLECTION` | base | `http://qdrant:6333` / `aist_chunks` | Адрес индекса и алиас коллекции |
+| `RETRIEVAL_TOP_K` | base | `5` | Фрагментов в контекст; **ниже пяти без переоценки не опускать** |
+| `RETRIEVAL_MIN_RELEVANCE` | base | `0.55` | Порог, ниже которого выдача считается пустой и следует честный отказ |
+| `RERANK_ENABLED` | base | `0` | Переоценка кросс-энкодером; требует `uv sync --extra rerank` |
+| `GRADING_ENABLED` | base | `0` | Отсев фрагментов моделью; на текущем корпусе не окупается |
+| `KB_EMAIL` / `KB_PASSWORD` | base | (пусто) | Доступ к API базы знаний для `--source api` |
+| `AIST_OFFLINE` | base | `0` | `1` запрещает обращения наружу: источник по API не стартует |
 | `OLLAMA_LOCAL_BASE_URL` | base | `http://host.docker.internal:11434` | URL Ollama из Docker |
 | `POSTGRES_USER/PASSWORD/DB/HOST` | base | `postgres/postgres/aegra/postgres` | Подключение к postgres |
 | `GUI_PORT` / `AEGRA_URL` | base | `8000` / `http://aegra:2026` | GUI порт / адрес aegra |
