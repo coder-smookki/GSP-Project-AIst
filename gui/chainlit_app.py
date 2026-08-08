@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import uuid
 
 import bcrypt
@@ -44,6 +45,13 @@ AREA_CHOICES = {
 # молча сузил бы поиск, и пользователь не понял бы, почему ответа нет.
 DEFAULT_AREAS: list[str] = []
 
+# Заводить ли учётную запись при первом входе неизвестного логина.
+#
+# По умолчанию ВЫКЛЮЧЕНО: раньше любой незнакомый логин автоматически
+# получал доступ к базе знаний, задав пароль первой попыткой входа.
+# Включать только для локальной отладки.
+ALLOW_SELF_REGISTRATION = os.getenv("ALLOW_SELF_REGISTRATION", "0") == "1"
+
 
 @cl.password_auth_callback
 async def auth_callback(username: str, password: str) -> cl.User | None:
@@ -59,14 +67,25 @@ async def auth_callback(username: str, password: str) -> cl.User | None:
         logger.exception("DB error for %s", username)
         return None
     if user is None:
+        if not ALLOW_SELF_REGISTRATION:
+            # Любой незнакомый логин заводил учётную запись автоматически:
+            # пароль задавался первой же попыткой входа, то есть доступ к
+            # базе знаний получал кто угодно. Для корпоративного контура
+            # это дыра, а на защите — прямой вопрос от ИБ.
+            logger.warning(
+                "вход отклонён: пользователь %s не заведён, "
+                "самостоятельная регистрация выключена",
+                username,
+            )
+            return None
         ok = await create_user(username, password)
         if ok:
-            logger.info("Auto-registered user: %s", username)
+            logger.info("заведён пользователь %s (разрешена саморегистрация)", username)
             return cl.User(
                 identifier=username,
                 metadata={"role": "user", "provider": "database"},
             )
-        logger.info("Create user failed (race?) for %s", username)
+        logger.info("не удалось завести пользователя %s", username)
         return None
 
     if user and bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
@@ -146,6 +165,15 @@ async def on_message(message: cl.Message):
     msg = cl.Message(content="")
     await msg.send()
 
+    # Ключ панели источников должен существовать ДО цикла: панель рисуется
+    # сразу по приходу события sources, а не после конца потока. Раньше
+    # отрисовка стояла после цикла, а поток завершается только когда
+    # отработает узел write_memory — то есть спустя ещё один полный вызов
+    # модели. Источники появлялись на несколько секунд позже ответа, хотя
+    # событие приходило до первого токена.
+    sidebar_key = f"sources-{msg.id or uuid.uuid4()}"
+    sidebar_drawn = False
+
     areas: list[str] | None = cl.user_session.get("areas")
     sources_items: list[dict] = []
     followups: list[str] = []
@@ -185,6 +213,20 @@ async def on_message(message: cl.Message):
                     payload = env.get("payload") or {}
                     if kind == "sources":
                         sources_items = payload.get("items") or []
+                        if sources_items:
+                            await cl.ElementSidebar.set_title(
+                                f"Источники ({len(sources_items)})"
+                            )
+                            await cl.ElementSidebar.set_elements(
+                                [
+                                    cl.Text(
+                                        content=format_sources(sources_items),
+                                        display="inline",
+                                    )
+                                ],
+                                key=sidebar_key,
+                            )
+                            sidebar_drawn = True
                     elif kind == "followups":
                         followups = payload.get("items") or []
                 continue
@@ -203,21 +245,10 @@ async def on_message(message: cl.Message):
 
     msg.content = pick_final_text(partials, assistant_final, error=run_error)
 
-    sidebar_key = f"sources-{msg.id or uuid.uuid4()}"
-
-    if sources_items:
-        marker = f"Источники ({len(sources_items)})"
-        await cl.ElementSidebar.set_title(marker)
-        await cl.ElementSidebar.set_elements(
-            [
-                cl.Text(
-                    content=format_sources(sources_items),
-                    display="inline",
-                )
-            ],
-            key=sidebar_key,
-        )
-    else:
+    # Панель уже отрисована внутри цикла. Здесь остаётся только случай,
+    # когда источников не было вовсе: старую панель надо убрать, иначе она
+    # покажет источники предыдущего вопроса.
+    if not sidebar_drawn:
         await cl.ElementSidebar.set_elements([], key=sidebar_key)
 
     if followups:
@@ -250,13 +281,69 @@ class _ChangePasswordBody(BaseModel):
     new_password: str
 
 
+#: Неудачные попытки смены пароля: логин -> отметки времени.
+_password_attempts: dict[str, list[float]] = {}
+
+#: Сколько неудачных попыток допускается в окне.
+_MAX_ATTEMPTS = 5
+
+#: Длина окна ограничения, с.
+_ATTEMPT_WINDOW = 300.0
+
+
+def _too_many_attempts(username: str) -> bool:
+    """Проверяет, не исчерпан ли лимит попыток смены пароля.
+
+    Эндпоинт не требует сессии, поэтому без ограничения он превращается в
+    оракул для подбора пароля и перечисления учётных записей.
+
+    Args:
+        username: Логин, по которому идёт попытка.
+
+    Returns:
+        bool: ``True``, если лимит исчерпан.
+    """
+    now = time.monotonic()
+    history = _password_attempts.get(username, [])
+    attempts = [t for t in history if now - t < _ATTEMPT_WINDOW]
+    _password_attempts[username] = attempts
+    return len(attempts) >= _MAX_ATTEMPTS
+
+
 @_password_router.post("/change-password")
 async def change_password(body: _ChangePasswordBody):
+    """Меняет пароль пользователя.
+
+    Args:
+        body: Логин, текущий и новый пароль.
+
+    Returns:
+        dict: Признак успеха и сообщение.
+
+    Raises:
+        HTTPException: 429 при исчерпании лимита попыток, 400 при неверных
+            данных. Текст ошибки одинаков для «нет такого пользователя» и
+            «неверный пароль»: разные ответы позволяли бы перечислять
+            существующие учётные записи.
+    """
+    if _too_many_attempts(body.username):
+        logger.warning("превышен лимит попыток смены пароля для %s", body.username)
+        raise HTTPException(
+            status_code=429, detail="Слишком много попыток, повторите позже"
+        )
+
     ok, message = await update_password(
         body.username, body.current_password, body.new_password
     )
     if not ok:
-        raise HTTPException(status_code=400, detail=message)
+        _password_attempts.setdefault(body.username, []).append(time.monotonic())
+        logger.info("смена пароля отклонена для %s: %s", body.username, message)
+        raise HTTPException(
+            status_code=400, detail="Не удалось изменить пароль: проверьте данные"
+        )
+
+    _password_attempts.pop(body.username, None)
+    logger.info("пароль изменён для %s", body.username)
     return {"success": True, "message": message}
 
 

@@ -5,8 +5,8 @@ from agent.graph import create_app_agent
 from domain.context import ContextManager
 from infrastructure.config.model_registry import get_model, setup_registry
 from infrastructure.config.settings import get_settings
-from infrastructure.retrieval.factory import get_search
 from infrastructure.observability.tracer import setup_tracing
+from infrastructure.retrieval.factory import get_search
 
 
 def create_application():
