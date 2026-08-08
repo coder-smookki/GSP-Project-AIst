@@ -55,7 +55,10 @@ class IndexError_(RuntimeError):
 
 
 def chunk_payload(
-    chunk: IngestChunk, areas: list[str], sync_tag: str
+    chunk: IngestChunk,
+    areas: list[str],
+    sync_tag: str,
+    content_hash: str = "",
 ) -> dict[str, Any]:
     """Собирает payload точки из чанка.
 
@@ -64,6 +67,8 @@ def chunk_payload(
         areas: Предметные области документа (см. `infrastructure.ingest.areas`).
         sync_tag: Метка прогона индексации. По ней уборка отличает точки
             текущего прогона от устаревших.
+        content_hash: Отпечаток документа. По нему следующий прогон решает,
+            менялся ли документ, и пропускает неизменившиеся.
 
     Returns:
         dict[str, Any]: Payload точки Qdrant.
@@ -85,6 +90,7 @@ def chunk_payload(
         "order_no": chunk.order_no,
         "area": areas,
         "sync_tag": sync_tag,
+        "content_hash": content_hash,
     }
 
 
@@ -182,6 +188,7 @@ class QdrantStore:
         vectors: list[list[float]],
         areas: list[str],
         sync_tag: str,
+        content_hash: str = "",
     ) -> int:
         """Загружает чанки одного документа батчами.
 
@@ -195,6 +202,7 @@ class QdrantStore:
             vectors: Dense-векторы в том же порядке, что и чанки.
             areas: Предметные области документа.
             sync_tag: Метка текущего прогона индексации.
+            content_hash: Отпечаток документа для инкрементального режима.
 
         Returns:
             int: Число загруженных точек.
@@ -223,7 +231,7 @@ class QdrantStore:
                         DENSE_VECTOR: vector,
                         SPARSE_VECTOR: bm25_document(chunk.text),
                     },
-                    payload=chunk_payload(chunk, areas, sync_tag),
+                    payload=chunk_payload(chunk, areas, sync_tag, content_hash),
                 )
                 for chunk, vector in zip(batch, batch_vectors, strict=True)
             ]

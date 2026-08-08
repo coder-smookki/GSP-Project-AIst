@@ -26,10 +26,19 @@ from infrastructure.ingest.chunker import chunk_document
 from infrastructure.ingest.deanon import deanonymize
 from infrastructure.ingest.docx_parse import parse_docx
 from infrastructure.ingest.html_parse import parse_article
+from infrastructure.ingest.incremental import document_hash
 from infrastructure.ingest.models import ParsedDocument
 from infrastructure.retrieval.source import DataSource, RawDocument
 
 logger = logging.getLogger(__name__)
+
+#: Версия конвейера индексации.
+#:
+#: Входит в отпечаток документа: правка парсера, чанкера или правил
+#: деанонимизации меняет результат при том же исходном тексте, и без учёта
+#: версии инкрементальный прогон пропустил бы документы, которые надо
+#: перестроить. Поднимать при любом изменении, влияющем на состав чанков.
+PIPELINE_VERSION = "2026.08.08-1"
 
 
 @dataclass(slots=True)
@@ -43,6 +52,7 @@ class DocumentOutcome:
         chunks: Число загруженных чанков.
         areas: Определённые предметные области.
         error: Текст ошибки, если документ обработать не удалось.
+        skipped: Документ пропущен как неизменившийся.
     """
 
     doc_id: str
@@ -51,6 +61,7 @@ class DocumentOutcome:
     chunks: int = 0
     areas: list[str] = field(default_factory=list)
     error: str | None = None
+    skipped: bool = False
 
     @property
     def ok(self) -> bool:
@@ -156,6 +167,8 @@ async def ingest_documents(
     limit: int | None = None,
     dry_run: bool = False,
     progress: Callable[[str, int, int], None] | None = None,
+    known_hashes: dict[str, str] | None = None,
+    pipeline_version: str = PIPELINE_VERSION,
 ) -> IngestReport:
     """Прогоняет корпус источника через конвейер в коллекцию Qdrant.
 
@@ -173,6 +186,11 @@ async def ingest_documents(
             конвейер на корпусе, не поднимая инфраструктуру.
         progress: Необязательный обратный вызов ``(название, номер, всего)``
             для отображения хода работы.
+        known_hashes: Отпечатки документов, уже лежащих в индексе. Документ
+            с совпавшим отпечатком не перезагружается. ``None`` означает
+            полный прогон.
+        pipeline_version: Версия конвейера; входит в отпечаток, поэтому
+            правка парсера или чанкера заставляет перестроить всё.
 
     Returns:
         IngestReport: Отчёт с итогами по каждому документу.
@@ -206,14 +224,25 @@ async def ingest_documents(
             # для файлов содержит лишь имя файла.
             outcome.title = document.doc_title or outcome.title
 
+            fingerprint = document_hash(document, pipeline_version)
+
             if not chunks:
                 outcome.error = "конвейер не дал ни одного чанка"
+            elif (
+                known_hashes is not None
+                and known_hashes.get(document.doc_id) == fingerprint
+            ):
+                # Документ не менялся с прошлого прогона: ни разбор, ни
+                # чанкинг, ни версия конвейера. Пропускаем самое дорогое —
+                # вычисление эмбеддингов.
+                outcome.skipped = True
+                outcome.chunks = 0
             elif dry_run:
                 outcome.chunks = len(chunks)
             else:
                 vectors = await embedder.aembed([chunk.text for chunk in chunks])
                 outcome.chunks = await store.upsert_chunks(
-                    collection, chunks, vectors, areas, sync_tag
+                    collection, chunks, vectors, areas, sync_tag, fingerprint
                 )
                 await store.sweep_document(collection, document.doc_id, sync_tag)
         except Exception as exc:
@@ -222,9 +251,11 @@ async def ingest_documents(
         report.outcomes.append(outcome)
 
     logger.info(
-        "индексация завершена: документов %d, чанков %d, ошибок %d",
+        "индексация завершена: документов %d, чанков %d, пропущено без "
+        "изменений %d, ошибок %d",
         total,
         report.total_chunks,
+        sum(1 for item in report.outcomes if item.skipped),
         len(report.failed),
     )
     return report
@@ -240,9 +271,11 @@ def format_report(report: IngestReport, areas_title: Callable[[str], str]) -> st
     Returns:
         str: Многострочный текст для вывода в консоль.
     """
+    skipped = sum(1 for item in report.outcomes if item.skipped)
     lines: list[str] = [
         f"Коллекция: {report.collection}",
-        f"Документов: {len(report.outcomes)}, чанков: {report.total_chunks}",
+        f"Документов: {len(report.outcomes)}, чанков: {report.total_chunks}"
+        + (f", пропущено без изменений: {skipped}" if skipped else ""),
     ]
     if report.switched_from is not None:
         lines.append(f"Алиас переключён, прежняя коллекция: {report.switched_from}")

@@ -93,6 +93,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="после успешного прогона переключить алиас на новое поколение",
     )
     parser.add_argument(
+        "--full",
+        action="store_true",
+        help="полная переиндексация: не пропускать неизменившиеся документы",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="разобрать корпус и посчитать чанки, ничего не записывая",
@@ -206,6 +211,16 @@ async def run(args: argparse.Namespace) -> int:
 
     sync_tag = f"run-{int(time.time())}"
 
+    # Инкремент: читаем отпечатки документов, уже лежащих в коллекции.
+    # Признак изменения — хеш содержимого, а не updated_at источника:
+    # у всех статей выгрузки отметка времени попадает в один интервал
+    # массовой заливки и смысловых правок не отражает.
+    known_hashes: dict[str, str] | None = None
+    if store is not None and not args.full:
+        from infrastructure.ingest.incremental import load_index_state
+
+        known_hashes = await load_index_state(client, collection)
+
     def show(title: str, number: int, total: int) -> None:
         """Печатает ход обработки.
 
@@ -227,6 +242,7 @@ async def run(args: argparse.Namespace) -> int:
             limit=args.limit,
             dry_run=args.dry_run,
             progress=show,
+            known_hashes=known_hashes,
         )
 
         if args.switch_alias and not args.dry_run and not report.failed:
