@@ -15,6 +15,109 @@ _pool: asyncpg.Pool | None = None
 _db_initialized = False
 
 
+#: Схема хранения истории диалогов для слоя данных Chainlit.
+#:
+#: Взята из документации Chainlit по SQLAlchemyDataLayer и приводится
+#: дословно: слой обращается к этим таблицам и колонкам по именам, поэтому
+#: отступление от схемы даёт ошибку в рантайме, а не при старте.
+#:
+#: Таблица `users` не конфликтует с нашей `gui_users`: первая нужна Chainlit
+#: для привязки диалогов к пользователю, вторая хранит пароли для входа.
+CHAINLIT_SCHEMA: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        "id" UUID PRIMARY KEY,
+        "identifier" TEXT NOT NULL UNIQUE,
+        "metadata" JSONB NOT NULL,
+        "createdAt" TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS threads (
+        "id" UUID PRIMARY KEY,
+        "createdAt" TEXT,
+        "name" TEXT,
+        "userId" UUID,
+        "userIdentifier" TEXT,
+        "tags" TEXT[],
+        "metadata" JSONB,
+        FOREIGN KEY ("userId") REFERENCES users("id") ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS steps (
+        "id" UUID PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "type" TEXT NOT NULL,
+        "threadId" UUID NOT NULL,
+        "parentId" UUID,
+        "streaming" BOOLEAN NOT NULL,
+        "waitForAnswer" BOOLEAN,
+        "isError" BOOLEAN,
+        "metadata" JSONB,
+        "tags" TEXT[],
+        "input" TEXT,
+        "output" TEXT,
+        "createdAt" TEXT,
+        "command" TEXT,
+        "start" TEXT,
+        "end" TEXT,
+        "generation" JSONB,
+        "showInput" TEXT,
+        "language" TEXT,
+        "indent" INT,
+        "defaultOpen" BOOLEAN,
+        "modes" JSONB,
+        FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS elements (
+        "id" UUID PRIMARY KEY,
+        "threadId" UUID,
+        "type" TEXT,
+        "url" TEXT,
+        "chainlitKey" TEXT,
+        "name" TEXT NOT NULL,
+        "display" TEXT,
+        "objectKey" TEXT,
+        "size" TEXT,
+        "page" INT,
+        "language" TEXT,
+        "forId" UUID,
+        "mime" TEXT,
+        "props" JSONB,
+        FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS feedbacks (
+        "id" UUID PRIMARY KEY,
+        "forId" UUID NOT NULL,
+        "threadId" UUID NOT NULL,
+        "value" INT NOT NULL,
+        "comment" TEXT,
+        FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
+    )
+    """,
+)
+
+
+def async_database_url() -> str:
+    """Возвращает строку подключения для асинхронного драйвера.
+
+    Слой данных Chainlit работает через SQLAlchemy и требует в схеме
+    подключения ``postgresql+asyncpg``: без этого он падает на попытке
+    выполнить запрос асинхронно.
+
+    Returns:
+        str: Строка подключения с асинхронным драйвером.
+    """
+    if DATABASE_URL.startswith("postgresql+asyncpg://"):
+        return DATABASE_URL
+    return DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+
 async def _ensure_database():
     db_name = DATABASE_URL.rsplit("/", 1)[-1]
     admin_url = DATABASE_URL.rsplit("/", 1)[0] + "/postgres"
@@ -46,10 +149,12 @@ async def init_db():
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        for statement in CHAINLIT_SCHEMA:
+            await conn.execute(statement)
     finally:
         await conn.close()
     _db_initialized = True
-    logger.info("Database initialized (gui_users table ready)")
+    logger.info("база данных готова: gui_users и таблицы истории диалогов")
 
 
 async def get_pool() -> asyncpg.Pool:

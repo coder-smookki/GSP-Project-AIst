@@ -5,6 +5,7 @@ import uuid
 
 import bcrypt
 import chainlit as cl
+from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 from chainlit.input_widget import MultiSelect
 from chainlit.server import app as _chainlit_app
 from fastapi import APIRouter, HTTPException
@@ -17,7 +18,14 @@ from gui.contract import (
     format_sources,
     pick_final_text,
 )
-from gui.db import create_user, get_user, init_db, seed_admin, update_password
+from gui.db import (
+    async_database_url,
+    create_user,
+    get_user,
+    init_db,
+    seed_admin,
+    update_password,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +59,25 @@ DEFAULT_AREAS: list[str] = []
 # получал доступ к базе знаний, задав пароль первой попыткой входа.
 # Включать только для локальной отладки.
 ALLOW_SELF_REGISTRATION = os.getenv("ALLOW_SELF_REGISTRATION", "0") == "1"
+
+
+@cl.data_layer
+def get_data_layer() -> SQLAlchemyDataLayer:
+    """Подключает хранение истории диалогов.
+
+    Даёт сразу три вещи, которые иначе пришлось бы писать руками: сохранение
+    переписки между входами, список диалогов в боковой панели и создание
+    нового чата. Хранилище — тот же Postgres, что и у чекпоинтера агента,
+    отдельного сервиса не появляется.
+
+    Клиент объектного хранилища не задаётся намеренно: файлов пользователь не
+    загружает, а панель источников — текстовый элемент, он ложится в таблицу
+    `elements` целиком.
+
+    Returns:
+        SQLAlchemyDataLayer: Слой данных Chainlit.
+    """
+    return SQLAlchemyDataLayer(conninfo=async_database_url())
 
 
 @cl.password_auth_callback
@@ -160,7 +187,13 @@ async def on_chat_start():
         ).send()
         return
 
-    thread = await client.threads.create()
+    # Идентификатор треда Aegra берём тот же, что у диалога Chainlit.
+    # Так восстановление после перезагрузки страницы становится тривиальным:
+    # не нужно нигде хранить соответствие «диалог -> тред агента», оно
+    # выполняется по построению. `if_exists="do_nothing"` делает вызов
+    # идемпотентным — повторный вход в тот же диалог не создаёт второй тред.
+    thread_id = cl.context.session.thread_id
+    thread = await client.threads.create(thread_id=thread_id, if_exists="do_nothing")
 
     cl.user_session.set("client", client)
     cl.user_session.set("assistant_id", assistants[0]["assistant_id"])
@@ -189,6 +222,41 @@ async def on_chat_start():
             "и пункт регламента, а если сведений в базе нет — я так и скажу."
         )
     ).send()
+
+
+@cl.on_chat_resume
+async def on_chat_resume(thread: dict) -> None:
+    """Восстанавливает диалог, выбранный в списке.
+
+    Сообщения отрисовывает сам Chainlit из слоя данных; здесь остаётся
+    поднять подключение к агенту и вернуть в сессию тот же идентификатор
+    треда, потому что он совпадает с идентификатором диалога.
+
+    Args:
+        thread: Диалог из слоя данных Chainlit.
+    """
+    app_user = cl.user_session.get("user")
+    if app_user is None:
+        await cl.Message(content="Требуется вход в систему.").send()
+        return
+
+    client = get_client(url=AEGRA_URL)
+    assistants = await client.assistants.search()
+    if not assistants:
+        await cl.Message(
+            content="Сервис агента недоступен: не найден ни один ассистент."
+        ).send()
+        return
+
+    thread_id = str(thread.get("id") or cl.context.session.thread_id)
+    await client.threads.create(thread_id=thread_id, if_exists="do_nothing")
+
+    cl.user_session.set("client", client)
+    cl.user_session.set("assistant_id", assistants[0]["assistant_id"])
+    cl.user_session.set("thread_id", thread_id)
+    cl.user_session.set("user_id", app_user.identifier)
+    cl.user_session.set("areas", DEFAULT_AREAS)
+    logger.info("диалог %s восстановлен для %s", thread_id, app_user.identifier)
 
 
 @cl.on_settings_update
