@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import re
 
+from infrastructure.ingest.config import DEFAULT_DEANON, DeanonymizationConfig
 from infrastructure.ingest.models import ParsedDocument, SectionType
 from infrastructure.ingest.patterns import (
     ABBREVIATION_LINE,
@@ -13,10 +14,9 @@ from infrastructure.ingest.patterns import (
 
 logger = logging.getLogger(__name__)
 
-MASK = "(наименование скрыто)"
-
-MIN_VALUE_LEN = 3
-MAX_VALUE_LEN = 120
+MASK = DEFAULT_DEANON.mask
+MIN_VALUE_LEN = DEFAULT_DEANON.min_value_len
+MAX_VALUE_LEN = DEFAULT_DEANON.max_value_len
 
 
 def _normalize_value(value: str) -> str:
@@ -25,7 +25,17 @@ def _normalize_value(value: str) -> str:
     return value
 
 
-def build_glossary(document: ParsedDocument) -> dict[str, str]:
+def _valid_value(value: str, config: DeanonymizationConfig) -> bool:
+    return config.min_value_len <= len(
+        value
+    ) <= config.max_value_len and not PLACEHOLDER.search(value)
+
+
+def build_glossary(
+    document: ParsedDocument,
+    *,
+    config: DeanonymizationConfig = DEFAULT_DEANON,
+) -> dict[str, str]:
     glossary: dict[str, str] = {}
     for section in document.sections:
         if section.type is not SectionType.TERMINY:
@@ -34,17 +44,13 @@ def build_glossary(document: ParsedDocument) -> dict[str, str]:
             for match in GLOSSARY_LINE.finditer(atom.text):
                 key = match.group("key")
                 value = _normalize_value(match.group("value"))
-                if not (MIN_VALUE_LEN <= len(value) <= MAX_VALUE_LEN):
-                    continue
-                if PLACEHOLDER.search(value):
-                    continue
-                glossary.setdefault(key, value)
+                if _valid_value(value, config):
+                    glossary.setdefault(key, value)
             for match in GLOSSARY_LINE_REVERSED.finditer(atom.text):
                 key = match.group("key")
                 value = _normalize_value(match.group("value"))
-                if not (MIN_VALUE_LEN <= len(value) <= MAX_VALUE_LEN):
-                    continue
-                glossary.setdefault(key, value)
+                if _valid_value(value, config):
+                    glossary.setdefault(key, value)
 
     if glossary:
         logger.info(
@@ -63,7 +69,11 @@ def build_glossary(document: ParsedDocument) -> dict[str, str]:
     return glossary
 
 
-def build_aliases(document: ParsedDocument) -> dict[str, str]:
+def build_aliases(
+    document: ParsedDocument,
+    *,
+    config: DeanonymizationConfig = DEFAULT_DEANON,
+) -> dict[str, str]:
     aliases: dict[str, str] = {}
     for section in document.sections:
         if section.type is not SectionType.TERMINY:
@@ -72,9 +82,8 @@ def build_aliases(document: ParsedDocument) -> dict[str, str]:
             for match in ABBREVIATION_LINE.finditer(atom.text):
                 key = match.group("key").strip()
                 value = _normalize_value(match.group("value"))
-                if not (MIN_VALUE_LEN <= len(value) <= MAX_VALUE_LEN):
-                    continue
-                aliases.setdefault(key, value)
+                if _valid_value(value, config):
+                    aliases.setdefault(key, value)
     return aliases
 
 
@@ -91,13 +100,21 @@ def restore_text(
             restored.append(value)
             return value
         unresolved.append(key)
-        return MASK
+        return DEFAULT_DEANON.mask
 
     return PLACEHOLDER.sub(replace, text), restored, unresolved
 
 
+class Deanonymizer:
+    def __init__(self, config: DeanonymizationConfig = DEFAULT_DEANON) -> None:
+        self.config = config
+
+    def process(self, document: ParsedDocument) -> ParsedDocument:
+        glossary = build_glossary(document, config=self.config)
+        aliases = build_aliases(document, config=self.config)
+        merged = {**glossary, **{k: v for k, v in aliases.items() if k not in glossary}}
+        return document.with_glossary(merged)
+
+
 def deanonymize(document: ParsedDocument) -> ParsedDocument:
-    glossary = build_glossary(document)
-    aliases = build_aliases(document)
-    merged = {**glossary, **{k: v for k, v in aliases.items() if k not in glossary}}
-    return document.with_glossary(merged)
+    return Deanonymizer().process(document)

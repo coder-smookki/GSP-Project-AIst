@@ -6,6 +6,10 @@ from html import unescape
 from html.parser import HTMLParser
 from typing import Final
 
+from infrastructure.ingest.config import (
+    DEFAULT_PARSE,
+    ParsingConfig,
+)
 from infrastructure.ingest.models import (
     Atom,
     ParsedDocument,
@@ -23,21 +27,16 @@ from infrastructure.ingest.patterns import (
     is_false_clause,
     restore_clause,
 )
+from infrastructure.retrieval.source import RawDocument
 
 logger = logging.getLogger(__name__)
 
-_SKIP_CONTENT = frozenset({"script", "style", "nav"})
-
-_BLOCK_TAGS = frozenset({"p", "li", "h1", "h2", "h3", "h4", "td", "th", "div"})
-
-MAX_CONTENT_CHARS = 4_000_000
-
-MAX_ATOM_CHARS = 1_500
-
 
 class _BlockExtractor(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, config: ParsingConfig) -> None:
         super().__init__(convert_charrefs=True)
+        self._skip_content = config.skip_content
+        self._block_tags = config.block_tags
         self.blocks: list[tuple[str, str]] = []
         self._buffer: list[str] = []
         self._tag: str = "p"
@@ -45,7 +44,7 @@ class _BlockExtractor(HTMLParser):
         self._in_table = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in _SKIP_CONTENT:
+        if tag in self._skip_content:
             self._skip_depth += 1
             return
         if tag == "table":
@@ -53,19 +52,19 @@ class _BlockExtractor(HTMLParser):
         if tag == "br":
             self._buffer.append(" ")
             return
-        if tag in _BLOCK_TAGS:
+        if tag in self._block_tags:
             self._flush()
             self._tag = tag
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in _SKIP_CONTENT:
+        if tag in self._skip_content:
             self._skip_depth = max(0, self._skip_depth - 1)
             return
         if tag == "table":
             self._flush()
             self._in_table = False
             return
-        if tag in _BLOCK_TAGS:
+        if tag in self._block_tags:
             self._flush()
 
     def handle_data(self, data: str) -> None:
@@ -90,26 +89,68 @@ class _BlockExtractor(HTMLParser):
         self._flush()
 
 
-def extract_blocks(html: str) -> list[tuple[str, str]]:
-    if len(html) > MAX_CONTENT_CHARS:
-        raise ValueError(
-            f"содержимое статьи слишком велико: {len(html)} симв. "
-            f"при пределе {MAX_CONTENT_CHARS}"
-        )
-    parser = _BlockExtractor()
-    try:
-        parser.feed(html)
-        parser.close()
-    except Exception as exc:
-        logger.warning(
-            "разбор HTML прерван, используем то, что успели собрать: %s", exc
-        )
-    return parser.blocks
-
-
 _GLUED_HEADING: Final[re.Pattern[str]] = re.compile(
     r"(?<=[.:;])\s+(?P<no>\d{1,2})\.\s+(?P<title>[А-ЯЁ][^.]{8,120})\s*$"
 )
+
+
+class HtmlParser:
+    def __init__(self, config: ParsingConfig = DEFAULT_PARSE) -> None:
+        self.config = config
+        self.kind = "html"
+
+    def extract_blocks(self, html: str) -> list[tuple[str, str]]:
+        if len(html) > self.config.max_content_chars:
+            raise ValueError(
+                f"содержимое статьи слишком велико: {len(html)} симв. "
+                f"при пределе {self.config.max_content_chars}"
+            )
+        parser = _BlockExtractor(self.config)
+        try:
+            parser.feed(html)
+            parser.close()
+        except Exception as exc:
+            logger.warning(
+                "разбор HTML прерван, используем то, что успели собрать: %s", exc
+            )
+        return parser.blocks
+
+    def parse(self, raw: RawDocument) -> ParsedDocument:
+        article = {
+            "id": raw.doc_id,
+            "name": raw.title,
+            "content": raw.content,
+            "section_id": raw.section_id,
+            "updated_at": raw.updated_at,
+        }
+        return self.parse_article(article, source="api")
+
+    def parse_article(self, article: dict, *, source: str = "api") -> ParsedDocument:
+        article_id = str(article.get("id") or "").strip()
+        if not article_id:
+            raise ValueError("в статье отсутствует идентификатор")
+        content = article.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError(f"статья {article_id}: пустое содержимое")
+
+        raw_title = str(article.get("name") or "").strip()
+        document = build_document(
+            recover_glued_headings(self.extract_blocks(content)),
+            doc_id=article_id,
+            doc_code=_doc_code(article_id, raw_title),
+            doc_title=_clean_title(raw_title),
+            source=source,
+            updated_at=str(article.get("updated_at") or "") or None,
+        )
+
+        logger.info(
+            "разобрана статья %s (%s): разделов %d, атомов %d",
+            article_id,
+            document.doc_code,
+            len(document.sections),
+            len(document.atoms()),
+        )
+        return document
 
 
 def recover_glued_headings(
@@ -187,7 +228,7 @@ def _split_clauses(text: str, section_no: str) -> list[tuple[str | None, str]]:
     return parts
 
 
-def _split_oversized(text: str, limit: int = MAX_ATOM_CHARS) -> list[str]:
+def _split_oversized(text: str, limit: int) -> list[str]:
     if len(text) <= limit:
         return [text]
 
@@ -234,6 +275,7 @@ def build_document(
     doc_title: str,
     source: str,
     updated_at: str | None = None,
+    max_atom_chars: int = 1_500,
 ) -> ParsedDocument:
     sections: list[ParsedSection] = []
     current_no = ""
@@ -299,7 +341,7 @@ def build_document(
                 clause is None
                 and pending_clause is not None
                 and previous is not None
-                and len(previous.text) + len(body) + 1 <= MAX_ATOM_CHARS
+                and len(previous.text) + len(body) + 1 <= max_atom_chars
             )
             if joinable and previous is not None:
                 atoms[-1] = Atom(
@@ -312,7 +354,7 @@ def build_document(
                     order=previous.order,
                 )
                 continue
-            for piece in _split_oversized(body):
+            for piece in _split_oversized(body, max_atom_chars):
                 order += 1
                 atoms.append(
                     Atom(
@@ -339,29 +381,13 @@ def build_document(
     )
 
 
+def extract_blocks(html: str) -> list[tuple[str, str]]:
+    return HtmlParser().extract_blocks(html)
+
+
 def parse_article(article: dict, *, source: str = "api") -> ParsedDocument:
-    article_id = str(article.get("id") or "").strip()
-    if not article_id:
-        raise ValueError("в статье отсутствует идентификатор")
-    content = article.get("content")
-    if not isinstance(content, str) or not content.strip():
-        raise ValueError(f"статья {article_id}: пустое содержимое")
+    return HtmlParser().parse_article(article, source=source)
 
-    raw_title = str(article.get("name") or "").strip()
-    document = build_document(
-        recover_glued_headings(extract_blocks(content)),
-        doc_id=article_id,
-        doc_code=_doc_code(article_id, raw_title),
-        doc_title=_clean_title(raw_title),
-        source=source,
-        updated_at=str(article.get("updated_at") or "") or None,
-    )
 
-    logger.info(
-        "разобрана статья %s (%s): разделов %d, атомов %d",
-        article_id,
-        document.doc_code,
-        len(document.sections),
-        len(document.atoms()),
-    )
-    return document
+def parse_raw(document: RawDocument) -> ParsedDocument:
+    return HtmlParser().parse(document)

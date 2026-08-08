@@ -5,7 +5,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
-NAMESPACE = uuid.UUID("9f6d9c1e-0d2a-4b7f-9c33-a15700000001")
+from infrastructure.ingest.config import NAMESPACE
 
 
 class SectionType(StrEnum):

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from typing import Final
+
+from infrastructure.ingest.config import DEFAULT_AREA
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ _AREA_RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
         "proizvodstvennaya_bezopasnost",
         re.compile(
             r"производственн\w+\s+безопасн|идентификац\w+\s+опасност"
-            r"|\bриск|происшеств|подрядн\w+\s+организац",
+            r"|\bриск|происшеств|подрядн\w+\s+организ",
             re.I,
         ),
     ),
@@ -49,17 +52,41 @@ _AREA_RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _Rule:
+    code: str
+    pattern: re.Pattern[str]
+
+
+class AreaClassifier:
+    def __init__(self, config=DEFAULT_AREA) -> None:
+        self.config = config
+        with_rules = [
+            _Rule(code, pattern) for code, pattern in (config.rules or _AREA_RULES)
+        ]
+        self._rules = with_rules
+        titles: dict[str, str] = dict(AREA_TITLES)
+        titles.update(config.titles or {})
+        self._titles = titles
+
+    def classify(self, doc_title: str) -> list[str]:
+        matched = [rule.code for rule in self._rules if rule.pattern.search(doc_title)]
+        if not matched:
+            logger.info(
+                "документ %r не отнесён ни к одной области, помечен как %s",
+                doc_title[:80],
+                UNCLASSIFIED,
+            )
+            return [UNCLASSIFIED]
+        return matched
+
+    def title(self, code: str) -> str:
+        return self._titles.get(code, code)
+
+
 def classify_areas(doc_title: str) -> list[str]:
-    matched = [code for code, pattern in _AREA_RULES if pattern.search(doc_title)]
-    if not matched:
-        logger.info(
-            "документ %r не отнесён ни к одной области, помечен как %s",
-            doc_title[:80],
-            UNCLASSIFIED,
-        )
-        return [UNCLASSIFIED]
-    return matched
+    return AreaClassifier().classify(doc_title)
 
 
 def area_title(code: str) -> str:
-    return AREA_TITLES.get(code, code)
+    return AreaClassifier().title(code)
