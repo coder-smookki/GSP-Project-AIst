@@ -1,3 +1,7 @@
+# Слой: оркестрация индексации. Prefect-сервер с UI (:4200) и раннер с
+# deployment «aist-ingest». Подключается из docker-compose.yml через include и
+# поднимается как часть `docker compose up -d`. Отдельно:
+#   docker compose -f docker-compose.orchestration.yml up -d
 services:
   prefect-server:
     # Версия пинуется и совпадает с `prefect==3.8.2` в pyproject.toml, чтобы
@@ -5,7 +9,6 @@ services:
     # Prefect здесь не нужен — образ официальный и уже содержит CLI.
     image: prefecthq/prefect:3.8.2-python3.12
     restart: unless-stopped
-    profiles: ["orc"]
     # В образе нет команды по умолчанию: entrypoint без аргументов уходит в
     # интерактивный bash, который в компоузе мгновенно завершается (exit 0).
     # Поэтому сервер запускается явной командой.
@@ -44,11 +47,10 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.orchestration
     restart: unless-stopped
-    profiles: ["orc"]
     environment:
       # Куда стучаться за деплойментами: имя сервиса из того же compose-файла.
       PREFECT_API_URL: http://prefect-server:4200/api
-      # Индекс и эмбеддинги — сервисы основного стека и Ollama на хосте.
+      # Индекс и эмбеддинги — сервисы слоя Qdrant и Ollama на хосте.
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: ${QDRANT_COLLECTION:-aist_chunks}
       OLLAMA_LOCAL_BASE_URL: ${OLLAMA_LOCAL_BASE_URL:-http://host.docker.internal:11434}
@@ -74,6 +76,10 @@ services:
       KB_PER_PAGE: ${KB_PER_PAGE:-100}
       KB_MAX_RETRIES: ${KB_MAX_RETRIES:-3}
     depends_on:
+      # Только prefect-server: serve на старте лишь регистрирует deployment, а
+      # Qdrant нужен уже в момент прогона (и живёт в отдельном слое — он не
+      # должен блокировать регистрацию). Если подать слой отдельным файлом без
+      # его собственной зависимости, compose валид, а сверять с qdrant не надо.
       prefect-server:
         condition: service_healthy
     volumes:

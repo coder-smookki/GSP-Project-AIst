@@ -721,11 +721,12 @@ CLI `infrastructure/orchestration/__main__.py` принимает те же оп
 ### Запуск через docker-compose
 
 Стек из server + runner собран в `deploy/docker-compose.orchestration.yml`
-(профиль `orc`), полная инструкция в `deploy/README.md`:
+(слой `orc`, подключается к корневому compose через `include`), полная
+инструкция в `deploy/README.md`:
 
 ```bash
 cd deploy
-docker compose -f docker-compose.yml -f docker-compose.orchestration.yml --profile orc up -d --build
+docker compose up -d --build
 open http://localhost:4200
 ```
 

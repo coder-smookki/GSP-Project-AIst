@@ -1,0 +1,38 @@
+# Слой: векторная база знаний. Подключается из docker-compose.yml через include
+# и поднимается как часть `docker compose up -d`. Отдельно:
+#   docker compose -f docker-compose.qdrant.yml up -d
+services:
+  qdrant:
+    # Версия пинуется и должна совпадать по minor с qdrant-client в pyproject:
+    # при расхождении больше единицы клиент пишет предупреждение в каждый лог.
+    # Встроенный BM25 доступен с v1.15.2, поэтому ниже опускаться нельзя.
+    image: qdrant/qdrant:v1.19.0
+    restart: unless-stopped
+    environment:
+      # Qdrant по умолчанию отправляет телеметрию на telemetry.qdrant.io.
+      # Для кейса это прямое нарушение блокирующего критерия «0 внешних API».
+      QDRANT__TELEMETRY_DISABLED: "true"
+    ports:
+      # Только на петлевой интерфейс: наружу торчать нечему, а Qdrant не
+      # требует аутентификации по умолчанию — открытый порт означает полный
+      # доступ к индексу для всех, кто дотянется по сети. Контейнеры ходят
+      # к нему по внутренней сети docker, host-порт нужен лишь для
+      # индексации с хоста и ручных проверок.
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # Именно bash, а не CMD-SHELL: /dev/tcp — возможность bash, а `sh` в
+      # этом образе указывает на dash, где такой проверки нет. С CMD-SHELL
+      # healthcheck падает с «cannot create /dev/tcp: Directory nonexistent»,
+      # контейнер навсегда остаётся unhealthy, и зависящие от него aegra и
+      # prefect-runner не стартуют вовсе. curl и wget в образ не входят.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  qdrant_data:

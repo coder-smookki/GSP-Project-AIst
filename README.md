@@ -7,7 +7,9 @@
 ```sh
 cd deploy
 cp .env.example .env                # заполнить KB_EMAIL / KB_PASSWORD
-docker compose up -d                # postgres + qdrant + aegra + gui
+# Слои qdrant и оркестрации (orf) подключены к корневому compose через include,
+# поэтому одной командой поднимается весь стенд (интерфейс + агент + индекс):
+docker compose up -d --build
 open http://localhost:8000          # интерфейс: admin / admin
 ```
 
@@ -16,7 +18,7 @@ open http://localhost:8000          # интерфейс: admin / admin
 ```sh
 cd deploy
 echo 'OTLP_ENDPOINT=http://openlit:4318' >> .env
-docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile obs up -d
+docker compose -f docker-compose.observability.yml --profile obs up -d --remove-orphans
 open http://localhost:3000
 ```
 
@@ -224,8 +226,10 @@ gui/                            # Chainlit (:8000)
   contract.py                   #   aist-конверт, цитирование
   db.py                         #   БД GUI (пользователи, схема истории диалогов)
 
-deploy/                         # Docker: compose, Dockerfile, Dockerfile.gui, aegra_entry, README
-  docker-compose.orchestration.yml  # Prefect-стек (профиль orc, см. deploy/README.md)
+deploy/                         # Docker: compose-слои, Dockerfile, Dockerfile.gui, aegra_entry, README
+  docker-compose.yml (base: postgres+aegra+gui) → include qdrant/orc
+  docker-compose.qdrant.yml         #   слой «база знаний» (Qdrant)
+  docker-compose.orchestration.yml  #   слой Prefect (server+runner, см. deploy/README.md)
 scripts/
   ingest.py                     #   индексация корпуса (поколения, алиас, инкрементальный режим)
   evaluate.py                   #   замер качества на золотом наборе: hit@k, MRR, отказы

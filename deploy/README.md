@@ -1,6 +1,10 @@
 # Aegra — запуск и эксплуатация
 
-Docker-стек AI-агента. Три базовых сервиса: `postgres`, `aegra`, `gui`. Опционально поднимается наблюдаемость LLM: `openlit` + `clickhouse` (compose-профиль `obs`).
+Docker-стек AI-агента, собранный из слоёв: базовый (`postgres`, `aegra`, `gui`),
+индекс (`qdrant`), оркестрация (`prefect-server`, `prefect-runner`). Корневой
+`docker-compose.yml` подключает эти слои через `include` — весь стенд поднимается
+`docker compose up -d`. Опционально подключается наблюдаемость LLM: `openlit` +
+`clickhouse` (compose-профиль `obs`).
 
 ## Архитектура
 
@@ -45,14 +49,26 @@ sequenceDiagram
 
 ## Состав сервисов
 
-| Сервис      | Роль                                                        | Порты (host)              | Где |
+Стек собран из **слоёв**, каждый — отдельный compose-файл в `deploy/`; корневой
+`docker-compose.yml` подключает их через `include`, поэтому `docker compose up -d`
+поднимает весь стенд одной командой. Слой можно поднять или остановить отдельно
+(`docker compose -f docker-compose.qdrant.yml ...`).
+
+| Сервис      | Роль                                                        | Порты (host)              | Слой |
 | ----------- | ----------------------------------------------------------- | -------------------------- | --- |
 | `postgres`  | Postgres + pgvector: чекпоинтеры, состояние, БД GUI          | `5432`                     | base |
-| `qdrant`    | Векторный индекс: гибридный поиск dense + BM25 + RRF          | `6333` (HTTP), `6334` (gRPC) | base |
 | `aegra`     | LangGraph runtime: REST API графа                            | `2026`                     | base |
 | `gui`       | Chainlit-интерфейс для браузера                              | `8000`                     | base |
+| `qdrant`    | Векторный индекс: гибридный поиск dense + BM25 + RRF          | `6333` (HTTP), `6334` (gRPC) | qdrant |
+| `prefect-server` / `prefect-runner` | Оркестрация индексации: UI, deployment aist-ingest | `4200` (UI) | orc |
 | `openlit`   | LLM-наблюдаемость: приём OTLP, UI трасс                     | `3000`, `4317` (gRPC), `4318` (HTTP) | obs |
 | `clickhouse`| Хранилище трасс OpenLIT (Apache-2.0)                        | `8123` (HTTP), `9000` (native) | obs |
+
+Слои: **base** (`postgres` + `aegra` + `gui`, одна БД на интерфейс и агента),
+**qdrant** (база знаний), **orc** (Prefect), **obs** (OpenLIT, только по
+`--profile obs`). Индекс `qdrant` вынесен из базы отдельным слоем: перезапуск
+`postgres`/`aegra`/`gui` его не затрагивает, а команды `docker compose down qdrant`
+пустят его отдельно без остановки остального.
 
 Все образы OpenLIT/ClickHouse — Apache-2.0; анонимная телеметрия OpenLIT отключена (`TELEMETRY_ENABLED=false`).
 
@@ -83,14 +99,25 @@ cd deploy
 cp .env.example .env
 # при необходимости поправьте .env (модели, URL Ollama, пароли)
 
-# 2. Запуск базового стека
+# 2. Запуск стенда. Корневой compose включает слои qdrant и оркестрации,
+# поэтому одной командой поднимается всё (кроме obs).
 docker compose up -d
 ```
+
+> Сервисы лёгких в слоях, подключённых через `include` из корневого
+> `docker-compose.yml`, поэтому `docker compose up -d` поднимает
+> `postgres`/`aegra`/`gui` **и** `qdrant`, `prefect-server`, `prefect-runner`.
+> Слой можно поднять/остановить отдельно:
+>
+> ```sh
+> docker compose -f docker-compose.qdrant.yml up -d          # только индекс
+> docker compose -f docker-compose.orchestration.yml up -d   # только оркестрацию
+> ```
 
 Проверка состояния:
 
 ```sh
-docker compose ps          # postgres и qdrant — (healthy), aegra и gui — Up
+docker compose ps            # postgres и qdrant — (healthy), aegra, gui и prefect-* — Up
 open http://localhost:8000 # интерфейс: логин admin / admin
 open http://localhost:2026/health  # {"status":"healthy",...}
 ```
@@ -143,14 +170,14 @@ cp .env.example .env
 # 1. Включить endpoint трассировки в .env
 echo 'OTLP_ENDPOINT=http://openlit:4318' >> .env   # обычно просто раскомментируйте строку
 
-# 2. Поднять ВСЁ (оба compose-файла + профиль obs):
-docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile obs up -d
+# 2. Поднять ВСЁ (корневой compose + obs):
+docker compose -f docker-compose.observability.yml --profile obs up -d --remove-orphans
 ```
 
 Проверка:
 
 ```sh
-docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile obs ps
+docker compose -f docker-compose.observability.yml --profile obs ps
 # openlit и clickhouse должны быть (healthy)
 
 open http://localhost:3000   # OpenLIT UI
@@ -161,20 +188,19 @@ open http://localhost:3000   # OpenLIT UI
 
 > Почему две команды? Compose по умолчанию читает только `docker-compose.yml`. Профиль `obs` и сервисы OpenLIT объявлены в **отдельном файле** `docker-compose.observability.yml`, поэтому его нужно явно указывать флагом `-f` — иначе `--profile obs` молча ничего не поднимет.
 
-### Оркестрация индексации через Prefect (опционально)
+### Оркестрация индексации через Prefect
 
-Индексацию можно гонять не только по команде (`uv run python scripts/ingest.py`),
-но и как отдельный сервис Prefect: сервер с UI на `:4200` (профиль `orc`),
-деплоймент `aist-ingest`, расписание на cron и запуск по кнопке из браузера.
-Так же, как и наблюдаемость, это дополнение к базовому стеку — все индексы `qdrant`
-и модели Ollama на хосте берутся из него.
+Индексацию можно гонять не только по команде (`python -c "из scripts"`), но и как
+сервис Prefect: сервер с UI на `:4200`, деплоймент `aist-ingest`,
+расписание на cron и ручной запуск по кнопке из браузера. Слой `orc` подключён
+к корневому `docker-compose.yml` через `include`, поэтому входит в
+`docker compose up -d` по умолчанию — отдельного профиля больше не нужно.
 
 ```sh
 cd deploy
-cp .env.example .env
 
-# 1. Собрать образ раннера и поднять сервер с воркером:
-docker compose -f docker-compose.yml -f docker-compose.orchestration.yml --profile orc up -d --build
+# 1. Собрать образ раннера и поднять всё (base + qdrant + orc):
+docker compose up -d --build
 
 # 2. UI Prefect:
 open http://localhost:4200   # deployments/aist-ingest/aist-ingest
@@ -235,15 +261,15 @@ Flow run в списке Runs. Сразу «шаги и файлы» на гла
 Быстрый просмотр логов контейнера (не UI):
 
 ```sh
-docker compose -f docker-compose.orchestration.yml --profile orc logs -f prefect-runner   # поток прогонов
-docker compose -f docker-compose.orchestration.yml --profile orc logs prefect-server      # метаданные/API
+docker compose -f docker-compose.orchestration.yml logs -f prefect-runner   # поток прогонов
+docker compose -f docker-compose.orchestration.yml logs prefect-server      # метаданные/API
 ```
 
 Метаданные Prefect хранятся в named-volume `prefect_data` (SQLite в контейнере) —
 для одного планировщика этого достаточно, Postgres из основного стека не трогается.
 
 > Образ раннера строится из исходников проекта (`Dockerfile.orchestration`).
-> После изменений кода: `docker compose -f docker-compose.yml -f docker-compose.orchestration.yml --profile orc up -d --build prefect-runner`.
+> После изменений кода: `docker compose up -d --build prefect-runner`.
 
 ## Остановка, рестарт, обновление
 
@@ -251,15 +277,23 @@ docker compose -f docker-compose.orchestration.yml --profile orc logs prefect-se
 
 ### Остановка
 
+Составные файла теперь объединяются через `include`, поэтому `docker compose down`
+останавливает весь стенд (база + qdrant + оркестрация). Остановить только часть —
+точечной командой слоя.
+
 ```sh
-# Остановить все (контейнеры удаляются, данные в volumes сохраняются)
+# Остановить весь стек: контейнеры удаляются, данные в volumes сохраняются.
 docker compose down
 
-# Основной стек + obs:
-docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile obs down
+# Остановить/удалить только один слой (например, индекс или оркестрацию):
+docker compose -f docker-compose.qdrant.yml down
+docker compose -f docker-compose.orchestration.yml down
 
-# То же и удалить все данные (volumes postgres_data, clickhouse_data, openlit_data):
-docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile obs down -v
+# Удалить и данные слоя (volumes qdrant_data, prefect_data и т.д.):
+docker compose -f docker-compose.qdrant.yml down -v
+
+# Основной стек + obs:
+docker compose -f docker-compose.observability.yml --profile obs down
 
 # Остановить только один сервис (без удаления):
 docker compose stop aegra
@@ -269,7 +303,7 @@ docker compose stop aegra
 
 ```sh
 docker compose restart aegra                 # быстрый рестарт одного
-docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile obs restart openlit
+docker compose -f docker-compose.observability.yml --profile obs restart openlit
 ```
 
 ### Обновление кода и пересборка
@@ -349,11 +383,12 @@ Endpoint `POST http://localhost:8000/api/change-password` (`username`, `current_
 
 ## Данные и сброс
 
-Хранение в named-volumes: `postgres_data`, `clickhouse_data`, `openlit_data` (только для obs). Контейнерные перезапуски данные сохраняются.
+Хранение в named-volumes: `postgres_data` (base), `qdrant_data` (слой qdrant), `prefect_data` (слой orc), `clickhouse_data`, `openlit_data` (только для obs). Контейнерные перезапуски данные сохраняются.
 
 | Нужно | Команда |
 |---|---|
-| Сбросить всё с данными | `docker compose -f docker-compose.yml -f docker-compose.observability.yml --profile obs down -v && {тот же} up -d` |
+| Сбросить всё с данными | `docker compose down -v && docker compose -f docker-compose.observability.yml --profile obs down -v && docker compose up -d` |
+| Переиндексировать с нуля (сбросить только индекс) | `docker compose -f docker-compose.qdrant.yml down -v && docker compose -f docker-compose.qdrant.yml up -d` — потом прогнать `ingest.py` |
 | Сбросить только наблюдение | `docker compose -f docker-compose.observability.yml --profile obs down -v` |
 | Очистить только postgres | `docker compose rm -sf postgres && docker volume rm deploy_postgres_data` |
 
