@@ -503,4 +503,4 @@ huggingface.co, а требование кейса — ноль обращени
 
 Вне рамок этого документа: чанкинг и деанонимизация корпуса, источники
 (ApiSource/FilesSource), индексация и оркестрация — см. `docs/INGEST.md` и
-`deploy/README.md`.
+`docs/DEPLOY.md`.

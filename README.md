@@ -2,7 +2,7 @@
 
 ИИ-поиск по корпоративной базе знаний (регламенты ИСМ.СМОЗиОБТ) с адаптивным RAG. Полностью on-premise: Chainlit → Aegra/LangGraph → Ollama → Postgres, векторный слой — Qdrant (гибридный поиск dense + BM25 + RRF).
 
-Полное руководство по запуску и эксплуатации — [deploy/README.md](deploy/README.md).
+Полное руководство по запуску и эксплуатации — [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ```sh
 cd deploy
@@ -229,7 +229,7 @@ gui/                            # Chainlit (:8000)
 deploy/                         # Docker: compose-слои, Dockerfile, Dockerfile.gui, aegra_entry, README
   docker-compose.yml (base: postgres+aegra+gui) → include qdrant/orc
   docker-compose.qdrant.yml         #   слой «база знаний» (Qdrant)
-  docker-compose.orchestration.yml  #   слой Prefect (server+runner, см. deploy/README.md)
+  docker-compose.orchestration.yml  #   слой Prefect (server+runner, см. docs/DEPLOY.md)
 scripts/
   ingest.py                     #   индексация корпуса (поколения, алиас, инкрементальный режим)
   evaluate.py                   #   замер качества на золотом наборе: hit@k, MRR, отказы
@@ -238,6 +238,11 @@ tests/                          # pytest: fakes, test_agent, test_gui, test_infr
   fixtures/corpus/              #   выгрузка 20 статей раздела 44030
   fixtures/golden/questions.json  # золотой набор: 41 вопрос с эталоном + 10 без ответа
 docs/RETRIEVE.md                #   описание логики retrieve/search (промпты — agent/prompts.py)
+docs/AGENT.md                   #   граф ассистента: узлы, память, события, промпты
+docs/GUI.md                     #   интерфейс Chainlit, контракт событий
+docs/INGEST.md                  #   индексация корпуса и Prefect
+docs/DEPLOY.md                  #   запуск и эксплуатация стенда
+docs/TESTS.md                   #   карта тестов, маркеры, как запускать
 docs/demo/graph.png             #   схема графа (scripts/get_graph_visualization.py)
 
 .github/workflows/ci.yml        #   CI: юнит-тесты на каждый PR

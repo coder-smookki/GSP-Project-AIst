@@ -722,7 +722,7 @@ CLI `infrastructure/orchestration/__main__.py` принимает те же оп
 
 Стек из server + runner собран в `deploy/docker-compose.orchestration.yml`
 (слой `orc`, подключается к корневому compose через `include`), полная
-инструкция в `deploy/README.md`:
+инструкция в `docs/DEPLOY.md`:
 
 ```bash
 cd deploy
@@ -789,7 +789,7 @@ open http://localhost:4200
 ветка обрывается сразу — это либо dry-run (граф намеренно не доходит до
 эмбеддингов/записи), либо инкрементальный пропуск документа (уже есть в
 индексе), либо корпус в раннере пуст: пути `AIST_CORPUS_MOUNT`/`AIST_CORPUS_DIR`
-(таблица диагностика в deploy/README.md). Если прогон не стартует —
+(таблица диагностика в docs/DEPLOY.md). Если прогон не стартует —
 `docker compose ... logs -f prefect-runner`. Task re-runs и Rerun (те же
 параметры) / Retry (доделать упавший) — стандартные кнопки Prefect, на
 странице прогона.
