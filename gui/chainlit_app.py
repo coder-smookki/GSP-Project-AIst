@@ -6,8 +6,9 @@ import uuid
 import bcrypt
 import chainlit as cl
 from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
-from chainlit.input_widget import MultiSelect
+from chainlit.input_widget import InputWidget, MultiSelect
 from chainlit.server import app as _chainlit_app
+from chainlit.types import ThreadDict
 from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
 from pydantic import BaseModel
@@ -34,11 +35,6 @@ AEGRA_URL = os.getenv("AEGRA_URL", "http://aegra:2026")
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
-# Области знаний — предметная ось, которую выбирает пользователь.
-# Раньше здесь были типы разделов документа (procedura, sokrashcheniya):
-# это другая, служебная ось, и она не отвечала требованию кейса «выбор
-# областей знаний». Хуже того, выбор по умолчанию отсекал 71 % корпуса,
-# а значения sokrashcheniya не существует вовсе — оно не находило ничего.
 AREA_CHOICES = {
     "Пожарная безопасность": "pozharnaya_bezopasnost",
     "Охрана труда": "ohrana_truda",
@@ -49,57 +45,20 @@ AREA_CHOICES = {
     "Прочее": "prochee",
 }
 
-# Пустой список = искать по всей базе. Непустой список по умолчанию
-# молча сузил бы поиск, и пользователь не понял бы, почему ответа нет.
+# Пустой список = поиск по всей базе (см. docs/GUI.md).
 DEFAULT_AREAS: list[str] = []
 
-# Заводить ли учётную запись при первом входе неизвестного логина.
-#
-# По умолчанию ВЫКЛЮЧЕНО: раньше любой незнакомый логин автоматически
-# получал доступ к базе знаний, задав пароль первой попыткой входа.
-# Включать только для локальной отладки.
+# По умолчанию выключена: доступ по первому вводу неизвестного логина
+# получали бы все (см. docs/GUI.md).
 ALLOW_SELF_REGISTRATION = os.getenv("ALLOW_SELF_REGISTRATION", "0") == "1"
 
 
 @cl.data_layer
 def get_data_layer() -> SQLAlchemyDataLayer:
-    """Подключает хранение истории диалогов.
-
-    Даёт сразу три вещи, которые иначе пришлось бы писать руками: сохранение
-    переписки между входами, список диалогов в боковой панели и создание
-    нового чата. Хранилище — тот же Postgres, что и у чекпоинтера агента,
-    отдельного сервиса не появляется.
-
-    Клиент объектного хранилища не задаётся намеренно: файлов пользователь не
-    загружает, а панель источников — текстовый элемент, он ложится в таблицу
-    `elements` целиком.
-
-    Returns:
-        SQLAlchemyDataLayer: Слой данных Chainlit.
-    """
     return SQLAlchemyDataLayer(conninfo=async_database_url())
 
 
 async def _ensure_persisted(user: cl.User) -> cl.User:
-    """Заводит пользователя в слое данных до возврата из проверки входа.
-
-    При первом входе любой учётной записи интерфейс запрашивал список
-    диалогов раньше, чем слой данных успевал создать запись пользователя, и
-    показывал красное «Error fetching threads: Not Found: User not found».
-    После перезагрузки страницы ошибка исчезала сама, то есть данные не
-    терялись — но первое, что видел человек при входе, было сообщение об
-    ошибке.
-
-    Вызов идемпотентен: `create_user` сам проверяет, есть ли запись, и
-    только дополняет её.
-
-    Args:
-        user: Пользователь, прошедший проверку.
-
-    Returns:
-        cl.User: Тот же пользователь. Сбой записи не отменяет вход: без неё
-        не покажется список диалогов, но пользоваться ассистентом можно.
-    """
     try:
         layer = cl.data.get_data_layer()
         if layer is not None:
@@ -128,10 +87,6 @@ async def auth_callback(username: str, password: str) -> cl.User | None:
         return None
     if user is None:
         if not ALLOW_SELF_REGISTRATION:
-            # Любой незнакомый логин заводил учётную запись автоматически:
-            # пароль задавался первой же попыткой входа, то есть доступ к
-            # базе знаний получал кто угодно. Для корпоративного контура
-            # это дыра, а на защите — прямой вопрос от ИБ.
             logger.warning(
                 "вход отклонён: пользователь %s не заведён, "
                 "самостоятельная регистрация выключена",
@@ -162,16 +117,9 @@ async def auth_callback(username: str, password: str) -> cl.User | None:
 
 
 @cl.set_starters
-async def set_starters() -> list[cl.Starter]:
-    """Возвращает подсказки, с которых можно начать диалог.
-
-    Нужны не для красоты: на защите пустое поле ввода заставляет думать, что
-    спросить, а неудачная формулировка первого вопроса портит впечатление о
-    поиске. Формулировки взяты из тем реального корпуса раздела 44030.
-
-    Returns:
-        list[cl.Starter]: Подсказки для стартового экрана.
-    """
+async def set_starters(
+    user: cl.User | None, language_code: str | None
+) -> list[cl.Starter]:
     return [
         cl.Starter(
             label="Действия при пожаре",
@@ -205,6 +153,11 @@ async def set_starters() -> list[cl.Starter]:
     ]
 
 
+@cl.on_app_startup
+async def on_app_startup():
+    await init_db()
+
+
 @cl.on_chat_start
 async def on_chat_start():
     await init_db()
@@ -224,11 +177,9 @@ async def on_chat_start():
         ).send()
         return
 
-    # Идентификатор треда Aegra берём тот же, что у диалога Chainlit.
-    # Так восстановление после перезагрузки страницы становится тривиальным:
-    # не нужно нигде хранить соответствие «диалог -> тред агента», оно
-    # выполняется по построению. `if_exists="do_nothing"` делает вызов
-    # идемпотентным — повторный вход в тот же диалог не создаёт второй тред.
+    # Идентификатор треда aegra совпадает с идентификатором диалога
+    # Chainlit (см. docs/GUI.md); `if_exists="do_nothing"` делает вызов
+    # идемпотентным при повторном входе.
     thread_id = cl.context.session.thread_id
     thread = await client.threads.create(thread_id=thread_id, if_exists="do_nothing")
 
@@ -238,16 +189,15 @@ async def on_chat_start():
     cl.user_session.set("user_id", user_id)
     cl.user_session.set("areas", DEFAULT_AREAS)
 
-    chat_settings = cl.ChatSettings(
-        inputs=[
-            MultiSelect(
-                id="areas",
-                label="Области знаний",
-                items=AREA_CHOICES,
-                initial=DEFAULT_AREAS,
-            )
-        ]
-    )
+    widgets: list[InputWidget] = [
+        MultiSelect(
+            id="areas",
+            label="Области знаний",
+            items=AREA_CHOICES,
+            initial=DEFAULT_AREAS,
+        )
+    ]
+    chat_settings = cl.ChatSettings(inputs=widgets)
     await chat_settings.send()
 
     await cl.Message(
@@ -262,16 +212,7 @@ async def on_chat_start():
 
 
 @cl.on_chat_resume
-async def on_chat_resume(thread: dict) -> None:
-    """Восстанавливает диалог, выбранный в списке.
-
-    Сообщения отрисовывает сам Chainlit из слоя данных; здесь остаётся
-    поднять подключение к агенту и вернуть в сессию тот же идентификатор
-    треда, потому что он совпадает с идентификатором диалога.
-
-    Args:
-        thread: Диалог из слоя данных Chainlit.
-    """
+async def on_chat_resume(thread: ThreadDict) -> None:
     app_user = cl.user_session.get("user")
     if app_user is None:
         await cl.Message(content="Требуется вход в систему.").send()
@@ -324,12 +265,9 @@ async def on_message(message: cl.Message):
     msg = cl.Message(content="")
     await msg.send()
 
-    # Ключ панели источников должен существовать ДО цикла: панель рисуется
-    # сразу по приходу события sources, а не после конца потока. Раньше
-    # отрисовка стояла после цикла, а поток завершается только когда
-    # отработает узел write_memory — то есть спустя ещё один полный вызов
-    # модели. Источники появлялись на несколько секунд позже ответа, хотя
-    # событие приходило до первого токена.
+    # Ключ панели источников создаётся ДО цикла: панель рисуется по событию
+    # sources, а поток завершается только после узла write_memory — то есть
+    # заметно позже (см. docs/GUI.md).
     sidebar_key = f"sources-{msg.id or uuid.uuid4()}"
     sidebar_drawn = False
 
@@ -404,9 +342,7 @@ async def on_message(message: cl.Message):
 
     msg.content = pick_final_text(partials, assistant_final, error=run_error)
 
-    # Панель уже отрисована внутри цикла. Здесь остаётся только случай,
-    # когда источников не было вовсе: старую панель надо убрать, иначе она
-    # покажет источники предыдущего вопроса.
+    # Когда источников не было — убрать панель от предыдущего вопроса.
     if not sidebar_drawn:
         await cl.ElementSidebar.set_elements([], key=sidebar_key)
 
@@ -425,18 +361,12 @@ async def on_message(message: cl.Message):
 
 @cl.action_callback("followup")
 async def on_followup(action: cl.Action):
-    """Обрабатывает клик по подсказке следующего вопроса.
-
-    Args:
-        action: Действие с текстом вопроса в поле ``payload["text"]``.
-    """
     text = str(action.payload.get("text") or "").strip()
     if not text:
         return
 
-    # Сообщение надо ОТПРАВИТЬ, а не просто передать обработчику: иначе в
-    # переписке появляется ответ без вопроса, и её нельзя перечитать —
-    # непонятно, на что именно система отвечала.
+    # Вопрос отправляется сообщением, чтобы в переписке был ответ с вопросом
+    # (см. docs/GUI.md).
     question = cl.Message(content=text, type="user_message")
     await question.send()
     await on_message(question)
@@ -454,25 +384,12 @@ class _ChangePasswordBody(BaseModel):
 #: Неудачные попытки смены пароля: логин -> отметки времени.
 _password_attempts: dict[str, list[float]] = {}
 
-#: Сколько неудачных попыток допускается в окне.
+#: Попыток в окне и длина окна ограничения, с (см. docs/GUI.md).
 _MAX_ATTEMPTS = 5
-
-#: Длина окна ограничения, с.
 _ATTEMPT_WINDOW = 300.0
 
 
 def _too_many_attempts(username: str) -> bool:
-    """Проверяет, не исчерпан ли лимит попыток смены пароля.
-
-    Эндпоинт не требует сессии, поэтому без ограничения он превращается в
-    оракул для подбора пароля и перечисления учётных записей.
-
-    Args:
-        username: Логин, по которому идёт попытка.
-
-    Returns:
-        bool: ``True``, если лимит исчерпан.
-    """
     now = time.monotonic()
     history = _password_attempts.get(username, [])
     attempts = [t for t in history if now - t < _ATTEMPT_WINDOW]
@@ -482,20 +399,6 @@ def _too_many_attempts(username: str) -> bool:
 
 @_password_router.post("/change-password")
 async def change_password(body: _ChangePasswordBody):
-    """Меняет пароль пользователя.
-
-    Args:
-        body: Логин, текущий и новый пароль.
-
-    Returns:
-        dict: Признак успеха и сообщение.
-
-    Raises:
-        HTTPException: 429 при исчерпании лимита попыток, 400 при неверных
-            данных. Текст ошибки одинаков для «нет такого пользователя» и
-            «неверный пароль»: разные ответы позволяли бы перечислять
-            существующие учётные записи.
-    """
     if _too_many_attempts(body.username):
         logger.warning("превышен лимит попыток смены пароля для %s", body.username)
         raise HTTPException(
