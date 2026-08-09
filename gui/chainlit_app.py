@@ -6,8 +6,9 @@ import uuid
 import bcrypt
 import chainlit as cl
 from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
-from chainlit.input_widget import MultiSelect
+from chainlit.input_widget import InputWidget, MultiSelect
 from chainlit.server import app as _chainlit_app
+from chainlit.types import ThreadDict
 from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
 from pydantic import BaseModel
@@ -116,7 +117,9 @@ async def auth_callback(username: str, password: str) -> cl.User | None:
 
 
 @cl.set_starters
-async def set_starters() -> list[cl.Starter]:
+async def set_starters(
+    user: cl.User | None, language_code: str | None
+) -> list[cl.Starter]:
     return [
         cl.Starter(
             label="Действия при пожаре",
@@ -150,6 +153,11 @@ async def set_starters() -> list[cl.Starter]:
     ]
 
 
+@cl.on_app_startup
+async def on_app_startup():
+    await init_db()
+
+
 @cl.on_chat_start
 async def on_chat_start():
     await init_db()
@@ -181,16 +189,15 @@ async def on_chat_start():
     cl.user_session.set("user_id", user_id)
     cl.user_session.set("areas", DEFAULT_AREAS)
 
-    chat_settings = cl.ChatSettings(
-        inputs=[
-            MultiSelect(
-                id="areas",
-                label="Области знаний",
-                items=AREA_CHOICES,
-                initial=DEFAULT_AREAS,
-            )
-        ]
-    )
+    widgets: list[InputWidget] = [
+        MultiSelect(
+            id="areas",
+            label="Области знаний",
+            items=AREA_CHOICES,
+            initial=DEFAULT_AREAS,
+        )
+    ]
+    chat_settings = cl.ChatSettings(inputs=widgets)
     await chat_settings.send()
 
     await cl.Message(
@@ -205,7 +212,7 @@ async def on_chat_start():
 
 
 @cl.on_chat_resume
-async def on_chat_resume(thread: dict) -> None:
+async def on_chat_resume(thread: ThreadDict) -> None:
     app_user = cl.user_session.get("user")
     if app_user is None:
         await cl.Message(content="Требуется вход в систему.").send()
