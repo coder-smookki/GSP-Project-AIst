@@ -15,17 +15,12 @@ _pool: asyncpg.Pool | None = None
 _db_initialized = False
 
 
-#: Схема хранения истории диалогов для слоя данных Chainlit.
-#:
-#: Взята из документации Chainlit по SQLAlchemyDataLayer и приводится
-#: дословно: слой обращается к этим таблицам и колонкам по именам, поэтому
-#: отступление от схемы даёт ошибку в рантайме, а не при старте. Если
-#: очередная версия Chainlit добавила колонку, её надо дописать и в
-#: `CHAINLIT_SCHEMA`, и в `CHAINLIT_MIGRATIONS` (иначе на существующих базах
-#: дефект вернётся).
-#:
-#: Таблица `users` не конфликтует с нашей `gui_users`: первая нужна Chainlit
-#: для привязки диалогов к пользователю, вторая хранит пароли для входа.
+#: Схема хранения истории диалогов слоя данных Chainlit — дословно из
+#: документации SQLAlchemyDataLayer: слой обращается к таблицам и колонкам
+#: по именам, отступление от схемы даёт ошибку в рантайме. Колонки из
+#: новых версий Chainlit дописывать и в `CHAINLIT_SCHEMA`, и в
+#: `CHAINLIT_MIGRATIONS`. `users` — таблица Chainlit для привязки диалогов,
+#: наша `gui_users` хранит пароли входа (см. docs/GUI.md).
 CHAINLIT_SCHEMA: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS users (
@@ -107,12 +102,10 @@ CHAINLIT_SCHEMA: tuple[str, ...] = (
 )
 
 
-#: Колонки, которые могли добавиться в новых версиях Chainlit после создания
-#: таблицы. База могла быть инициализирована старой версией, и
-#: ``CREATE TABLE IF NOT EXISTS`` существующую таблицу не меняет, поэтому
-#: недостающие колонки добавляются отдельной миграцией. Имя квотится, чтобы
-#: иначе Postgres свёл ``autoCollapse`` к ``autocollapse`` (см. issue о
-#: пропадающих сообщениях после перезагрузки страницы).
+#: Колонки, добавленные новыми версиями Chainlit: `CREATE TABLE IF NOT
+#: EXISTS` существующую таблицу не меняет, поэтому недостающие колонки
+#: добавляются миграцией. Имя квотится, чтобы Postgres не свёл
+#: `autoCollapse` к `autocollapse` (см. docs/GUI.md).
 CHAINLIT_MIGRATIONS: tuple[str, ...] = (
     'ALTER TABLE "steps" ADD COLUMN IF NOT EXISTS "autoCollapse" BOOLEAN',
 )
@@ -123,20 +116,12 @@ async def _apply_migrations(conn):
         try:
             await conn.execute(statement)
         except asyncpg.UndefinedTableError:
-            # Таблица появится в init_db ниже, миграция применится в пр.
+            # Таблица ещё не создана в init_db ниже.
             continue
 
 
 def async_database_url() -> str:
-    """Возвращает строку подключения для асинхронного драйвера.
-
-    Слой данных Chainlit работает через SQLAlchemy и требует в схеме
-    подключения ``postgresql+asyncpg``: без этого он падает на попытке
-    выполнить запрос асинхронно.
-
-    Returns:
-        str: Строка подключения с асинхронным драйвером.
-    """
+    """Строка подключения для асинхронного драйвера (см. docs/GUI.md)."""
     if DATABASE_URL.startswith("postgresql+asyncpg://"):
         return DATABASE_URL
     return DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)

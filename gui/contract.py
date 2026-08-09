@@ -3,19 +3,7 @@ def build_input(
     sections: list[str] | None = None,
     areas: list[str] | None = None,
 ) -> dict:
-    """Собирает полезную нагрузку для ``client.runs.stream``.
-
-    Args:
-        content: Текст сообщения пользователя.
-        sections: Типы разделов документа — служебная ось (назначение,
-            термины, процедура). Из интерфейса не задаётся, оставлена для
-            отладки и тестов.
-        areas: Предметные области знаний, выбранные пользователем. Пустой
-            список означает поиск по всей базе, а не по пустому множеству.
-
-    Returns:
-        dict: Нагрузка запуска графа.
-    """
+    """Собирает полезную нагрузку `client.runs.stream` (см. docs/GUI.md)."""
     payload: dict = {"messages": [{"type": "human", "content": content}]}
     if sections:
         payload["sections"] = sections
@@ -56,11 +44,7 @@ def pick_final_text(
     assistant_final: list[str] | None = None,
     error: Exception | None = None,
 ) -> str:
-    """Выбор финального текста ответа агента.
-
-    Порядок: сообщение об ошибке -> последний завершённый AI-чанк узла
-    assistant -> самый длинный partial-chunk (fallback на огрызок при прерывании).
-    """
+    """Выбор финального текста ответа (см. порядок в docs/GUI.md)."""
     if error is not None:
         return (
             "Ошибка обработки запроса. Если проблема повторится — "
