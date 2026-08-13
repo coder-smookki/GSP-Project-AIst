@@ -228,3 +228,4 @@ data/
 !tests/fixtures/corpus/**
 
 index/
+.DS_Store
