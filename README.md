@@ -356,3 +356,17 @@ uv run ruff check .                 # линт (E/F/I/UP/B/SIM/ASYNC/RUF)
 | ~~[#19](https://github.com/coder-smookki/GSP-Project-AIst/issues/19)~~ | Стек не поднимался: healthcheck Qdrant на bash-синтаксисе в dash | deploy | готово |
 | ~~[#20](https://github.com/coder-smookki/GSP-Project-AIst/issues/20)~~ | Золотой набор и замер качества | всё | готово |
 | ~~[#21](https://github.com/coder-smookki/GSP-Project-AIst/issues/21)~~ | Внутренние сервисы смотрели наружу, Aegra без аутентификации | deploy | готово |
+
+## Лицензия
+
+Код проекта — **Apache License 2.0** (см. [LICENSE.md](LICENSE.md)); сведения о
+сторонних компонентах — в [NOTICE.md](NOTICE.md).
+
+Проверка зависимостей: почти все pip-зависимости имеют разрешающие лицензии
+(Apache 2.0 / MIT / BSD / ISC / PSF / 0BSD). Единственная копилефт-лицензия —
+`text-unidecode` (двойная **GPL v2+ ИЛИ Artistic**), требуется через
+`prefect → python-slugify` и поставляется **только в образе оркестрации**
+(`.[orchestration]`), а не в основном API и GUI; для перераспространения
+выбирается Artistic License, что сохраняет комбинацию с Apache 2.0
+разрешающей. MPL-2.0 пакеты (`tqdm`, `certifi`) совместимы с Apache 2.0
+(ASF).
