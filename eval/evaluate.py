@@ -38,11 +38,11 @@ import statistics
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
 from pathlib import Path
 
 from eval.golden import chunk_contains
 from eval.metrics import percentile
+from eval.result import Outcome
 
 # При прямом запуске (`uv run python eval/evaluate.py`) в sys.path попадает
 # каталог eval, а не корень репозитория, и импорт `infrastructure`
@@ -57,30 +57,6 @@ DEFAULT_GOLDEN = Path("tests/fixtures/golden/questions.json")
 
 #: Ответ, который система обязана дать при отсутствии сведений.
 REFUSAL = "в базе знаний информации нет"
-
-
-@dataclass
-class Outcome:
-    """Итог по одному вопросу.
-
-    Args:
-        question: Текст вопроса.
-        rank: Позиция первого фрагмента с ответом, начиная с 1;
-            ``None`` — ответа нет ни в одном фрагменте.
-        returned: Сколько фрагментов вернул поиск.
-        seconds: Время поиска.
-        answer: Ответ модели, если он запрашивался.
-        refused: Отказалась ли система отвечать.
-        doc_codes: Коды документов найденных фрагментов.
-    """
-
-    question: str
-    rank: int | None = None
-    returned: int = 0
-    seconds: float = 0.0
-    answer: str | None = None
-    refused: bool = False
-    doc_codes: list[str] = field(default_factory=list)
 
 
 async def run_answerable(search, items: list[dict]) -> list[Outcome]:
