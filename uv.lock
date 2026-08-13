@@ -32,6 +32,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+benchmark = [
+    { name = "scipy" },
+]
 dev = [
     { name = "chainlit" },
     { name = "langgraph-sdk" },
@@ -69,10 +72,11 @@ requires-dist = [
     { name = "qdrant-client", specifier = "==1.19.0" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.1" },
+    { name = "scipy", marker = "extra == 'benchmark'", specifier = ">=1.13" },
     { name = "sentence-transformers", marker = "extra == 'rerank'", specifier = ">=3.0" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0" },
 ]
-provides-extras = ["rerank", "orchestration", "dev"]
+provides-extras = ["rerank", "orchestration", "dev", "benchmark"]
 
 [[package]]
 name = "aiofiles"

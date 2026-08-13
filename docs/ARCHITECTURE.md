@@ -417,8 +417,9 @@ flowchart LR
   ClickHouse (`SELECT ServiceName, count() FROM openlit.otel_traces GROUP BY ServiceName`).
 - Дебаг графа без UI: `scripts/cli_chat.py` (агент локально) и
   `scripts/server_cli.py` (через HTTP aegra). Дебаг поиска и индексации —
-  `scripts/evaluate.py` (замер на золотом наборе) и `benchmark.py` (операционный
-  замер).
+   `eval/run --with-answers` и `eval/ab --variants variants.json`
+   (замер на золотом наборе и A/B-сравнение), а операционную задержку —
+   `eval/benchmark.py` (операционный замер) или `eval bench`.
 
 Итого по уровням: интерфейс → граф агента (LangGraph) → поисковый слой (Qdrant,
 гибрид dense + BM25 + RRF + порог + реранкер) → генерация (Ollama); рядом —

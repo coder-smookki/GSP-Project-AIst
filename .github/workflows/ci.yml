@@ -24,7 +24,7 @@ jobs:
           cache-dependency-glob: "uv.lock"
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra orchestration --frozen
+        run: uv sync --extra dev --extra orchestration --extra benchmark --frozen
 
       - name: Run tests (unit, corpus & orchestration; no live servers)
         run: uv run pytest -m "not integration"

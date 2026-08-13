@@ -151,11 +151,14 @@ curl -s http://localhost:6333/collections/aist_chunks | grep -o '"points_count":
 ### 4. Замер качества (необязательно, но полезно)
 
 ```sh
-uv run python scripts/evaluate.py
+uv run eval run --with-answers
 ```
 
 Считает hit@k, MRR и долю верных отказов на золотом наборе вопросов. Это
 способ убедиться, что после смены модели или настроек качество не просело.
+A/B-сравнение вариантов — `uv run eval ab --variants variants.json`,
+операционная задержка — `uv run eval bench`. Историю всех прогонов и таблицу
+метрик собирает `uv run eval report` в [docs/BENCHMARK.md](../docs/BENCHMARK.md).
 
 > Важно: первый запуск собирает образы `aegra` и `gui` из исходников
 > (`docker compose build` выполняется автоматически при отсутствии образа).

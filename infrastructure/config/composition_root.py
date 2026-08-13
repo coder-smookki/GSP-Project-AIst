@@ -4,13 +4,26 @@ from langgraph.store.memory import InMemoryStore
 from agent.graph import create_app_agent
 from domain.context import ContextManager
 from infrastructure.config.model_registry import get_model, setup_registry
-from infrastructure.config.settings import get_settings
+from infrastructure.config.settings import Settings, get_settings
 from infrastructure.observability.tracer import setup_tracing
 from infrastructure.retrieval.factory import get_search
 
 
-def create_application():
-    settings = get_settings()
+def create_application(settings: Settings | None = None):
+    """Собирает граф агента целиком.
+
+    Settings передаётся явно, чтобы один процесс мог собрать несколько
+    вариантов системы (разные модели, настройки поиска) для A/B-бенчмарка.
+    Без аргумента используются глобальные настройки окружения.
+
+    Args:
+        settings: Настройки варианта; ``None`` — глобальные настройки.
+
+    Returns:
+        Скомпилированный граф агента.
+    """
+    if settings is None:
+        settings = get_settings()
     setup_tracing(settings)
     setup_registry(settings)
     model = get_model("default")

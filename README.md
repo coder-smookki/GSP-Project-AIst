@@ -89,9 +89,13 @@ open http://localhost:3000
 
 Качество меряется на золотом наборе, а не точечными прогонами: без постоянного набора вопросов нельзя узнать, стало ли лучше после смены модели, границ чанков или числа фрагментов в контексте.
 
+Инструменты, метрики и история всех прогонов — в [docs/BENCHMARK.md](docs/BENCHMARK.md); ниже — команды быстрого доступа:
+
 ```sh
-uv run python scripts/evaluate.py                  # только поиск: hit@k, MRR, время
-uv run python scripts/evaluate.py --with-answers   # плюс проверка честного отказа по тексту ответа
+uv run eval run --with-answers                      # качество base на золотом наборе
+uv run eval ab --variants variants.json --with-answers   # A/B-сравнение вариантов
+uv run eval report                                  # обновить docs/BENCHMARK.md
+uv run eval cache list                              # какие результаты уже сняты
 ```
 
 Набор — [tests/fixtures/golden/questions.json](tests/fixtures/golden/questions.json): **41 вопрос с известным ответом** (19 из 20 документов; 18 числовых, 13 процедурных, 10 фактических) и **10 вопросов без ответа**. Каждый вопрос сопровождается дословной цитатой из документа — она и есть эталон: фрагмент считается попаданием, если содержит её текст. Проверяется не формулировка модели, а то, попали ли нужные сведения в контекст вообще.
@@ -115,6 +119,31 @@ uv run python scripts/evaluate.py --with-answers   # плюс проверка �
 | Верных отказов, вопросы «в области, ответа нет» | **5 из 5** |
 
 С переоценкой кросс-энкодером на 10 кандидатов hit@1 поднимается до 0,732, число недошедших ответов падает с 9 до 6, время поиска 302 мс (таблица в разделе «Адаптивность»). Итоговый честный отказ — **10 из 10** в любом сочетании `RETRIEVAL_TOP_K`/переоценка (значения MRR и степеней взяты из таблицы выше).
+
+### Сравнение эмбеддинговых моделей
+
+Полный A/B-матрица прогнана на золотом наборе (41 ответ находимых вопросов + 10 без ответа), 2 эмбеддеры × 2 LLM × 2 support × {rerank on/off} × {grade on/off} = **32 варианта**. Кэш результатов — в `eval/results/`; сверка — `uv run eval ab --variants eval/variants_{bge,qwen4b}.json --with-answers`.
+
+| Показатель | bge-m3:567m (1024 dim) | qwen3-embedding:4b (2560 dim) | Выбор |
+| --- | --- | --- | --- |
+| hit@1, rerank on | 0,732 | **0,756** (+4 вопроса) | qwen4b |
+| hit@5, rerank on | 0,854 | 0,854 | — |
+| MRR, rerank on | 0,776 | **0,799** | qwen4b |
+| hit@1, rerank off | 0,561 | **0,634** (+7 вопросов) | qwen4b |
+| MRR, rerank off | 0,647 | **0,690** | qwen4b |
+| Ответ не найден, rerank on | 9 | 9 | — |
+| latency median, rerank on | 0,29 с | 0,32 с | bge чуть быстрее |
+| latency median, rerank off | 0,13 с | 0,16 с | bge чуть быстрее |
+
+**Переоценка** — критична для обеих моделей: без неё hit@1 падает ≈17 пунктов. **Грейдинг** — не влияет ни на качество, ни на latency (подтверждено A/B: p=1,000 по всем метрикам). **LLM и support модель** — не влияют на retrieval, только на ответы.
+
+**Итог**: `qwen3-embedding:4b` лучше `bge-m3` во всех точках качества при цене +20–30 мс на поиск. Для включения:
+
+```sh
+# .env
+EMBEDDING_MODEL="qwen3-embedding:4b"
+# Qdrant: переключить алиас aist_chunks → aist_chunks_v2
+```
 
 ### Что эти цифры значат
 
@@ -239,22 +268,37 @@ gui/                            # Chainlit (:8000)
   contract.py                   #   aist-конверт, цитирование
   db.py                         #   БД GUI (пользователи, схема истории диалогов)
 
+eval/                           # харнесс измерения качества: run/ab/bench/report/cache
+  cli.py                        #   единый CLI `uv run eval ...`
+  evaluate.py                   #   утилиты: normalize, chunk_contains, percentile
+  variants.py                   #   сборка варианта (search/agent) из оверрайдов
+  runners.py                    #   GoldenSetRunner + OperationalRunner
+  golden.py                     #   золотой набор (questions.json) с валидацией
+  metrics.py                    #   hit@k, MRR, not_found, refusal, latency, answer_chars
+  stats.py                      #   A/B-тесты: МакНемар, Уилкоксон, пермутация
+  compare.py                    #   матрица прогонов с кэшем и вердиктами
+  benchmark.py                  #   операционный замер (латенси, нагрузка)
+  cache.py                      #   детерминированный кэш результатов (eval/results)
+  report.py                     #   генератор docs/BENCHMARK.md
+  config.py                     #   Variant/RunConfig/Environment
+
 deploy/                         # Docker: compose-слои, Dockerfile, Dockerfile.gui, aegra_entry, README
   docker-compose.yml (base: postgres+aegra+gui) → include qdrant/orc
   docker-compose.qdrant.yml         #   слой «база знаний» (Qdrant)
   docker-compose.orchestration.yml  #   слой Prefect (server+runner, см. docs/DEPLOY.md)
 scripts/
   ingest.py                     #   индексация корпуса (поколения, алиас, инкрементальный режим)
-  evaluate.py                   #   замер качества на золотом наборе: hit@k, MRR, отказы
-  cli_chat.py, server_cli.py    #   отладка без интерфейса
+  cli_chat.py, server_cli.py    #   отладка без интерфейса (агент и HTTP aegra)
 tests/                          # pytest: fakes, test_agent, test_gui, test_infrastructure
   fixtures/corpus/              #   выгрузка 20 статей раздела 44030
   fixtures/golden/questions.json  # золотой набор: 41 вопрос с эталоном + 10 без ответа
 docs/RETRIEVE.md                #   описание логики retrieve/search (промпты — agent/prompts.py)
 docs/AGENT.md                   #   граф ассистента: узлы, память, события, промпты
+docs/ARCHITECTURE.md            #   архитектура стенда и стек отображения
+docs/BENCHMARK.md               #   харнесс измерения качества: метрики, A/B, история прогонов
+docs/DEPLOY.md                  #   запуск и эксплуатация стенда
 docs/GUI.md                     #   интерфейс Chainlit, контракт событий
 docs/INGEST.md                  #   индексация корпуса и Prefect
-docs/DEPLOY.md                  #   запуск и эксплуатация стенда
 docs/TESTS.md                   #   карта тестов, маркеры, как запускать
 docs/demo/graph.png             #   схема графа (scripts/get_graph_visualization.py)
 
@@ -297,11 +341,11 @@ uv run ruff check .                 # линт (E/F/I/UP/B/SIM/ASYNC/RUF)
 
 ## Тестирование
 
-Всего **195 тестов**. Разделены маркерами по тому, что им нужно для работы:
+Всего **330 тестов**. Разделены маркерами по тому, что им нужно для работы:
 
 | Маркер | Тестов | Требования |
 | --- | --- | --- |
-| *(нет маркера)* | 163 | Ничего. Фейковые модели и поиск, без сервисов и без сети |
+| *(нет маркера)* | 298 | Ничего. Фейковые модели и поиск, без сервисов и без сети |
 | `corpus` | 17 | Выгрузка корпуса в `tests/fixtures/corpus/` (лежит в репозитории) |
 | `qdrant` | 9 | Живой сервер Qdrant: серверный BM25 недоступен в режиме `:memory:` |
 | `llm` | 3 | Ollama со скачанной `LLM_MODEL`; иначе тесты пропускаются с подсказкой |
@@ -313,7 +357,7 @@ uv run pytest -m "not llm and not embeddings"                  # плюс рег
 uv run pytest                                                  # всё; нужны Ollama и Qdrant
 ```
 
-CI на PR (`.github/workflows/ci.yml`): `uv sync --extra dev --frozen` + `pytest -m "not llm and not embeddings"`.
+CI на PR (`.github/workflows/ci.yml`): `uv sync --extra dev --extra orchestration --extra benchmark --frozen` + `pytest -m "not llm and not embeddings"`.
 
 Тесты с маркерами `llm` и `embeddings` не падают, когда модель не скачана, а **пропускаются с подсказкой**, что именно скачать: модель по умолчанию рассчитана на демо-машину, и на машине разработчика её обычно нет, а красный прогон в этом случае вводит в заблуждение.
 
