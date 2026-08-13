@@ -135,7 +135,7 @@ async def main_async(args: argparse.Namespace, golden: GoldenSet) -> int:
     from infrastructure.retrieval.factory import shutdown
 
     settings = get_settings()
-    if settings.resolved_retrieval_provider == "mock":
+    if settings.resolved_retrieval_provider() == "mock":
         logger.error(
             "замер идёт на заглушке поиска: задайте RETRIEVAL_PROVIDER=qdrant, "
             "иначе цифры ничего не значат"

@@ -11,6 +11,7 @@ from eval.golden import GoldenSet
 from eval.metrics import default_metrics
 from eval.result import Outcome, RunResult, Verdict
 from eval.runners import BuildResult, GoldenSetRunner, OperationalRunner
+from eval.stats import compare_all, compare_metric
 from eval.variants import build_variant
 
 __all__ = [
@@ -25,6 +26,8 @@ __all__ = [
     "Variant",
     "Verdict",
     "build_variant",
+    "compare_all",
+    "compare_metric",
     "default_metrics",
     "snapshot_environment",
 ]

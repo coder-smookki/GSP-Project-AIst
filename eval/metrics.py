@@ -63,11 +63,18 @@ def unanswerable_outcomes(outcomes: list[Outcome]) -> list[Outcome]:
 
 
 class BaseMetric:
-    """Общий каркас метрики: вычисление оставляет наследникам."""
+    """Общий каркас метрики: вычисление оставляет наследникам.
+
+    Attributes:
+        higher_is_better: В какую сторону улучшение: ``True`` — больше лучше,
+            ``False`` — меньше лучше, ``None`` — направления нет (A/B не
+            выносит вердикт).
+    """
 
     key: str
     display_name: str
     kind: MetricKind
+    higher_is_better: bool | None = True
 
     def evaluate(self, outcomes: list[Outcome]) -> float:
         raise NotImplementedError
@@ -122,6 +129,7 @@ class NotFoundRate(BaseMetric):
     """Доля отвечаемых вопросов, где ответ не дошёл до контекста вовсе."""
 
     kind: MetricKind = "categorical"
+    higher_is_better: bool | None = False
 
     @property
     def key(self) -> str:
@@ -164,6 +172,7 @@ class LatencyMedian(BaseMetric):
     """Медианное время поиска по всем вопросам."""
 
     kind: MetricKind = "continuous"
+    higher_is_better: bool | None = False
 
     @property
     def key(self) -> str:
@@ -182,6 +191,7 @@ class LatencyP95(BaseMetric):
     """95-й процентиль времени поиска по всем вопросам."""
 
     kind: MetricKind = "continuous"
+    higher_is_better: bool | None = False
 
     @property
     def key(self) -> str:
@@ -200,6 +210,7 @@ class AnswerChars(BaseMetric):
     """Средняя длина ответа модели (по вопросам с ответом)."""
 
     kind: MetricKind = "continuous"
+    higher_is_better: bool | None = None
 
     @property
     def key(self) -> str:
