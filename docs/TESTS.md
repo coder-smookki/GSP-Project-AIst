@@ -92,7 +92,7 @@ pytest -m "not integration"
 
 | Файл | Покрывает |
 | --- | --- |
-| `test_evaluate.py` | хелперы `scripts/evaluate.py` (normalize, longest_common_run, chunk_contains, percentile) — импорт по пути из скрипта |
+| `test_evaluate.py` | хелперы пакета `eval` (normalize, longest_common_run, chunk_contains, percentile) — импорт из `eval.golden` и `eval.metrics` |
 | `test_golden_set.py` | целостность golden-набора vs корпус: цитаты дословно, без плейсхолдеров, уникальность, ≥70% покрытия, оба типа не-ответов, ≥25% числовых | marker `corpus` |
 
 ## Fixtures

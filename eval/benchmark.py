@@ -8,8 +8,8 @@
 
 Запуск на целевой машине с поднятым стеком и проиндексированным корпусом::
 
-    uv run python scripts/benchmark.py
-    uv run python scripts/benchmark.py --concurrency 1 2 4 --repeats 3
+    uv run python eval/benchmark.py
+    uv run python eval/benchmark.py --concurrency 1 2 4 --repeats 3
 
 Результат печатается таблицей и, при указании ``--output``, пишется в JSON.
 """

@@ -151,7 +151,7 @@ curl -s http://localhost:6333/collections/aist_chunks | grep -o '"points_count":
 ### 4. Замер качества (необязательно, но полезно)
 
 ```sh
-uv run python scripts/evaluate.py
+uv run python eval/evaluate.py
 ```
 
 Считает hit@k, MRR и долю верных отказов на золотом наборе вопросов. Это

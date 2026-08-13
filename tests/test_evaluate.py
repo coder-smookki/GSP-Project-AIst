@@ -9,26 +9,10 @@
 
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
-
 import pytest
 
-# Загрузка по пути, а не импортом: `scripts` — это каталог утилит, а не
-# пакет. Регистрация в `sys.modules` до выполнения обязательна: без неё
-# `@dataclass` внутри модуля не находит собственное пространство имён.
-_spec = importlib.util.spec_from_file_location(
-    "evaluate", Path(__file__).resolve().parents[1] / "scripts" / "evaluate.py"
-)
-evaluate = importlib.util.module_from_spec(_spec)
-sys.modules["evaluate"] = evaluate
-_spec.loader.exec_module(evaluate)
-
-chunk_contains = evaluate.chunk_contains
-longest_common_run = evaluate.longest_common_run
-normalize = evaluate.normalize
-percentile = evaluate.percentile
+from eval.golden import chunk_contains, longest_common_run, normalize
+from eval.metrics import percentile
 
 
 class TestNormalize:

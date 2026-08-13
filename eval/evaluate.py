@@ -24,8 +24,8 @@
 
 Запуск::
 
-    python scripts/evaluate.py
-    python scripts/evaluate.py --with-answers --limit 10
+    uv run python eval/evaluate.py
+    uv run python eval/evaluate.py --with-answers --limit 10
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ import argparse
 import asyncio
 import json
 import logging
-import re
 import statistics
 import sys
 import time
@@ -42,8 +41,11 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# При прямом запуске (`python scripts/evaluate.py`) в sys.path попадает
-# каталог scripts, а не корень репозитория, и импорт `infrastructure`
+from eval.golden import chunk_contains
+from eval.metrics import percentile
+
+# При прямом запуске (`uv run python eval/evaluate.py`) в sys.path попадает
+# каталог eval, а не корень репозитория, и импорт `infrastructure`
 # падает. Полагаться на редактируемую установку нельзя: она отваливается
 # при пересборке окружения, а команда описана в README как рабочая.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -53,86 +55,8 @@ logger = logging.getLogger("evaluate")
 #: Путь к золотому набору по умолчанию.
 DEFAULT_GOLDEN = Path("tests/fixtures/golden/questions.json")
 
-#: Сколько подряд идущих слов цитаты должно найтись во фрагменте, чтобы
-#: счесть его попаданием.
-#:
-#: Точное вхождение целиком не годится: чанкинг режет текст по атомам, и
-#: цитата из двух предложений запросто окажется на границе двух фрагментов.
-#: Отдельные слова, наоборот, совпадают случайно — «работник», «организация»
-#: и «безопасность» есть почти в каждом пункте. Шесть слов подряд —
-#: компромисс: случайно такая цепочка не возникает, а разрыв по границе
-#: чанка её обычно не разрушает.
-MIN_MATCH_WORDS = 6
-
 #: Ответ, который система обязана дать при отсутствии сведений.
 REFUSAL = "в базе знаний информации нет"
-
-
-def normalize(text: str) -> list[str]:
-    """Приводит текст к списку слов для сопоставления.
-
-    Регистр, «ё», пунктуация и переносы строк различаются в цитате и в
-    проиндексированном чанке, хотя текст один и тот же. Сравнивать надо
-    после приведения, иначе верные попадания теряются.
-
-    Args:
-        text: Исходный текст.
-
-    Returns:
-        list[str]: Слова в нижнем регистре без пунктуации.
-    """
-    lowered = text.lower().replace("ё", "е")
-    return re.findall(r"[a-zа-я0-9]+", lowered)
-
-
-def longest_common_run(needle: list[str], haystack: list[str]) -> int:
-    """Считает длину самой длинной общей цепочки слов подряд.
-
-    Args:
-        needle: Слова эталонной цитаты.
-        haystack: Слова проверяемого фрагмента.
-
-    Returns:
-        int: Число слов в самой длинной совпавшей цепочке.
-    """
-    if not needle or not haystack:
-        return 0
-    positions: dict[str, list[int]] = {}
-    for index, word in enumerate(haystack):
-        positions.setdefault(word, []).append(index)
-
-    best = 0
-    # Классическая динамика по общей подстроке, но только по позициям, где
-    # слово вообще встречается: словарь регламентов узкий, и полная матрица
-    # на длинных чанках считалась бы заметно дольше без пользы.
-    previous: dict[int, int] = {}
-    for word in needle:
-        current: dict[int, int] = {}
-        for index in positions.get(word, ()):
-            run = previous.get(index - 1, 0) + 1
-            current[index] = run
-            best = max(best, run)
-        previous = current
-    return best
-
-
-def chunk_contains(quote: str, chunk_text: str) -> bool:
-    """Проверяет, содержит ли фрагмент эталонную цитату.
-
-    Args:
-        quote: Дословная цитата из документа.
-        chunk_text: Текст найденного фрагмента.
-
-    Returns:
-        bool: ``True``, если совпало достаточно слов подряд. Для коротких
-        цитат требуется совпадение целиком: у них цепочка в шесть слов
-        просто не наберётся.
-    """
-    words = normalize(quote)
-    if not words:
-        return False
-    need = min(MIN_MATCH_WORDS, len(words))
-    return longest_common_run(words, normalize(chunk_text)) >= need
 
 
 @dataclass
@@ -157,23 +81,6 @@ class Outcome:
     answer: str | None = None
     refused: bool = False
     doc_codes: list[str] = field(default_factory=list)
-
-
-def percentile(values: list[float], share: float) -> float:
-    """Возвращает значение квантиля.
-
-    Args:
-        values: Измерения.
-        share: Доля от 0 до 1.
-
-    Returns:
-        float: Значение квантиля; ``0.0`` для пустого списка.
-    """
-    if not values:
-        return 0.0
-    ordered = sorted(values)
-    index = min(len(ordered) - 1, round(share * (len(ordered) - 1)))
-    return ordered[index]
 
 
 async def run_answerable(search, items: list[dict]) -> list[Outcome]:
