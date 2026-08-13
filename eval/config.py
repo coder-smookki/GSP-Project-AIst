@@ -12,7 +12,7 @@ import hashlib
 import json
 import sys
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,9 @@ class RunConfig:
     """Параметры прогона одного варианта.
 
     Attributes:
+        runner: Какой раннер исполняет прогон: ``golden`` (золотой набор)
+            или ``operational`` (операционный замер). Определяет, что собирать
+            при построении варианта — поиск или агента.
         golden: Путь к золотому набору.
         limit: Ограничить число вопросов (первые N) или ``None``.
         with_answers: Дополнительно генерировать ответы агента.
@@ -60,6 +63,7 @@ class RunConfig:
         seed: Зерно ГПСЧ для воспроизводимости.
     """
 
+    runner: Literal["golden", "operational"] = "golden"
     golden: str = "tests/fixtures/golden/questions.json"
     limit: int | None = None
     with_answers: bool = False

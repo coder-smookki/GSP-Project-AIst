@@ -38,11 +38,11 @@ import statistics
 import sys
 from pathlib import Path
 
-from eval.config import RunConfig, Variant, snapshot_environment
+from eval.config import RunConfig, Variant
 from eval.golden import DEFAULT_GOLDEN, GoldenSet, GoldenSetError
 from eval.metrics import default_metrics, percentile
 from eval.result import Outcome
-from eval.runners import BuildResult, GoldenSetRunner
+from eval.runners import GoldenSetRunner
 
 # При прямом запуске (`uv run python eval/evaluate.py`) в sys.path попадает
 # каталог eval, а не корень репозитория, и импорт `infrastructure`
@@ -130,7 +130,7 @@ async def main_async(args: argparse.Namespace, golden: GoldenSet) -> int:
     Returns:
         int: Код возврата процесса.
     """
-    from infrastructure.config.composition_root import create_application
+    from eval.variants import build_variant
     from infrastructure.config.settings import get_settings
     from infrastructure.retrieval.factory import shutdown
 
@@ -142,18 +142,7 @@ async def main_async(args: argparse.Namespace, golden: GoldenSet) -> int:
         )
         return 2
 
-    def build(variant: Variant, config: RunConfig) -> BuildResult:
-        from infrastructure.config.model_registry import setup_registry
-        from infrastructure.retrieval.factory import get_search
-
-        setup_registry(settings)
-        search = get_search(settings)
-        agent = create_application() if config.with_answers else None
-        return BuildResult(
-            search=search, agent=agent, environment=snapshot_environment(settings)
-        )
-
-    runner = GoldenSetRunner(build=build, metrics=default_metrics())
+    runner = GoldenSetRunner(build=build_variant, metrics=default_metrics())
     config = RunConfig(
         golden=args.golden, limit=args.limit, with_answers=args.with_answers
     )

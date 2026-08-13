@@ -25,9 +25,9 @@ import statistics
 import sys
 from pathlib import Path
 
-from eval.config import RunConfig, Variant, snapshot_environment
+from eval.config import RunConfig, Variant
 from eval.metrics import LatencyMedian, LatencyP95
-from eval.runners import BuildResult, OperationalRunner
+from eval.runners import OperationalRunner
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -43,7 +43,7 @@ async def main_async(args: argparse.Namespace) -> int:
     Returns:
         int: Код возврата процесса.
     """
-    from infrastructure.config.composition_root import create_application
+    from eval.variants import build_variant
     from infrastructure.config.settings import get_settings
 
     settings = get_settings()
@@ -63,13 +63,14 @@ async def main_async(args: argparse.Namespace) -> int:
     think_state = "включены" if settings.llm_reasoning else "выключены"
     print(f"  размышления:        {think_state}")
 
-    def build(variant: Variant, config: RunConfig) -> BuildResult:
-        return BuildResult(
-            agent=create_application(), environment=snapshot_environment(settings)
-        )
-
-    runner = OperationalRunner(build=build, metrics=[LatencyMedian(), LatencyP95()])
-    config = RunConfig(repeats=args.repeats, concurrency=tuple(args.concurrency))
+    runner = OperationalRunner(
+        build=build_variant, metrics=[LatencyMedian(), LatencyP95()]
+    )
+    config = RunConfig(
+        runner="operational",
+        repeats=args.repeats,
+        concurrency=tuple(args.concurrency),
+    )
     result = await runner.run(Variant(name="base"), config)
 
     rows: list[dict] = result.meta["sequential"]
