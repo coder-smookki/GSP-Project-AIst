@@ -11,8 +11,8 @@ import argparse
 from eval.cache import ResultCache, build_entry
 from eval.cli import _cmd_cache, build_parser
 from eval.config import RunConfig, Variant
-from tests.test_eval_cache import ENV, METRICS, key_for
-from tests.test_eval_stats import make_result
+from tests.eval.test_eval_cache import ENV, METRICS, key_for
+from tests.eval.test_eval_stats import make_result
 
 
 class TestBuildParser:

@@ -11,8 +11,8 @@ from eval.cache import ResultCache, build_entry, cache_key
 from eval.config import Variant
 from eval.metrics import MRR, HitAtK, compute_metrics
 from eval.report import collect_runs, generate, metric_from_key, render_markdown
-from tests.test_eval_cache import CONFIG, ENV, METRICS
-from tests.test_eval_stats import make_result
+from tests.eval.test_eval_cache import CONFIG, ENV, METRICS
+from tests.eval.test_eval_stats import make_result
 
 
 def _result(ranks: list, variant: str, created: str):

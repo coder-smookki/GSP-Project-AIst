@@ -18,7 +18,7 @@ from eval.cache import (
 )
 from eval.config import Environment, RunConfig, Variant
 from eval.metrics import MRR, HitAtK
-from tests.test_eval_stats import make_result
+from tests.eval.test_eval_stats import make_result
 
 ENV = Environment(
     platform="test",
