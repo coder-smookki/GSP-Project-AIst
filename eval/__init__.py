@@ -7,11 +7,13 @@
 """
 
 from eval.config import Environment, RunConfig, Variant, snapshot_environment
+from eval.golden import GoldenSet
 from eval.metrics import default_metrics
 from eval.result import Outcome, RunResult, Verdict
 
 __all__ = [
     "Environment",
+    "GoldenSet",
     "Outcome",
     "RunConfig",
     "RunResult",

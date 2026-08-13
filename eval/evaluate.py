@@ -40,7 +40,7 @@ import time
 import uuid
 from pathlib import Path
 
-from eval.golden import chunk_contains
+from eval.golden import DEFAULT_GOLDEN, GoldenSet, GoldenSetError, chunk_contains
 from eval.metrics import percentile
 from eval.result import Outcome
 
@@ -51,9 +51,6 @@ from eval.result import Outcome
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 logger = logging.getLogger("evaluate")
-
-#: Путь к золотому набору по умолчанию.
-DEFAULT_GOLDEN = Path("tests/fixtures/golden/questions.json")
 
 #: Ответ, который система обязана дать при отсутствии сведений.
 REFUSAL = "в базе знаний информации нет"
@@ -213,7 +210,7 @@ def report(answerable: list[Outcome], unanswerable: list[Outcome]) -> bool:
     return bool(answerable or unanswerable)
 
 
-async def main_async(args: argparse.Namespace, golden: dict) -> int:
+async def main_async(args: argparse.Namespace, golden: GoldenSet) -> int:
     """Выполняет замер.
 
     Args:
@@ -223,12 +220,9 @@ async def main_async(args: argparse.Namespace, golden: dict) -> int:
     Returns:
         int: Код возврата процесса.
     """
-    answerable_items = golden.get("answerable", [])
-    unanswerable_items = golden.get("unanswerable", [])
-
-    if args.limit:
-        answerable_items = answerable_items[: args.limit]
-        unanswerable_items = unanswerable_items[: args.limit]
+    golden = golden.limited(args.limit)
+    answerable_items = list(golden.answerable)
+    unanswerable_items = list(golden.unanswerable)
 
     from infrastructure.config.model_registry import setup_registry
     from infrastructure.config.settings import get_settings
@@ -300,11 +294,11 @@ def main() -> int:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    golden_path = Path(args.golden)
-    if not golden_path.exists():
-        logger.error("золотой набор не найден: %s", golden_path)
+    try:
+        golden = GoldenSet.load(args.golden)
+    except GoldenSetError as exc:
+        logger.error("%s", exc)
         return 2
-    golden = json.loads(golden_path.read_text(encoding="utf-8"))
 
     return asyncio.run(main_async(args, golden))
 
