@@ -27,7 +27,7 @@ class TestBuildParser:
             if isinstance(action, argparse._SubParsersAction)
         ]
         subcommands = next(iter(subparser_actions)).choices
-        assert set(subcommands) == {"run", "ab", "bench", "cache"}
+        assert set(subcommands) == {"run", "ab", "bench", "cache", "report"}
 
     def test_run_parses_variant_settings(self) -> None:
         """run принимает имя и оверрайды варианта."""

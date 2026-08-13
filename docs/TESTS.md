@@ -93,7 +93,23 @@ pytest -m "not integration"
 | Файл | Покрывает |
 | --- | --- |
 | `test_evaluate.py` | хелперы пакета `eval` (normalize, longest_common_run, chunk_contains, percentile) — импорт из `eval.golden` и `eval.metrics` |
-| `test_golden_set.py` | целостность golden-набора vs корпус: цитаты дословно, без плейсхолдеров, уникальность, ≥70% покрытия, оба типа не-ответов, ≥25% числовых | marker `corpus` |
+| `test_golden_set.py` | целостность golden-набора vs корпус: цитаты дословно, без плейсхолдеров, уникальность, ≥70% покрытия, оба типа не-ответов, ≥25% числовых |
+
+### Харнесс измерения качества — `tests/test_eval_*.py`
+
+| Файл | Покрывает |
+| --- | --- |
+| `test_eval_contracts.py` | `Variant.identity`/`Environment.fingerprint` (детерминизм, чувствительность), раунд-трип `RunResult`, протоколы `Metric`/`Runner`/`Cache`/`StatTest`/`Reporter` |
+| `test_eval_metrics.py` | hit@k/MRR/not_found/refusal/latency/answer_chars по известным наборам; registry |
+| `test_eval_stats.py` | парные тесты: МакНемар на известной discordant-счет, Уилкоксон, пермутационный fallback, выбор теста по типу метрики, направление вердикта |
+| `test_eval_cache.py` | детерминизм и чувствительность ключа кэша, file_hash, версия метрик, раунд-трип записи, метаданные и очистка |
+| `test_eval_golden.py` | загрузка золотого набора: реальный фиксту, валидация структуры, limit, ошибки |
+| `test_eval_runners.py` | `GoldenSetRunner`/`OperationalRunner` на фейках поиска и агента; метаданные и метрики |
+| `test_eval_compare.py` | загрузка файла вариантов (список/объект, дубли, отсутствие), сборка payload |
+| `test_eval_variants.py` | `make_settings` (орерайды), `build_variant` (search/agent/operационный) |
+| `test_eval_cli.py` | дерево подкоманд `eval` (run/ab/bench/cache/report), управление кэшем |
+| `test_eval_benchmark.py` | `main_async` замера: mock-защита, печать таблиц, запись JSON, пустой concurrency |
+| `test_eval_report.py` | `metric_from_key`, группировка кэша в прогоны, рендер BENCHMARK.md, запись файла | marker `corpus` |
 
 ## Fixtures
 

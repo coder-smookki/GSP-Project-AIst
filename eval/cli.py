@@ -30,6 +30,9 @@ from eval.result import RunResult
 
 logger = logging.getLogger("eval")
 
+#: Куда report пишет документ по умолчанию.
+DEFAULT_REPORT = Path(__file__).resolve().parents[1] / "docs" / "BENCHMARK.md"
+
 
 def _mock_guard() -> bool:
     """Проверяет, что замер не идёт на заглушке поиска.
@@ -146,6 +149,20 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     from eval.benchmark import main_async as bench_main
 
     return asyncio.run(bench_main(args))
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    """Генерирует docs/BENCHMARK.md из кэша результатов.
+
+    Args:
+        args: Разобранные аргументы.
+
+    Returns:
+        int: Код возврата процесса.
+    """
+    from eval.report import generate
+
+    return generate(ResultCache(args.cache_dir), args.output)
 
 
 def _cmd_cache(args: argparse.Namespace) -> int:
@@ -265,6 +282,20 @@ def build_parser() -> argparse.ArgumentParser:
     cache_sub.add_parser("list", help="список сохранённых результатов")
     cache_sub.add_parser("clear", help="удалить все сохранённые результаты")
 
+    report_p = sub.add_parser(
+        "report", help="обновить docs/BENCHMARK.md из кэша результатов"
+    )
+    report_p.add_argument(
+        "--cache-dir",
+        default=str(DEFAULT_DIR),
+        help="каталог кэша результатов",
+    )
+    report_p.add_argument(
+        "--output",
+        default=str(DEFAULT_REPORT),
+        help="куда писать отчёт (по умолчанию docs/BENCHMARK.md)",
+    )
+
     return parser
 
 
@@ -291,6 +322,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_ab(args)
     if args.command == "bench":
         return _cmd_bench(args)
+    if args.command == "report":
+        return _cmd_report(args)
     return _cmd_cache(args)
 
 

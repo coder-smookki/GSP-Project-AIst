@@ -150,6 +150,7 @@ def build_entry(
         },
         "runner": config.runner,
         "environment": environment.fingerprint(),
+        "environment_desc": environment.describe(),
         "dataset": dataset,
         "metrics": metrics_version(metrics),
         "config": _config_digest(config),
@@ -226,6 +227,7 @@ class ResultCache:
                     "variant": data["variant"]["name"],
                     "runner": data["runner"],
                     "environment": data["environment"],
+                    "environment_desc": data.get("environment_desc", ""),
                     "dataset": data["dataset"],
                     "created_at": data["created_at"],
                 }

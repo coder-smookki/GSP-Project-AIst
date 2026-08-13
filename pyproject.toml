@@ -77,6 +77,8 @@ extend-ignore = ["RUF001", "RUF002", "RUF003"]
 "tests/*" = ["B011"]
 "agent/graph.py" = ["E501"]
 "agent/prompts.py" = ["E501"]
+# Markdown-таблицы в коде (статичные разделы BENCHMARK.md) не переносятся
+"eval/report.py" = ["E501"]
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -89,9 +89,13 @@ open http://localhost:3000
 
 Качество меряется на золотом наборе, а не точечными прогонами: без постоянного набора вопросов нельзя узнать, стало ли лучше после смены модели, границ чанков или числа фрагментов в контексте.
 
+Инструменты, метрики и история всех прогонов — в [docs/BENCHMARK.md](docs/BENCHMARK.md); ниже — команды быстрого доступа:
+
 ```sh
-uv run python eval/evaluate.py                  # только поиск: hit@k, MRR, время
-uv run python eval/evaluate.py --with-answers   # плюс проверка честного отказа по тексту ответа
+uv run eval run --with-answers                      # качество base на золотом наборе
+uv run eval ab --variants variants.json --with-answers   # A/B-сравнение вариантов
+uv run eval report                                  # обновить docs/BENCHMARK.md
+uv run eval cache list                              # какие результаты уже сняты
 ```
 
 Набор — [tests/fixtures/golden/questions.json](tests/fixtures/golden/questions.json): **41 вопрос с известным ответом** (19 из 20 документов; 18 числовых, 13 процедурных, 10 фактических) и **10 вопросов без ответа**. Каждый вопрос сопровождается дословной цитатой из документа — она и есть эталон: фрагмент считается попаданием, если содержит её текст. Проверяется не формулировка модели, а то, попали ли нужные сведения в контекст вообще.
@@ -239,22 +243,37 @@ gui/                            # Chainlit (:8000)
   contract.py                   #   aist-конверт, цитирование
   db.py                         #   БД GUI (пользователи, схема истории диалогов)
 
+eval/                           # харнесс измерения качества: run/ab/bench/report/cache
+  cli.py                        #   единый CLI `uv run eval ...`
+  evaluate.py                   #   утилиты: normalize, chunk_contains, percentile
+  variants.py                   #   сборка варианта (search/agent) из оверрайдов
+  runners.py                    #   GoldenSetRunner + OperationalRunner
+  golden.py                     #   золотой набор (questions.json) с валидацией
+  metrics.py                    #   hit@k, MRR, not_found, refusal, latency, answer_chars
+  stats.py                      #   A/B-тесты: МакНемар, Уилкоксон, пермутация
+  compare.py                    #   матрица прогонов с кэшем и вердиктами
+  benchmark.py                  #   операционный замер (латенси, нагрузка)
+  cache.py                      #   детерминированный кэш результатов (eval/results)
+  report.py                     #   генератор docs/BENCHMARK.md
+  config.py                     #   Variant/RunConfig/Environment
+
 deploy/                         # Docker: compose-слои, Dockerfile, Dockerfile.gui, aegra_entry, README
   docker-compose.yml (base: postgres+aegra+gui) → include qdrant/orc
   docker-compose.qdrant.yml         #   слой «база знаний» (Qdrant)
   docker-compose.orchestration.yml  #   слой Prefect (server+runner, см. docs/DEPLOY.md)
 scripts/
   ingest.py                     #   индексация корпуса (поколения, алиас, инкрементальный режим)
-  evaluate.py                   #   замер качества на золотом наборе: hit@k, MRR, отказы
-  cli_chat.py, server_cli.py    #   отладка без интерфейса
+  cli_chat.py, server_cli.py    #   отладка без интерфейса (агент и HTTP aegra)
 tests/                          # pytest: fakes, test_agent, test_gui, test_infrastructure
   fixtures/corpus/              #   выгрузка 20 статей раздела 44030
   fixtures/golden/questions.json  # золотой набор: 41 вопрос с эталоном + 10 без ответа
 docs/RETRIEVE.md                #   описание логики retrieve/search (промпты — agent/prompts.py)
 docs/AGENT.md                   #   граф ассистента: узлы, память, события, промпты
+docs/ARCHITECTURE.md            #   архитектура стенда и стек отображения
+docs/BENCHMARK.md               #   харнесс измерения качества: метрики, A/B, история прогонов
+docs/DEPLOY.md                  #   запуск и эксплуатация стенда
 docs/GUI.md                     #   интерфейс Chainlit, контракт событий
 docs/INGEST.md                  #   индексация корпуса и Prefect
-docs/DEPLOY.md                  #   запуск и эксплуатация стенда
 docs/TESTS.md                   #   карта тестов, маркеры, как запускать
 docs/demo/graph.png             #   схема графа (scripts/get_graph_visualization.py)
 
@@ -297,11 +316,11 @@ uv run ruff check .                 # линт (E/F/I/UP/B/SIM/ASYNC/RUF)
 
 ## Тестирование
 
-Всего **195 тестов**. Разделены маркерами по тому, что им нужно для работы:
+Всего **330 тестов**. Разделены маркерами по тому, что им нужно для работы:
 
 | Маркер | Тестов | Требования |
 | --- | --- | --- |
-| *(нет маркера)* | 163 | Ничего. Фейковые модели и поиск, без сервисов и без сети |
+| *(нет маркера)* | 298 | Ничего. Фейковые модели и поиск, без сервисов и без сети |
 | `corpus` | 17 | Выгрузка корпуса в `tests/fixtures/corpus/` (лежит в репозитории) |
 | `qdrant` | 9 | Живой сервер Qdrant: серверный BM25 недоступен в режиме `:memory:` |
 | `llm` | 3 | Ollama со скачанной `LLM_MODEL`; иначе тесты пропускаются с подсказкой |
@@ -313,7 +332,7 @@ uv run pytest -m "not llm and not embeddings"                  # плюс рег
 uv run pytest                                                  # всё; нужны Ollama и Qdrant
 ```
 
-CI на PR (`.github/workflows/ci.yml`): `uv sync --extra dev --frozen` + `pytest -m "not llm and not embeddings"`.
+CI на PR (`.github/workflows/ci.yml`): `uv sync --extra dev --extra orchestration --extra benchmark --frozen` + `pytest -m "not llm and not embeddings"`.
 
 Тесты с маркерами `llm` и `embeddings` не падают, когда модель не скачана, а **пропускаются с подсказкой**, что именно скачать: модель по умолчанию рассчитана на демо-машину, и на машине разработчика её обычно нет, а красный прогон в этом случае вводит в заблуждение.
 

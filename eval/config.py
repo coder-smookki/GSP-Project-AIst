@@ -103,6 +103,19 @@ class Environment:
     grading_enabled: bool
     verify_numbers: bool
 
+    def describe(self) -> str:
+        """Краткое человекочитаемое описание окружения.
+
+        Returns:
+            str: Модели и ключевые настройки, по которым результат
+            воспроизводим (для отчётов и истории).
+        """
+        rerank = "вкл" if self.rerank_enabled else "выкл"
+        return (
+            f"llm={self.llm_model}, emb={self.embedding_model}, "
+            f"top_k={self.retrieval_top_k}, rerank={rerank}"
+        )
+
     def fingerprint(self) -> str:
         """Хеш окружения для ключа кэша.
 
