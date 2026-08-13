@@ -240,9 +240,7 @@ def create_app_agent(
             for n, (chunk, score) in enumerate(hits, 1)
         ]
 
-        grading_before_rewrite = (
-            grading and items and support_model is not None
-        )
+        grading_before_rewrite = grading and items and support_model is not None
         if grading_before_rewrite:
             emit("trace", {"stage": "retrieve", "status": "grading"})
             graded = await grade_chunks(
@@ -254,7 +252,11 @@ def create_app_agent(
             if graded is not None:
                 items = [dict(item, n=n) for n, item in enumerate(graded, 1)]
 
-        if not items and support_model is not None and state.get("rewrite_attempts", 0) < max_rewrites:
+        if (
+            not items
+            and support_model is not None
+            and state.get("rewrite_attempts", 0) < max_rewrites
+        ):
             emit("trace", {"stage": "retrieve", "status": "rewriting"})
             return {"query": query, "needs_rewrite": True}
 

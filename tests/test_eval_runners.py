@@ -65,8 +65,9 @@ def _write_golden(tmp_path, answerable, unanswerable) -> str:
     """Пишет золотой набор во временный файл."""
     path = tmp_path / "golden.json"
     path.write_text(
-        json.dumps({"answerable": answerable, "unanswerable": unanswerable},
-                   ensure_ascii=False),
+        json.dumps(
+            {"answerable": answerable, "unanswerable": unanswerable}, ensure_ascii=False
+        ),
         encoding="utf-8",
     )
     return str(path)
@@ -92,8 +93,10 @@ class TestGoldenSetRunner:
             ],
             [_unanswerable("вопрос без ответа")],
         )
+
         def build(_v, _c):
             return BuildResult(search=search, environment=ENV)
+
         runner = GoldenSetRunner(build=build, metrics=default_metrics(k_values=(1,)))
         variant = Variant(name="base")
         config = config or RunConfig(golden=golden_path)
@@ -126,16 +129,20 @@ class TestGoldenSetRunner:
             golden=_write_golden(tmp_path, [], [_unanswerable("вопрос без ответа")]),
             with_answers=True,
         )
+
         def build(_v, _c):
             return BuildResult(search=search, agent=agent, environment=ENV)
+
         runner = GoldenSetRunner(build=build)
         result = await runner.run(Variant(name="base"), config)
         assert result.metrics["refusal_rate"] == 1.0
 
     async def test_requires_search(self, tmp_path) -> None:
         """Без поиска в BuildResult раннер падает с понятной ошибкой."""
+
         def build(_v, _c):
             return BuildResult(environment=ENV)
+
         runner = GoldenSetRunner(build=build)
         config = RunConfig(golden=DEFAULT_GOLDEN)
         with pytest.raises(ValueError, match="поиск"):
@@ -153,10 +160,12 @@ class TestOperationalRunner:
 
     async def test_metrics_and_meta(self) -> None:
         """Считаются латенси и пропускная способность, замеры в meta."""
+
         def build(_v, _c):
             return BuildResult(
-                    agent=_FakeAgent(text="длинный ответ" * 5), environment=ENV
-                )
+                agent=_FakeAgent(text="длинный ответ" * 5), environment=ENV
+            )
+
         runner = OperationalRunner(build=build, questions=(("тест", "Вопрос?"),))
         result = await runner.run(
             Variant(name="base"), RunConfig(repeats=2, concurrency=(1,))
@@ -169,8 +178,10 @@ class TestOperationalRunner:
 
     async def test_empty_concurrency(self) -> None:
         """Без concurrency блок одновременных обращений пуст."""
+
         def build(_v, _c):
             return BuildResult(agent=_FakeAgent(), environment=ENV)
+
         runner = OperationalRunner(build=build, questions=(("тест", "Вопрос?"),))
         result = await runner.run(
             Variant(name="base"), RunConfig(repeats=1, concurrency=())
@@ -180,8 +191,10 @@ class TestOperationalRunner:
 
     async def test_requires_agent(self) -> None:
         """Без агента в BuildResult раннер падает с понятной ошибкой."""
+
         def build(_v, _c):
             return BuildResult(environment=ENV)
+
         runner = OperationalRunner(build=build)
         with pytest.raises(ValueError, match="агент"):
             await runner.run(Variant(name="base"), RunConfig(repeats=1))
@@ -198,12 +211,12 @@ class TestResultRoundTrip:
             [],
         )
         hits = {"вопрос один": [(_Chunk("doc", "текст цитата один"), 0.9)]}
+
         def build(_v, _c):
             return BuildResult(search=_FakeSearch(hits), environment=ENV)
+
         runner = GoldenSetRunner(build=build)
-        result = await runner.run(
-            Variant(name="base"), RunConfig(golden=golden_path)
-        )
+        result = await runner.run(Variant(name="base"), RunConfig(golden=golden_path))
         restored = RunResult.from_dict(result.to_dict())
         assert restored.variant == result.variant
         assert restored.metrics == result.metrics

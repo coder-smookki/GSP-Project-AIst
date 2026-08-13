@@ -30,9 +30,7 @@ def make_result(
         Outcome(question=f"вопрос {i}", answerable=True, rank=rank, seconds=s)
         for i, (rank, s) in enumerate(zip(ranks, seconds, strict=True))
     ]
-    return RunResult(
-        variant="test", environment="env", metrics={}, outcomes=outcomes
-    )
+    return RunResult(variant="test", environment="env", metrics={}, outcomes=outcomes)
 
 
 class TestCompareMetric:

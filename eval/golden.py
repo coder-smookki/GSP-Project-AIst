@@ -95,9 +95,7 @@ class GoldenSet:
         """
         for item in items:
             if not isinstance(item, dict):
-                raise GoldenSetError(
-                    f"{source}: элемент набора — не объект: {item!r}"
-                )
+                raise GoldenSetError(f"{source}: элемент набора — не объект: {item!r}")
             question = item.get("question")
             if not isinstance(question, str) or not question.strip():
                 raise GoldenSetError(f"{source}: вопрос не задан: {item!r}")

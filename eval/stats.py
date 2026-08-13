@@ -41,9 +41,7 @@ def _seed_for(seed: int, metric_key: str) -> int:
     return seed + sum(map(ord, metric_key))
 
 
-def _direction(
-    metric: BaseMetric, observed: float, p_value: float
-) -> str:
+def _direction(metric: BaseMetric, observed: float, p_value: float) -> str:
     """Определяет направление изменения относительно base.
 
     Args:

@@ -50,6 +50,9 @@ from eval.result import RunResult
 from eval.runners import GoldenSetRunner
 from eval.stats import compare_all
 
+#: Каталог кэша результатов по умолчанию.
+RESULTS_DIR = Path(__file__).resolve().parent / "results"
+
 logger = logging.getLogger("compare")
 
 
@@ -192,7 +195,8 @@ async def main_async(
     Returns:
         int: Код возврата процесса.
     """
-    from eval.variants import build_variant
+    from eval.cache import ResultCache, build_entry, cache_key, file_hash
+    from eval.variants import build_variant, variant_environment
     from infrastructure.config.settings import get_settings
     from infrastructure.retrieval.factory import shutdown
 
@@ -208,12 +212,27 @@ async def main_async(
     config = RunConfig(
         golden=args.golden, limit=args.limit, with_answers=args.with_answers
     )
+    dataset = file_hash(config.golden)
+    cache = ResultCache(args.cache_dir)
 
     results: list[RunResult] = []
     try:
-        for variant in variants:
+        for position, variant in enumerate(variants):
+            environment = variant_environment(variant)
+            key = cache_key(variant, dataset, metrics, environment, config)
+            cached = None
+            if not args.force and not (args.refresh_base and position == 0):
+                cached = cache.load(key)
+            if cached is not None:
+                logger.info("вариант %s: взят из кэша (%s)", variant.name, key)
+                results.append(cached)
+                continue
             logger.info("прогон варианта %s", variant.name)
-            results.append(await runner.run(variant, config))
+            result = await runner.run(variant, config)
+            cache.save(
+                build_entry(key, variant, result, environment, dataset, metrics, config)
+            )
+            results.append(result)
     finally:
         await shutdown()
 
@@ -259,6 +278,21 @@ def main() -> int:
     )
     parser.add_argument("--limit", type=int, help="взять только первые N вопросов")
     parser.add_argument("--output", help="записать полный отчёт в файл")
+    parser.add_argument(
+        "--cache-dir",
+        default=str(RESULTS_DIR),
+        help="каталог кэша результатов (по умолчанию eval/results)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="переснять все варианты, игнорируя кэш",
+    )
+    parser.add_argument(
+        "--refresh-base",
+        action="store_true",
+        help="переснять только базовый вариант, остальные брать из кэша",
+    )
     parser.add_argument("--verbose", action="store_true", help="подробный лог")
     args = parser.parse_args()
 

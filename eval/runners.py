@@ -350,10 +350,14 @@ class OperationalRunner:
         questions: tuple[tuple[str, str], ...] = DEFAULT_QUESTIONS,
     ) -> None:
         self._build = build
-        self._metrics = list(metrics) if metrics is not None else [
-            LatencyMedian(),
-            LatencyP95(),
-        ]
+        self._metrics = (
+            list(metrics)
+            if metrics is not None
+            else [
+                LatencyMedian(),
+                LatencyP95(),
+            ]
+        )
         self._questions = questions
 
     async def run(self, variant: Variant, config: RunConfig) -> RunResult:

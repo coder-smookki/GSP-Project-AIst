@@ -6,6 +6,7 @@
 контракты — :mod:`eval.contracts`.
 """
 
+from eval.cache import ResultCache, cache_key
 from eval.config import Environment, RunConfig, Variant, snapshot_environment
 from eval.golden import GoldenSet
 from eval.metrics import default_metrics
@@ -21,11 +22,13 @@ __all__ = [
     "GoldenSetRunner",
     "OperationalRunner",
     "Outcome",
+    "ResultCache",
     "RunConfig",
     "RunResult",
     "Variant",
     "Verdict",
     "build_variant",
+    "cache_key",
     "compare_all",
     "compare_metric",
     "default_metrics",

@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from eval.config import RunConfig, Variant, snapshot_environment
+from eval.config import Environment, RunConfig, Variant, snapshot_environment
 from eval.runners import BuildResult
 
 
@@ -28,6 +28,22 @@ def make_settings(variant: Variant):
     from infrastructure.config.settings import Settings
 
     return Settings(**variant.settings)
+
+
+def variant_environment(variant: Variant) -> Environment:
+    """Снимает отпечаток окружения варианта без сборки зависимостей.
+
+    Загрузка моделей не выполняется, поэтому можно посчитать ключ кэша до
+    дорогого построения поиска/агента и пропустить прогон, если результат
+    уже сохранён.
+
+    Args:
+        variant: Вариант системы.
+
+    Returns:
+        Environment: Отпечаток окружения варианта.
+    """
+    return snapshot_environment(make_settings(variant))
 
 
 def build_search(settings):

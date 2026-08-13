@@ -256,9 +256,7 @@ class TestCorrectiveRAGRewrite:
             store=InMemoryStore(),
             search=NeverHits(),
         )
-        state: AgentState = {
-            "messages": [{"role": "human", "content": "СОУТ"}]
-        }
+        state: AgentState = {"messages": [{"role": "human", "content": "СОУТ"}]}
 
         result = await app.ainvoke(state)
 

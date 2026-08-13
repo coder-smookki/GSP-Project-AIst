@@ -61,8 +61,7 @@ class TestEnvironment:
             verify_numbers=True,
         )
         assert (
-            Environment(**fields).fingerprint()
-            == Environment(**fields).fingerprint()
+            Environment(**fields).fingerprint() == Environment(**fields).fingerprint()
         )
 
     def test_fingerprint_sensitive_to_model(self) -> None:
@@ -164,6 +163,7 @@ class TestProtocols:
 
     def test_metric_protocol(self) -> None:
         """Метрика реализуется классом с evaluate."""
+
         class _Impl:
             key = "hit@1"
             display_name = "Hit@1"
