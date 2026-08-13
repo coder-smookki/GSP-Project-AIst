@@ -8,6 +8,9 @@ Docker-стек AI-агента, собранный из слоёв: базов�
 
 ## Архитектура
 
+> Полная концептуальная карта стенда (Qdrant, конвейер ingest, Prefect) — в
+> `docs/ARCHITECTURE.md`; ниже — схема выполнения запроса в runtime.
+
 ```mermaid
 flowchart LR
     User[Пользователь] -->|браузер, :8000| GUI[gui · Chainlit<br/>:8000]
