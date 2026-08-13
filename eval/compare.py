@@ -43,6 +43,7 @@ from typing import Any
 # при пересборке окружения.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from eval.cache import ResultCache, build_entry, cache_key, file_hash
 from eval.config import RunConfig, Variant
 from eval.golden import DEFAULT_GOLDEN
 from eval.metrics import BaseMetric, default_metrics
@@ -78,6 +79,52 @@ def load_variants(path: str | Path) -> list[Variant]:
     if len(set(names)) != len(names):
         raise ValueError("имена вариантов должны быть уникальны")
     return variants
+
+
+async def run_matrix(
+    variants: list[Variant],
+    config: RunConfig,
+    metrics: list[BaseMetric],
+    cache: ResultCache,
+    force: bool = False,
+    refresh_base: bool = False,
+) -> list[RunResult]:
+    """Прогоняет варианты, переиспользуя кэш.
+
+    Args:
+        variants: Варианты для прогона.
+        config: Параметры прогона.
+        metrics: Метрики замера.
+        cache: Хранилище результатов.
+        force: Игнорировать кэш для всех вариантов.
+        refresh_base: Переснять только первый вариант.
+
+    Returns:
+        list[RunResult]: Результаты в порядке вариантов.
+    """
+    from eval.variants import build_variant, variant_environment
+
+    runner = GoldenSetRunner(build=build_variant, metrics=metrics)
+    dataset = file_hash(config.golden)
+
+    results: list[RunResult] = []
+    for position, variant in enumerate(variants):
+        environment = variant_environment(variant)
+        key = cache_key(variant, dataset, metrics, environment, config)
+        cached = None
+        if not force and not (refresh_base and position == 0):
+            cached = cache.load(key)
+        if cached is not None:
+            logger.info("вариант %s: взят из кэша (%s)", variant.name, key)
+            results.append(cached)
+            continue
+        logger.info("прогон варианта %s", variant.name)
+        result = await runner.run(variant, config)
+        cache.save(
+            build_entry(key, variant, result, environment, dataset, metrics, config)
+        )
+        results.append(result)
+    return results
 
 
 def print_per_variant(results: list[RunResult], metrics: list[BaseMetric]) -> None:
@@ -195,8 +242,6 @@ async def main_async(
     Returns:
         int: Код возврата процесса.
     """
-    from eval.cache import ResultCache, build_entry, cache_key, file_hash
-    from eval.variants import build_variant, variant_environment
     from infrastructure.config.settings import get_settings
     from infrastructure.retrieval.factory import shutdown
 
@@ -208,31 +253,20 @@ async def main_async(
         )
         return 2
 
-    runner = GoldenSetRunner(build=build_variant, metrics=metrics)
     config = RunConfig(
         golden=args.golden, limit=args.limit, with_answers=args.with_answers
     )
-    dataset = file_hash(config.golden)
     cache = ResultCache(args.cache_dir)
 
-    results: list[RunResult] = []
     try:
-        for position, variant in enumerate(variants):
-            environment = variant_environment(variant)
-            key = cache_key(variant, dataset, metrics, environment, config)
-            cached = None
-            if not args.force and not (args.refresh_base and position == 0):
-                cached = cache.load(key)
-            if cached is not None:
-                logger.info("вариант %s: взят из кэша (%s)", variant.name, key)
-                results.append(cached)
-                continue
-            logger.info("прогон варианта %s", variant.name)
-            result = await runner.run(variant, config)
-            cache.save(
-                build_entry(key, variant, result, environment, dataset, metrics, config)
-            )
-            results.append(result)
+        results = await run_matrix(
+            variants,
+            config,
+            metrics,
+            cache,
+            force=args.force,
+            refresh_base=args.refresh_base,
+        )
     finally:
         await shutdown()
 
