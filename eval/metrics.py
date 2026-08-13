@@ -79,6 +79,31 @@ class BaseMetric:
     def evaluate(self, outcomes: list[Outcome]) -> float:
         raise NotImplementedError
 
+    def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:
+        """Вопросы, по которым метрика определена.
+
+        Статистические тесты сравнивают метрику только по этим вопросам
+        (например, отказ — только по вопросам без ответа).
+
+        Args:
+            outcomes: Итоги по вопросам.
+
+        Returns:
+            list[Outcome]: Подмножество итогов, которое считает метрика.
+        """
+        return outcomes
+
+    def per_question(self, outcomes: list[Outcome]) -> list[float]:
+        """Значение метрики по каждому вопросу.
+
+        Args:
+            outcomes: Итоги по вопросам.
+
+        Returns:
+            list[float]: Значение метрики на каждом вопросе по отдельности.
+        """
+        return [self.evaluate([outcome]) for outcome in outcomes]
+
 
 @dataclass(frozen=True)
 class HitAtK(BaseMetric):
@@ -102,6 +127,9 @@ class HitAtK(BaseMetric):
         hits = sum(1 for o in relevant if o.rank is not None and o.rank <= self.k)
         return hits / len(relevant)
 
+    def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:
+        return answerable_outcomes(outcomes)
+
 
 @dataclass(frozen=True)
 class MRR(BaseMetric):
@@ -122,6 +150,9 @@ class MRR(BaseMetric):
         if not relevant:
             return 0.0
         return sum(1.0 / o.rank for o in relevant if o.rank) / len(relevant)
+
+    def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:
+        return answerable_outcomes(outcomes)
 
 
 @dataclass(frozen=True)
@@ -145,6 +176,9 @@ class NotFoundRate(BaseMetric):
             return 0.0
         return sum(1 for o in relevant if o.rank is None) / len(relevant)
 
+    def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:
+        return answerable_outcomes(outcomes)
+
 
 @dataclass(frozen=True)
 class RefusalRate(BaseMetric):
@@ -165,6 +199,9 @@ class RefusalRate(BaseMetric):
         if not relevant:
             return 0.0
         return sum(1 for o in relevant if o.refused) / len(relevant)
+
+    def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:
+        return unanswerable_outcomes(outcomes)
 
 
 @dataclass(frozen=True)
