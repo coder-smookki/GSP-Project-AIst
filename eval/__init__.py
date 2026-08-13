@@ -10,10 +10,14 @@ from eval.config import Environment, RunConfig, Variant, snapshot_environment
 from eval.golden import GoldenSet
 from eval.metrics import default_metrics
 from eval.result import Outcome, RunResult, Verdict
+from eval.runners import BuildResult, GoldenSetRunner, OperationalRunner
 
 __all__ = [
+    "BuildResult",
     "Environment",
     "GoldenSet",
+    "GoldenSetRunner",
+    "OperationalRunner",
     "Outcome",
     "RunConfig",
     "RunResult",

@@ -12,6 +12,7 @@
     uv run python eval/benchmark.py --concurrency 1 2 4 --repeats 3
 
 Результат печатается таблицей и, при указании ``--output``, пишется в JSON.
+Измерение выполняет :class:`eval.runners.OperationalRunner`.
 """
 
 from __future__ import annotations
@@ -22,129 +23,15 @@ import json
 import logging
 import statistics
 import sys
-import time
-import uuid
 from pathlib import Path
+
+from eval.config import RunConfig, Variant, snapshot_environment
+from eval.metrics import LatencyMedian, LatencyP95
+from eval.runners import BuildResult, OperationalRunner
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 logger = logging.getLogger("benchmark")
-
-#: Вопросы прогона.
-#:
-#: Три вида намеренно: короткий фактический ответ, длинный процедурный и
-#: вопрос без ответа в базе. Они дают разное время генерации, и усреднять
-#: только по коротким значит завысить пропускную способность.
-QUESTIONS = [
-    (
-        "короткий факт",
-        "За сколько дней предупреждают о проверке знаний по охране труда?",
-    ),
-    ("длинная процедура", "Что должен сделать работник при обнаружении пожара?"),
-    ("числовой", "Как часто проводится плановая идентификация опасностей?"),
-    (
-        "перечень",
-        "Какие средства индивидуальной защиты обязательны на объекте строительства?",
-    ),
-    ("отказ", "Какая ставка налога на прибыль организаций?"),
-]
-
-
-async def one_answer(app, question: str) -> tuple[float, int, bool]:
-    """Прогоняет один вопрос через граф целиком.
-
-    Args:
-        app: Скомпилированный граф.
-        question: Текст вопроса.
-
-    Returns:
-        tuple[float, int, bool]: Время в секундах, длина ответа в символах,
-        признак отказа «В базе знаний информации нет».
-    """
-    config = {
-        "configurable": {
-            "thread_id": f"bench-{uuid.uuid4()}",
-            "user_id": "benchmark",
-        }
-    }
-    started = time.perf_counter()
-    result = await app.ainvoke(
-        {"messages": [{"role": "human", "content": question}]}, config=config
-    )
-    elapsed = time.perf_counter() - started
-    text = str(result["messages"][-1].content)
-    refused = "в базе знаний информации нет" in text.lower().replace("ё", "е")
-    return elapsed, len(text), refused
-
-
-async def measure_sequential(app, repeats: int) -> list[dict]:
-    """Меряет время ответа по одному запросу за раз.
-
-    Args:
-        app: Скомпилированный граф.
-        repeats: Сколько раз прогнать каждый вопрос.
-
-    Returns:
-        list[dict]: Замеры по каждому вопросу.
-    """
-    rows: list[dict] = []
-    for kind, question in QUESTIONS:
-        times: list[float] = []
-        chars = 0
-        refused = False
-        for _ in range(repeats):
-            elapsed, length, was_refused = await one_answer(app, question)
-            times.append(elapsed)
-            chars = length
-            refused = was_refused
-        rows.append(
-            {
-                "вид": kind,
-                "вопрос": question,
-                "мин": round(min(times), 1),
-                "медиана": round(statistics.median(times), 1),
-                "макс": round(max(times), 1),
-                "символов": chars,
-                "отказ": refused,
-            }
-        )
-        logger.info(
-            "%-18s медиана %5.1f с  (%d симв.%s)",
-            kind,
-            statistics.median(times),
-            chars,
-            ", отказ" if refused else "",
-        )
-    return rows
-
-
-async def measure_concurrent(app, level: int) -> dict:
-    """Меряет поведение при одновременных обращениях.
-
-    Ollama по умолчанию обслуживает запросы к одной модели последовательно,
-    поэтому одновременные обращения не ускоряют работу, а выстраиваются в
-    очередь. Замер показывает, во что это выливается для пользователя:
-    растёт ли время ответа линейно числу одновременных запросов.
-
-    Args:
-        app: Скомпилированный граф.
-        level: Сколько запросов запускать одновременно.
-
-    Returns:
-        dict: Общее время, худшее время одного ответа, пропускная
-        способность в ответах в минуту.
-    """
-    questions = [QUESTIONS[i % len(QUESTIONS)][1] for i in range(level)]
-    started = time.perf_counter()
-    results = await asyncio.gather(*(one_answer(app, q) for q in questions))
-    total = time.perf_counter() - started
-    worst = max(r[0] for r in results)
-    return {
-        "одновременно": level,
-        "всего_с": round(total, 1),
-        "худший_ответ_с": round(worst, 1),
-        "ответов_в_минуту": round(level / total * 60, 1),
-    }
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -176,12 +63,19 @@ async def main_async(args: argparse.Namespace) -> int:
     think_state = "включены" if settings.llm_reasoning else "выключены"
     print(f"  размышления:        {think_state}")
 
-    app = create_application()
+    def build(variant: Variant, config: RunConfig) -> BuildResult:
+        return BuildResult(
+            agent=create_application(), environment=snapshot_environment(settings)
+        )
 
+    runner = OperationalRunner(build=build, metrics=[LatencyMedian(), LatencyP95()])
+    config = RunConfig(repeats=args.repeats, concurrency=tuple(args.concurrency))
+    result = await runner.run(Variant(name="base"), config)
+
+    rows: list[dict] = result.meta["sequential"]
     print("\n" + "=" * 78)
     print(f"ВРЕМЯ ОТВЕТА, ПО ОДНОМУ ЗАПРОСУ ({args.repeats} прогона на вопрос)")
     print("=" * 78)
-    rows = await measure_sequential(app, args.repeats)
     print(f"\n{'вид':<18}{'мин':>7}{'медиана':>10}{'макс':>7}{'симв.':>8}")
     for row in rows:
         print(
@@ -194,14 +88,12 @@ async def main_async(args: argparse.Namespace) -> int:
         print(f"\n  медиана по содержательным ответам: {avg:.1f} с")
         print(f"  теоретический предел одной машины: {3600 / avg:.0f} ответов в час")
 
-    concurrency: list[dict] = []
-    if args.concurrency:
+    concurrency: list[dict] = result.meta["concurrency"]
+    if concurrency:
         print("\n" + "=" * 78)
         print("ОДНОВРЕМЕННЫЕ ОБРАЩЕНИЯ")
         print("=" * 78)
-        for level in args.concurrency:
-            row = await measure_concurrent(app, level)
-            concurrency.append(row)
+        for row in concurrency:
             print(
                 f"  {row['одновременно']:>2} запросов: всего {row['всего_с']:>6.1f} с, "
                 f"худший ответ {row['худший_ответ_с']:>6.1f} с, "
@@ -218,6 +110,7 @@ async def main_async(args: argparse.Namespace) -> int:
             },
             "последовательно": rows,
             "одновременно": concurrency,
+            "метрики": result.metrics,
         }
         await asyncio.to_thread(
             Path(args.output).write_text,

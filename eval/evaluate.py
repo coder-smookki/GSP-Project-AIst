@@ -36,13 +36,13 @@ import json
 import logging
 import statistics
 import sys
-import time
-import uuid
 from pathlib import Path
 
-from eval.golden import DEFAULT_GOLDEN, GoldenSet, GoldenSetError, chunk_contains
-from eval.metrics import percentile
+from eval.config import RunConfig, Variant, snapshot_environment
+from eval.golden import DEFAULT_GOLDEN, GoldenSet, GoldenSetError
+from eval.metrics import default_metrics, percentile
 from eval.result import Outcome
+from eval.runners import BuildResult, GoldenSetRunner
 
 # При прямом запуске (`uv run python eval/evaluate.py`) в sys.path попадает
 # каталог eval, а не корень репозитория, и импорт `infrastructure`
@@ -51,96 +51,6 @@ from eval.result import Outcome
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 logger = logging.getLogger("evaluate")
-
-#: Ответ, который система обязана дать при отсутствии сведений.
-REFUSAL = "в базе знаний информации нет"
-
-
-async def run_answerable(search, items: list[dict]) -> list[Outcome]:
-    """Замеряет поиск на вопросах с известным ответом.
-
-    Args:
-        search: Поиск по базе знаний.
-        items: Вопросы золотого набора с цитатами.
-
-    Returns:
-        list[Outcome]: Итоги по каждому вопросу.
-    """
-    results: list[Outcome] = []
-    for item in items:
-        started = time.perf_counter()
-        hits = await search.query(item["question"])
-        elapsed = time.perf_counter() - started
-
-        outcome = Outcome(
-            question=item["question"],
-            returned=len(hits),
-            seconds=elapsed,
-            doc_codes=[chunk.doc_code for chunk, _ in hits],
-        )
-        for position, (chunk, _score) in enumerate(hits, 1):
-            if chunk_contains(item["quote"], chunk.text):
-                outcome.rank = position
-                break
-        results.append(outcome)
-        logger.info(
-            "%-60s %s",
-            item["question"][:60],
-            f"позиция {outcome.rank}" if outcome.rank else "НЕ НАЙДЕНО",
-        )
-    return results
-
-
-async def run_unanswerable(search, items: list[dict], agent=None) -> list[Outcome]:
-    """Замеряет поведение на вопросах, ответа на которые в базе нет.
-
-    Args:
-        search: Поиск по базе знаний.
-        items: Вопросы без ответа.
-        agent: Скомпилированный граф; если задан, дополнительно проверяется
-            текст ответа. Без него отказ определяется только по пустой
-            выдаче поиска.
-
-    Returns:
-        list[Outcome]: Итоги по каждому вопросу.
-    """
-    results: list[Outcome] = []
-    for item in items:
-        started = time.perf_counter()
-        hits = await search.query(item["question"])
-        elapsed = time.perf_counter() - started
-
-        outcome = Outcome(
-            question=item["question"],
-            answerable=False,
-            returned=len(hits),
-            seconds=elapsed,
-            refused=not hits,
-        )
-
-        if agent is not None:
-            state = {"messages": [{"role": "human", "content": item["question"]}]}
-            # Свой thread_id на каждый вопрос: чекпоинтер его требует, а
-            # общий на весь замер тянул бы историю предыдущих вопросов в
-            # контекст и портил результат.
-            config = {
-                "configurable": {
-                    "thread_id": f"eval-{uuid.uuid4()}",
-                    "user_id": "evaluate",
-                }
-            }
-            final = await agent.ainvoke(state, config=config)
-            text = str(final["messages"][-1].content)
-            outcome.answer = text
-            outcome.refused = REFUSAL in text.lower().replace("ё", "е")
-
-        results.append(outcome)
-        logger.info(
-            "%-60s %s",
-            item["question"][:60],
-            "отказ" if outcome.refused else "ОТВЕТИЛА",
-        )
-    return results
 
 
 def report(answerable: list[Outcome], unanswerable: list[Outcome]) -> bool:
@@ -220,13 +130,9 @@ async def main_async(args: argparse.Namespace, golden: GoldenSet) -> int:
     Returns:
         int: Код возврата процесса.
     """
-    golden = golden.limited(args.limit)
-    answerable_items = list(golden.answerable)
-    unanswerable_items = list(golden.unanswerable)
-
-    from infrastructure.config.model_registry import setup_registry
+    from infrastructure.config.composition_root import create_application
     from infrastructure.config.settings import get_settings
-    from infrastructure.retrieval.factory import get_search, shutdown
+    from infrastructure.retrieval.factory import shutdown
 
     settings = get_settings()
     if settings.resolved_retrieval_provider == "mock":
@@ -236,21 +142,29 @@ async def main_async(args: argparse.Namespace, golden: GoldenSet) -> int:
         )
         return 2
 
-    setup_registry(settings)
-    search = get_search(settings)
+    def build(variant: Variant, config: RunConfig) -> BuildResult:
+        from infrastructure.config.model_registry import setup_registry
+        from infrastructure.retrieval.factory import get_search
 
-    agent = None
-    if args.with_answers:
-        from infrastructure.config.composition_root import create_application
+        setup_registry(settings)
+        search = get_search(settings)
+        agent = create_application() if config.with_answers else None
+        return BuildResult(
+            search=search, agent=agent, environment=snapshot_environment(settings)
+        )
 
-        agent = create_application()
+    runner = GoldenSetRunner(build=build, metrics=default_metrics())
+    config = RunConfig(
+        golden=args.golden, limit=args.limit, with_answers=args.with_answers
+    )
 
     try:
-        answerable = await run_answerable(search, answerable_items)
-        unanswerable = await run_unanswerable(search, unanswerable_items, agent)
+        result = await runner.run(Variant(name="base"), config)
     finally:
         await shutdown()
 
+    answerable = [o for o in result.outcomes if o.answerable]
+    unanswerable = [o for o in result.outcomes if not o.answerable]
     ok = report(answerable, unanswerable)
 
     if args.output:
