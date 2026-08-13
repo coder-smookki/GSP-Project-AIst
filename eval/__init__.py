@@ -7,6 +7,7 @@
 """
 
 from eval.config import Environment, RunConfig, Variant, snapshot_environment
+from eval.metrics import default_metrics
 from eval.result import Outcome, RunResult, Verdict
 
 __all__ = [
@@ -16,5 +17,6 @@ __all__ = [
     "RunResult",
     "Variant",
     "Verdict",
+    "default_metrics",
     "snapshot_environment",
 ]

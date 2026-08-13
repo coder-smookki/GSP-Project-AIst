@@ -115,6 +115,7 @@ async def run_unanswerable(search, items: list[dict], agent=None) -> list[Outcom
 
         outcome = Outcome(
             question=item["question"],
+            answerable=False,
             returned=len(hits),
             seconds=elapsed,
             refused=not hits,

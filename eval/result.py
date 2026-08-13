@@ -17,6 +17,9 @@ class Outcome:
 
     Attributes:
         question: Текст вопроса.
+        answerable: Отвечаемый ли вопрос (есть эталонная цитата). Вопросы без
+            ответа в базе помечаются ``False`` — метрики считаются по разным
+            подмножествам.
         rank: Позиция первого фрагмента с ответом, начиная с 1;
             ``None`` — ответа нет ни в одном фрагменте.
         returned: Сколько фрагментов вернул поиск.
@@ -27,6 +30,7 @@ class Outcome:
     """
 
     question: str
+    answerable: bool = True
     rank: int | None = None
     returned: int = 0
     seconds: float = 0.0
