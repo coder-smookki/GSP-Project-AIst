@@ -71,12 +71,25 @@ class BaseMetric:
             выносит вердикт).
     """
 
-    key: str
-    display_name: str
     kind: MetricKind
     higher_is_better: bool | None = True
 
+    @property
+    def key(self) -> str:
+        """Ключ метрики для словаря результатов."""
+        raise NotImplementedError
+
+    @property
+    def display_name(self) -> str:
+        """Отображаемое название в отчёте."""
+        raise NotImplementedError
+
     def evaluate(self, outcomes: list[Outcome]) -> float:
+        """Считает значение метрики по итогам вопросов.
+
+        Returns:
+            float: Значение метрики.
+        """
         raise NotImplementedError
 
     def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:

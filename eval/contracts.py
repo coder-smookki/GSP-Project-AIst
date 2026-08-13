@@ -30,6 +30,7 @@ class Metric(Protocol):
         Returns:
             float: Значение метрики.
         """
+        ...
 
 
 @runtime_checkable
@@ -48,6 +49,7 @@ class Runner(Protocol):
         Returns:
             RunResult: Результат прогона.
         """
+        ...
 
 
 @runtime_checkable
@@ -66,6 +68,7 @@ class StatTest(Protocol):
         Returns:
             list[Verdict]: Вердикт по каждой метрике.
         """
+        ...
 
 
 @runtime_checkable
@@ -74,9 +77,11 @@ class Cache(Protocol):
 
     def get(self, key: str) -> RunResult | None:
         """Возвращает закэшированный результат или ``None``."""
+        ...
 
     def put(self, key: str, result: RunResult) -> None:
         """Сохраняет результат под ключом."""
+        ...
 
 
 @runtime_checkable
@@ -93,3 +98,4 @@ class Reporter(Protocol):
         Returns:
             str: Текст документа.
         """
+        ...

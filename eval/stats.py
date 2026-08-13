@@ -195,7 +195,7 @@ class WilcoxonTest:
             from scipy.stats import wilcoxon
 
             result = wilcoxon(variant_values, base_values)
-            p_value = result.pvalue
+            p_value = float(getattr(result, "pvalue", 1.0))
             if math.isnan(p_value):
                 p_value = 1.0
 

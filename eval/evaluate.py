@@ -70,8 +70,8 @@ def report(answerable: list[Outcome], unanswerable: list[Outcome]) -> bool:
     print("=" * 72)
 
     if answerable:
-        found = [o for o in answerable if o.rank]
-        ranks = [o.rank for o in found]
+        found = [o for o in answerable if o.rank is not None]
+        ranks = [o.rank for o in found if o.rank is not None]
         mrr = sum(1 / r for r in ranks) / len(answerable) if ranks else 0.0
         times = [o.seconds for o in answerable]
 
