@@ -15,6 +15,118 @@ _pool: asyncpg.Pool | None = None
 _db_initialized = False
 
 
+#: Схема хранения истории диалогов слоя данных Chainlit — дословно из
+#: документации SQLAlchemyDataLayer: слой обращается к таблицам и колонкам
+#: по именам, отступление от схемы даёт ошибку в рантайме. Колонки из
+#: новых версий Chainlit дописывать и в `CHAINLIT_SCHEMA`, и в
+#: `CHAINLIT_MIGRATIONS`. `users` — таблица Chainlit для привязки диалогов,
+#: наша `gui_users` хранит пароли входа (см. docs/GUI.md).
+CHAINLIT_SCHEMA: tuple[str, ...] = (
+    """
+    CREATE TABLE IF NOT EXISTS users (
+        "id" UUID PRIMARY KEY,
+        "identifier" TEXT NOT NULL UNIQUE,
+        "metadata" JSONB NOT NULL,
+        "createdAt" TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS threads (
+        "id" UUID PRIMARY KEY,
+        "createdAt" TEXT,
+        "name" TEXT,
+        "userId" UUID,
+        "userIdentifier" TEXT,
+        "tags" TEXT[],
+        "metadata" JSONB,
+        FOREIGN KEY ("userId") REFERENCES users("id") ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS steps (
+        "id" UUID PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "type" TEXT NOT NULL,
+        "threadId" UUID NOT NULL,
+        "parentId" UUID,
+        "streaming" BOOLEAN NOT NULL,
+        "waitForAnswer" BOOLEAN,
+        "isError" BOOLEAN,
+        "metadata" JSONB,
+        "tags" TEXT[],
+        "input" TEXT,
+        "output" TEXT,
+        "createdAt" TEXT,
+        "command" TEXT,
+        "start" TEXT,
+        "end" TEXT,
+        "generation" JSONB,
+        "showInput" TEXT,
+        "language" TEXT,
+        "indent" INT,
+        "defaultOpen" BOOLEAN,
+        "autoCollapse" BOOLEAN,
+        "modes" JSONB,
+        FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS elements (
+        "id" UUID PRIMARY KEY,
+        "threadId" UUID,
+        "type" TEXT,
+        "url" TEXT,
+        "chainlitKey" TEXT,
+        "name" TEXT NOT NULL,
+        "display" TEXT,
+        "objectKey" TEXT,
+        "size" TEXT,
+        "page" INT,
+        "language" TEXT,
+        "forId" UUID,
+        "mime" TEXT,
+        "props" JSONB,
+        FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS feedbacks (
+        "id" UUID PRIMARY KEY,
+        "forId" UUID NOT NULL,
+        "threadId" UUID NOT NULL,
+        "value" INT NOT NULL,
+        "comment" TEXT,
+        FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
+    )
+    """,
+)
+
+
+#: Колонки, добавленные новыми версиями Chainlit: `CREATE TABLE IF NOT
+#: EXISTS` существующую таблицу не меняет, поэтому недостающие колонки
+#: добавляются миграцией. Имя квотится, чтобы Postgres не свёл
+#: `autoCollapse` к `autocollapse` (см. docs/GUI.md).
+CHAINLIT_MIGRATIONS: tuple[str, ...] = (
+    'ALTER TABLE "steps" ADD COLUMN IF NOT EXISTS "autoCollapse" BOOLEAN',
+)
+
+
+async def _apply_migrations(conn):
+    for statement in CHAINLIT_MIGRATIONS:
+        try:
+            await conn.execute(statement)
+        except asyncpg.UndefinedTableError:
+            # Таблица ещё не создана в init_db ниже.
+            continue
+
+
+def async_database_url() -> str:
+    """Строка подключения для асинхронного драйвера (см. docs/GUI.md)."""
+    if DATABASE_URL.startswith("postgresql+asyncpg://"):
+        return DATABASE_URL
+    return DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+
 async def _ensure_database():
     db_name = DATABASE_URL.rsplit("/", 1)[-1]
     admin_url = DATABASE_URL.rsplit("/", 1)[0] + "/postgres"
@@ -46,10 +158,13 @@ async def init_db():
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        for statement in CHAINLIT_SCHEMA:
+            await conn.execute(statement)
+        await _apply_migrations(conn)
     finally:
         await conn.close()
     _db_initialized = True
-    logger.info("Database initialized (gui_users table ready)")
+    logger.info("база данных готова: gui_users и таблицы истории диалогов")
 
 
 async def get_pool() -> asyncpg.Pool:

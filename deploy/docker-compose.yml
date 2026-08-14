@@ -1,3 +1,11 @@
+# Корень стека: интерфейс + агент + общая БД. Инфраструктурные слои
+# подключаются через include и поднимаются той же командой `docker compose up -d`.
+# Слой можно отключить, убрав его из include, либо поднять/остановить отдельно
+# командами вида `docker compose -f docker-compose.qdrant.yml ...`.
+include:
+  - docker-compose.qdrant.yml
+  - docker-compose.orchestration.yml
+
 services:
   postgres:
     image: pgvector/pgvector:pg18
@@ -5,7 +13,9 @@ services:
     env_file:
       - .env
     ports:
-      - "${POSTGRES_PORT_MAP:-5432:5432}"
+      # Только на петлевой интерфейс: в базе лежат пароли пользователей
+      # интерфейса и вся переписка.
+      - "${POSTGRES_PORT_MAP:-127.0.0.1:5432:5432}"
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
@@ -20,7 +30,13 @@ services:
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
     ports:
-      - "${AEGRA_PORT:-2026}:2026"
+      # Только на петлевой интерфейс. Aegra работает без аутентификации
+      # (в логах её собственный user_id=anonymous), поэтому доступный по
+      # сети порт 2026 позволяет кому угодно запускать граф и, подставив
+      # configurable.user_id, читать чужую долгосрочную память. Интерфейс
+      # ходит к ней по внутренней сети docker, host-порт нужен только для
+      # /health и отладки.
+      - "127.0.0.1:${AEGRA_PORT:-2026}:2026"
     env_file:
       - .env
     environment:
@@ -29,8 +45,14 @@ services:
       - PYTHONPATH=${PYTHONPATH:-/app}
       - OLLAMA_LOCAL_BASE_URL=${OLLAMA_LOCAL_BASE_URL:-http://host.docker.internal:11434}
       - OTLP_ENDPOINT=${OTLP_ENDPOINT:-}
+      - RETRIEVAL_PROVIDER=${RETRIEVAL_PROVIDER:-qdrant}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_COLLECTION=${QDRANT_COLLECTION:-aist_chunks}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
     depends_on:
       postgres:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
     volumes:
       - ./aegra.json:/app/aegra.json:ro

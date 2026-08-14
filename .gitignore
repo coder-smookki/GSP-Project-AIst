@@ -222,4 +222,12 @@ __marimo__/
 *.docx
 corpus/
 data/
+# исключение: выгрузка корпуса для регрессионных тестов конвейера
+# (репозиторий приватный, документы обезличены на стороне заказчика)
+!tests/fixtures/corpus/
+!tests/fixtures/corpus/**
+
 index/
+.DS_Store
+eval/results/
+eval/results/

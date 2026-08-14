@@ -1,8 +1,14 @@
-def build_input(content: str, sections: list[str] | None = None) -> dict:
-    """Payload for runs.stream: human message + (optional) sections filter."""
+def build_input(
+    content: str,
+    sections: list[str] | None = None,
+    areas: list[str] | None = None,
+) -> dict:
+    """Собирает полезную нагрузку `client.runs.stream` (см. docs/GUI.md)."""
     payload: dict = {"messages": [{"type": "human", "content": content}]}
     if sections:
         payload["sections"] = sections
+    if areas:
+        payload["areas"] = areas
     return payload
 
 
@@ -38,11 +44,7 @@ def pick_final_text(
     assistant_final: list[str] | None = None,
     error: Exception | None = None,
 ) -> str:
-    """Выбор финального текста ответа агента.
-
-    Порядок: сообщение об ошибке -> последний завершённый AI-чанк узла
-    assistant -> самый длинный partial-chunk (fallback на огрызок при прерывании).
-    """
+    """Выбор финального текста ответа (см. порядок в docs/GUI.md)."""
     if error is not None:
         return (
             "Ошибка обработки запроса. Если проблема повторится — "

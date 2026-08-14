@@ -24,6 +24,7 @@ class Citation:
     chunk_id: str
     score: float
     snippet: str
+    text: str = ""
     url: str | None = None
 
     def to_dict(self) -> dict:
@@ -37,6 +38,7 @@ class Citation:
             "chunk_id": self.chunk_id,
             "score": round(self.score, 4),
             "snippet": self.snippet,
+            "text": self.text,
             "url": self.url,
         }
 
@@ -52,6 +54,7 @@ def to_citation(chunk: Chunk, n: int, score: float = 0.0) -> Citation:
         chunk_id=chunk.chunk_id,
         score=score,
         snippet=chunk.text[:400],
+        text=chunk.text,
     )
 
 
@@ -60,6 +63,7 @@ class Search:
         self,
         query: str,
         sections: list[str] | None = None,
-        limit: int = 8,
+        limit: int | None = None,
+        areas: list[str] | None = None,
     ) -> list[tuple[Chunk, float]]:
         raise NotImplementedError

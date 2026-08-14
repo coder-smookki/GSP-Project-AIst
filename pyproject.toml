@@ -17,23 +17,50 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.27.0",
     "openinference-instrumentation-langchain==0.1.67",
     "rich>=15.0.0",
+    "httpx>=0.28.1",
+    "qdrant-client==1.19.0",
+    "langchain-ollama>=1.0.0",
+    "sqlalchemy[asyncio]>=2.0.0",
 ]
 
 [project.optional-dependencies]
+# Переоценка кандидатов: тянет torch, поэтому вынесена отдельно и в
+# передаваемый образ не попадает, пока не включена явно.
+rerank = [
+    "sentence-transformers>=3.0",
+]
+# Оркестрация индексации: Prefect-обёртки над шагами конвейера
+# (infrastructure.orchestration). Опционально — конвейер работает и без него,
+# обёртки подключаются только когда нужно видеть прогон в Prefect UI.
+orchestration = [
+    "prefect==3.8.2",
+]
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "chainlit>=2.11.0",
     "langgraph-sdk>=0.3.0",
     "ruff==0.16.1",
+    "pytest-httpx>=0.35.0",
 ]
+# Статистика A/B-сравнения: точный тест МакНемара и знаково-ранговый
+# Уилкоксона. Отдельный extra, потому что scipy тянет numpy; без неё
+# eval.stats честно работает на пермутационном тесте.
+benchmark = [
+    "scipy>=1.13",
+]
+
+[project.scripts]
+eval = "eval.cli:main"
 
 [tool.pytest.ini_options]
 markers = [
     "integration: tests that require a live server",
     "llm: requires a real LLM model (Ollama) - excluded from fast CI",
     "embeddings: requires a real embedding model (Ollama) - excluded from fast CI",
-    "tools: tests ai agents tool"
+    "tools: tests ai agents tool",
+    "corpus: runs the ingest pipeline over the real knowledge base dump",
+    "qdrant: requires a live Qdrant server (auto-skipped when unreachable)"
 ]
 asyncio_mode = "auto"
 
@@ -43,12 +70,21 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
-extend-ignore = ["RUF001", "RUF002"]
+# RUF001-003: кириллица в коде, строках и комментариях — проект русскоязычный
+extend-ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]
 "agent/graph.py" = ["E501"]
+"agent/prompts.py" = ["E501"]
+# Markdown-таблицы в коде (статичные разделы BENCHMARK.md) не переносятся
+"eval/report.py" = ["E501"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["infrastructure*", "agent*", "domain*", "tests*", "gui*"]
+include = ["infrastructure*", "agent*", "domain*", "tests*", "gui*", "eval*"]
+
+[tool.prefect]
+# Логгеры конвейера (infrastructure.*) попадают в журнал прогона Prefect.
+# Без этого шаги пишут только в консоль, и в UI их не видно.
+logging.extra_loggers = ["infrastructure", "aist"]
