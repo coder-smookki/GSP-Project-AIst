@@ -1,0 +1,6 @@
+# Exclude cached benchmark results from GitHub linguist stats and diffs
+eval/results/*.json linguist-generated
+
+# Exclude other large generated JSON files if any
+*.json linguist-generated=false
+eval/results/*.json linguist-generated=true
