@@ -43,13 +43,14 @@ from typing import Any
 # при пересборке окружения.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval.cache import ResultCache, build_entry, cache_key, file_hash
+from eval.cache import ResultCache, build_entry, cache_key, file_hash, ab_cache_key, build_ab_entry
 from eval.config import RunConfig, Variant
 from eval.golden import DEFAULT_GOLDEN
 from eval.metrics import BaseMetric, default_metrics
-from eval.result import RunResult
+from eval.result import RunResult, Verdict
 from eval.runners import GoldenSetRunner
 from eval.stats import compare_all
+from eval.variants import variant_environment
 
 #: Каталог кэша результатов по умолчанию.
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
@@ -273,6 +274,19 @@ async def main_async(
     print_per_variant(results, metrics)
     print_table(results, metrics)
     print_verdicts(results[0], results[1:], metrics)
+
+    # Сохраняем A/B вердикты в кэш
+    base_variant = variants[0]
+    dataset = file_hash(config.golden)
+    for result in results[1:]:
+        variant = next(v for v in variants if v.name == result.variant)
+        environment = variant_environment(variant)
+        verdicts = compare_all(metrics, results[0], result)
+        ab_key = ab_cache_key(base_variant, variant, dataset, metrics, environment, config)
+        cache.save_ab(
+            build_ab_entry(ab_key, base_variant, variant, verdicts, environment, dataset, metrics, config)
+        )
+        logger.info("A/B вердикты сохранены в кэш: %s", ab_key)
 
     if args.output:
         verdicts: list[dict[str, Any]] = []

@@ -18,6 +18,7 @@ import json
 import logging
 import sys
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from eval.config import Environment, RunConfig, Variant
-from eval.result import RunResult
+from eval.result import RunResult, Verdict
 
 logger = logging.getLogger("eval.cache")
 
@@ -159,6 +160,78 @@ def build_entry(
     }
 
 
+def ab_cache_key(
+    base_variant: Variant,
+    variant: Variant,
+    dataset: str,
+    metrics: Iterable[Any],
+    environment: Environment,
+    config: RunConfig,
+) -> str:
+    """Считает детерминированный ключ для A/B сравнения.
+
+    Args:
+        base_variant: Базовый вариант.
+        variant: Сравниваемый вариант.
+        dataset: Хеш золотого набора.
+        metrics: Метрики замера.
+        environment: Отпечаток окружения.
+        config: Параметры прогона.
+
+    Returns:
+        str: SHA-256 (32 hex-символа) от пары вариантов и контекста.
+    """
+    payload = {
+        "base_variant": base_variant.identity(),
+        "variant": variant.identity(),
+        "dataset": dataset,
+        "metrics": metrics_version(metrics),
+        "environment": environment.fingerprint(),
+        "config": _config_digest(config),
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return "ab_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def build_ab_entry(
+    key: str,
+    base_variant: Variant,
+    variant: Variant,
+    verdicts: list[Verdict],
+    environment: Environment,
+    dataset: str,
+    metrics: Iterable[Any],
+    config: RunConfig,
+) -> dict[str, Any]:
+    """Собирает содержимое файла кэша A/B вердиктов.
+
+    Args:
+        key: Ключ результата.
+        base_variant: Базовый вариант.
+        variant: Сравниваемый вариант.
+        verdicts: Список вердиктов.
+        environment: Отпечаток окружения.
+        dataset: Хеш золотого набора.
+        metrics: Метрики замера.
+        config: Параметры прогона.
+
+    Returns:
+        dict[str, Any]: Полная запись кэша A/B.
+    """
+    return {
+        "key": key,
+        "base_variant": base_variant.name,
+        "variant": variant.name,
+        "verdicts": [v.to_dict() for v in verdicts],
+        "environment": environment.fingerprint(),
+        "environment_desc": environment.describe(),
+        "dataset": dataset,
+        "metrics": metrics_version(metrics),
+        "config": _config_digest(config),
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+
 class ResultCache:
     """Хранилище результатов в JSON-файлах.
 
@@ -247,6 +320,76 @@ class ResultCache:
         logger.info("кэш очищен: удалено %d записей", removed)
         return removed
 
+    # --- A/B вердикты ---
+
+    def save_ab(self, entry: dict[str, Any]) -> Path:
+        """Пишет запись A/B вердиктов в кэш.
+
+        Args:
+            entry: Запись из :func:`build_ab_entry`.
+
+        Returns:
+            Path: Куда записано.
+        """
+        self.directory.mkdir(parents=True, exist_ok=True)
+        path = self.path_for(entry["key"])
+        path.write_text(
+            json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.info("A/B вердикты сохранены: %s", path)
+        return path
+
+    def load_ab(self, key: str) -> list[Verdict] | None:
+        """Читает A/B вердикты из кэша.
+
+        Args:
+            key: Ключ A/B результата.
+
+        Returns:
+            list[Verdict] | None: Список вердиктов или None, если нет.
+        """
+        path = self.path_for(key)
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [Verdict.from_dict(v) for v in data.get("verdicts", [])]
+
+    def list_ab(self) -> list[dict[str, Any]]:
+        """Список сохранённых A/B вердиктов.
+
+        Returns:
+            list[dict]: Ключ, base, variant, окружение, дата, число вердиктов.
+        """
+        rows: list[dict[str, Any]] = []
+        for path in sorted(self.directory.glob("ab_*.json")):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            rows.append(
+                {
+                    "key": data["key"],
+                    "base_variant": data.get("base_variant", ""),
+                    "variant": data.get("variant", ""),
+                    "environment": data["environment"],
+                    "environment_desc": data.get("environment_desc", ""),
+                    "dataset": data["dataset"],
+                    "created_at": data["created_at"],
+                    "verdicts_count": len(data.get("verdicts", [])),
+                }
+            )
+        return rows
+
+    def clear_ab(self) -> int:
+        """Удаляет только A/B вердикты из кэша.
+
+        Returns:
+            int: Сколько файлов удалено.
+        """
+        removed = 0
+        for path in self.directory.glob("ab_*.json"):
+            path.unlink()
+            removed += 1
+        logger.info("A/B кэш очищен: удалено %d записей", removed)
+        return removed
+
 
 def _print_list(rows: list[dict[str, Any]]) -> None:
     """Печатает список результатов в виде таблицы.
@@ -267,6 +410,25 @@ def _print_list(rows: list[dict[str, Any]]) -> None:
         )
 
 
+def _print_ab_list(rows: list[dict[str, Any]]) -> None:
+    """Печатает список A/B вердиктов в виде таблицы.
+
+    Args:
+        rows: Метаданные из :meth:`ResultCache.list_ab`.
+    """
+    if not rows:
+        print("A/B кэш пуст")
+        return
+    header = f"{'ключ':<36}{'base':<16}{'variant':<20}{'окружение':<18}{'вердиктов':>8} создан"
+    print(header)
+    print("-" * len(header))
+    for row in rows:
+        print(
+            f"{row['key']:<36}{row['base_variant']:<16}{row['variant']:<20}"
+            f"{row['environment']:<18}{row['verdicts_count']:>8} {row['created_at']}"
+        )
+
+
 def main() -> int:
     """Точка входа управления кэшем.
 
@@ -280,6 +442,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="список сохранённых результатов")
     sub.add_parser("clear", help="удалить все сохранённые результаты")
+    ab_list = sub.add_parser("ab-list", help="список A/B вердиктов")
+    ab_clear = sub.add_parser("ab-clear", help="удалить A/B вердикты")
     args = parser.parse_args()
 
     cache = ResultCache(args.dir)
@@ -287,6 +451,10 @@ def main() -> int:
         _print_list(cache.metadata())
     elif args.command == "clear":
         cache.clear()
+    elif args.command == "ab-list":
+        _print_ab_list(cache.list_ab())
+    elif args.command == "ab-clear":
+        cache.clear_ab()
     return 0
 
 

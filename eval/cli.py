@@ -23,7 +23,7 @@ from pathlib import Path
 # а не корень репозитория, и импорт `eval` и `infrastructure` падает.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval.cache import DEFAULT_DIR, ResultCache, _print_list
+from eval.cache import DEFAULT_DIR, ResultCache, _print_list, _print_ab_list, _print_list
 from eval.config import RunConfig, Variant
 from eval.golden import DEFAULT_GOLDEN, GoldenSetError
 from eval.result import RunResult
@@ -177,8 +177,12 @@ def _cmd_cache(args: argparse.Namespace) -> int:
     cache = ResultCache(args.dir)
     if args.cache_command == "list":
         _print_list(cache.metadata())
-    else:
+    elif args.cache_command == "clear":
         cache.clear()
+    elif args.cache_command == "ab-list":
+        _print_ab_list(cache.list_ab())
+    elif args.cache_command == "ab-clear":
+        cache.clear_ab()
     return 0
 
 
@@ -281,6 +285,8 @@ def build_parser() -> argparse.ArgumentParser:
     cache_sub = cache_p.add_subparsers(dest="cache_command", required=True)
     cache_sub.add_parser("list", help="список сохранённых результатов")
     cache_sub.add_parser("clear", help="удалить все сохранённые результаты")
+    cache_sub.add_parser("ab-list", help="список A/B вердиктов")
+    cache_sub.add_parser("ab-clear", help="удалить A/B вердикты")
 
     report_p = sub.add_parser(
         "report", help="обновить docs/BENCHMARK.md из кэша результатов"

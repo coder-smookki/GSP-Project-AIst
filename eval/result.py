@@ -121,3 +121,10 @@ class Verdict:
     base_value: float
     variant_value: float
     direction: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Verdict":
+        return cls(**data)
