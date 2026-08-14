@@ -49,6 +49,8 @@
 
 | дата | окружение | варианты | метрики | вердикт | кэш |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-14 11:35 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=выкл | rerank_off | hit@1 0.561<br>hit@3 0.683<br>hit@5 0.780<br>mrr 0.645<br>not_found 0.220<br>refusal_rate 0.500<br>latency_median 0.127<br>latency_p95 0.140<br>answer_chars 0.000 | — | [rerank_off](../eval/results/2258167afa8a03091d768f014c5c22c5.json) |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base, rerank_on | hit@1 base=0.732 / rerank_on=0.732<br>hit@3 base=0.805 / rerank_on=0.805<br>hit@5 base=0.854 / rerank_on=0.854<br>mrr base=0.776 / rerank_on=0.776<br>not_found base=0.146 / rerank_on=0.146<br>refusal_rate base=0.500 / rerank_on=0.500<br>latency_median base=0.294 / rerank_on=0.279<br>latency_p95 base=0.327 / rerank_on=0.307<br>answer_chars base=0.000 / rerank_on=0.000 | rerank_on (лучше: latency_median, latency_p95) | [base](../eval/results/5f17c854b73bdb8e8616313e12e008a6.json)<br>[rerank_on](../eval/results/659e3d103f3e9147a4715ce9118010ab.json) |
 | 2026-08-13 22:16 | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, rerank=выкл | gptoss_self_r0g0 | hit@1 0.634<br>hit@3 0.683<br>hit@5 0.829<br>mrr 0.690<br>not_found 0.171<br>refusal_rate 1.000<br>latency_median 0.154<br>latency_p95 0.158<br>answer_chars 28.500 | — | [gptoss_self_r0g0](../eval/results/36539bc1d8aaad1b822e33cb4f3579cb.json) |
 | 2026-08-13 22:14 | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, rerank=выкл | gptoss_self_r0g1 | hit@1 0.634<br>hit@3 0.683<br>hit@5 0.829<br>mrr 0.690<br>not_found 0.171<br>refusal_rate 1.000<br>latency_median 0.154<br>latency_p95 0.159<br>answer_chars 28.400 | — | [gptoss_self_r0g1](../eval/results/140f53776bc9ae193865aa3db22b7672.json) |
 | 2026-08-13 22:12 | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, rerank=вкл | gptoss_self_r1g1 | hit@1 0.756<br>hit@3 0.829<br>hit@5 0.854<br>mrr 0.799<br>not_found 0.146<br>refusal_rate 1.000<br>latency_median 0.316<br>latency_p95 0.391<br>answer_chars 28.500 | — | [gptoss_self_r1g1](../eval/results/4352a10b17b4dce44e5d85ea734d7a78.json) |
@@ -83,3 +85,20 @@
 | 2026-08-13 21:28 | llm=qwen3.6:35b-a3b-nvfp4, emb=bge-m3:567m, top_k=5, rerank=вкл | qwen36_gemma_r1g1 | hit@1 0.732<br>hit@3 0.805<br>hit@5 0.854<br>mrr 0.776<br>not_found 0.146<br>refusal_rate 1.000<br>latency_median 0.300<br>latency_p95 0.348<br>answer_chars 28.700 | — | [qwen36_gemma_r1g1](../eval/results/e56986b7daa088a07e4b233deb2da050.json) |
 | 2026-08-13 20:53 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | hit@1 0.732<br>hit@3 0.805<br>hit@5 0.854<br>mrr 0.776<br>not_found 0.146<br>refusal_rate 0.900<br>latency_median 0.312<br>latency_p95 0.367<br>answer_chars 42.900 | — | [base](../eval/results/694011085ef1fedfdb18fdaabf9a5317.json) |
 
+
+## A/B сравнения (закэшированные вердикты)
+
+Таблица показывает все сохранённые A/B вердикты. «Δ» — разница variant - base.
+Вердикт: «лучше» — значимое улучшение (p < 0.05), «хуже» — ухудшение, «без разницы» — нет значимых отличий.
+
+| дата | окружение | base | variant | метрика | base | variant | Δ | p-value | вердикт | тест |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | rerank_on | hit@1 | 0.732 | 0.732 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | rerank_on | hit@3 | 0.805 | 0.805 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | rerank_on | hit@5 | 0.854 | 0.854 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | rerank_on | mrr | 0.776 | 0.776 | +0.000 | 1.000 | без разницы | wilcoxon |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | rerank_on | not_found | 0.146 | 0.146 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | rerank_on | refusal_rate | 0.500 | 0.500 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | rerank_on | latency_median | 0.294 | 0.279 | -0.015 | 0.000 | лучше | wilcoxon |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | rerank_on | latency_p95 | 0.327 | 0.307 | -0.020 | 0.000 | лучше | wilcoxon |
+| 2026-08-14 11:34 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, rerank=вкл | base | rerank_on | answer_chars | 0.000 | 0.000 | +0.000 | 1.000 | без разницы | wilcoxon |

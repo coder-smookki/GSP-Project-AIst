@@ -105,6 +105,9 @@ def collect_runs(cache: ResultCache) -> list[dict]:
     """
     groups: dict[tuple, list[dict]] = {}
     for path in sorted(cache.directory.glob("*.json")):
+        # Пропускаем A/B вердикты (ab_*.json) — у них другая структура
+        if path.name.startswith("ab_"):
+            continue
         entry = json.loads(path.read_text(encoding="utf-8"))
         config = json.dumps(
             entry.get("config", {}), ensure_ascii=False, sort_keys=True
@@ -325,7 +328,7 @@ def _ab_verdicts_section(runs: list[dict], cache: ResultCache, output_dir: Path)
         base_variant = run["variants"][0] if run["variants"] else ""
         for variant_name, verdicts in ab_verdicts.items():
             for v in verdicts:
-                arrow = {"better": "���� лучше", "worse": "���� хуже", "no_diff": "��� без разницы"}
+                arrow = {"better": "лучше", "worse": "хуже", "no_diff": "без разницы"}
                 ab_comparisons.append({
                     "date": run["created_at"],
                     "environment": run["environment"],
@@ -351,7 +354,7 @@ def _ab_verdicts_section(runs: list[dict], cache: ResultCache, output_dir: Path)
         "## A/B сравнения (закэшированные вердикты)",
         "",
         "Таблица показывает все сохранённые A/B вердикты. «Δ» — разница variant - base.",
-        "Зелёное — статистически значимое улучшение (p < 0.05), красное — ухудшение.",
+        "Вердикт: «лучше» — значимое улучшение (p < 0.05), «хуже» — ухудшение, «без разницы» — нет значимых отличий.",
         "",
         "| дата | окружение | base | variant | метрика | base | variant | Δ | p-value | вердикт | тест |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
