@@ -10,7 +10,7 @@ from __future__ import annotations
 from eval.cache import ResultCache, build_entry, cache_key
 from eval.config import Variant
 from eval.metrics import MRR, HitAtK, compute_metrics
-from eval.report import collect_runs, generate, metric_from_key, render_markdown
+from eval.report import collect_runs, generate, metric_from_key, render_markdown, load_all_ab_verdicts
 from tests.eval.test_eval_cache import CONFIG, ENV, METRICS
 from tests.eval.test_eval_stats import make_result
 
@@ -73,7 +73,7 @@ class TestCollectRuns:
             dataset="def",
         )
 
-        runs = collect_runs(cache)
+        runs, _ = collect_runs(cache)
         assert len(runs) == 2
         paired = [run for run in runs if len(run["variants"]) == 2]
         single = [run for run in runs if len(run["variants"]) == 1]
@@ -95,12 +95,13 @@ class TestCollectRuns:
             _result([1, 2], "base", "2026-01-01T10:00:00+00:00"),
             dataset="a",
         )
-        runs = collect_runs(cache)
+        runs, _ = collect_runs(cache)
         assert runs[0]["created_at"].startswith("2026-01-02")
 
     def test_empty_cache(self, tmp_path) -> None:
         """Пустой кэш — пустой список."""
-        assert collect_runs(ResultCache(tmp_path)) == []
+        runs, _ = collect_runs(ResultCache(tmp_path))
+        assert runs == []
 
 
 class TestRenderMarkdown:
@@ -108,7 +109,8 @@ class TestRenderMarkdown:
 
     def test_static_sections_present(self, tmp_path) -> None:
         """Все разделы документа на месте."""
-        text = render_markdown([], ResultCache(tmp_path), tmp_path)
+        cache = ResultCache(tmp_path)
+        text = render_markdown([], [], cache, tmp_path)
         for heading in (
             "## Как пользоваться",
             "## Метрики",
@@ -132,8 +134,9 @@ class TestRenderMarkdown:
             dataset="abc",
         )
 
-        runs = collect_runs(cache)
-        text = render_markdown(runs, cache, tmp_path)
+        runs, _ = collect_runs(cache)
+        ab_verdicts = load_all_ab_verdicts(cache)
+        text = render_markdown(runs, ab_verdicts, cache, tmp_path)
         assert "| дата | окружение | варианты | метрики | вердикт | кэш |" in text
         assert "base, top6" in text
         assert "hit@1" in text
@@ -142,7 +145,8 @@ class TestRenderMarkdown:
 
     def test_empty_history(self, tmp_path) -> None:
         """Пустой кэш — подсказка вместо таблицы."""
-        text = render_markdown([], ResultCache(tmp_path), tmp_path)
+        cache = ResultCache(tmp_path)
+        text = render_markdown([], [], cache, tmp_path)
         assert "Кэш пуст" in text
 
 

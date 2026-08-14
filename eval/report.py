@@ -141,63 +141,35 @@ def collect_runs(cache: ResultCache) -> list[dict]:
         )
     runs.sort(key=lambda run: run["created_at"], reverse=True)
 
-    # Загружаем A/B вердикты для каждого прогона
-    for run in runs:
-        run["ab_verdicts"] = load_ab_verdicts(cache, run)
+    # Загружаем все A/B вердикты из кэша (глобально, не по прогонам)
+    all_ab_verdicts = load_all_ab_verdicts(cache)
 
-    return runs
+    return runs, all_ab_verdicts
 
 
-def load_ab_verdicts(cache: ResultCache, run: dict) -> dict[str, list[Verdict]]:
-    """Загружает A/B вердикты для прогона из кэша.
-
-    Ключ A/B вердикта строится из base_variant + variant + dataset + environment + metrics + config.
-    Так как run содержит первый вариант как base, ищем соответствующие ab_* записи.
-
-    Args:
-        cache: Хранилище результатов.
-        run: Прогон из collect_runs.
+def load_all_ab_verdicts(cache: ResultCache) -> list[dict]:
+    """Загружает все A/B вердикты из кэша.
 
     Returns:
-        dict[str, list[Verdict]]: variant_name -> список вердиктов.
+        list[dict]: Список словарей с полями base_variant, variant, verdicts, environment, dataset, metrics, config, created_at.
     """
-    if len(run["variants"]) < 2:
-        return {}
-    base_variant = run["variants"][0]
-    dataset = None
-    environment = None
-    metrics_version = None
-    config = None
-
-    # Найдём параметры из первой записи кэша этого прогона
-    for path in sorted(cache.directory.glob("*.json")):
-        entry = json.loads(path.read_text(encoding="utf-8"))
-        if entry["key"] in run["keys"]:
-            dataset = entry.get("dataset")
-            environment = entry.get("environment")
-            metrics_version = entry.get("metrics")
-            config = entry.get("config")
-            break
-
-    if not dataset or not environment:
-        return {}
-
-    # Ищем A/B вердикты в кэше
-    ab_verdicts: dict[str, list[Verdict]] = {}
+    all_verdicts: list[dict] = []
     for path in sorted(cache.directory.glob("ab_*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
-        if (
-            data.get("base_variant") == base_variant
-            and data.get("dataset") == dataset
-            and data.get("environment") == environment
-            and data.get("metrics") == metrics_version
-            and data.get("config") == config
-        ):
-            variant_name = data.get("variant")
-            if variant_name:
-                verdicts = [Verdict.from_dict(v) for v in data.get("verdicts", [])]
-                ab_verdicts[variant_name] = verdicts
-    return ab_verdicts
+        all_verdicts.append({
+            "base_variant": data.get("base_variant", ""),
+            "variant": data.get("variant", ""),
+            "verdicts": [Verdict.from_dict(v) for v in data.get("verdicts", [])],
+            "environment": data.get("environment", ""),
+            "environment_desc": data.get("environment_desc", ""),
+            "dataset": data.get("dataset", ""),
+            "metrics": data.get("metrics", ""),
+            "config": data.get("config", {}),
+            "created_at": data.get("created_at", ""),
+        })
+    # Сортируем по дате (новые первые)
+    all_verdicts.sort(key=lambda x: x["created_at"], reverse=True)
+    return all_verdicts
 
 
 def _metrics_cell(run: dict) -> str:
@@ -308,47 +280,42 @@ def _links_cell(run: dict, cache: ResultCache, output_dir: Path) -> str:
     return "<br>".join(links)
 
 
-def _ab_verdicts_section(runs: list[dict], cache: ResultCache, output_dir: Path) -> str:
+def _ab_verdicts_section(all_ab_verdicts: list[dict], cache: ResultCache, output_dir: Path) -> str:
     """Секция с детальными A/B вердиктами.
 
     Args:
-        runs: Прогоны из :func:`collect_runs`.
+        all_ab_verdicts: Все A/B вердикты из :func:`load_all_ab_verdicts`.
         cache: Хранилище результатов.
         output_dir: Каталог документа.
 
     Returns:
         str: Markdown секция с A/B вердиктами.
     """
-    # Собираем все уникальные A/B сравнения
+    # Собираем все A/B сравнения из кэша
     ab_comparisons: list[dict] = []
-    for run in runs:
-        ab_verdicts = run.get("ab_verdicts", {})
-        if not ab_verdicts:
-            continue
-        base_variant = run["variants"][0] if run["variants"] else ""
-        for variant_name, verdicts in ab_verdicts.items():
-            for v in verdicts:
-                arrow = {"better": "лучше", "worse": "хуже", "no_diff": "без разницы"}
-                ab_comparisons.append({
-                    "date": run["created_at"],
-                    "environment": run["environment"],
-                    "base": base_variant,
-                    "variant": variant_name,
-                    "metric": v.metric,
-                    "base_val": f"{v.base_value:.3f}",
-                    "var_val": f"{v.variant_value:.3f}",
-                    "delta": f"{v.variant_value - v.base_value:+.3f}",
-                    "p_value": f"{v.p_value:.3f}",
-                    "verdict": arrow.get(v.direction, v.direction),
-                    "test": v.test,
-                })
-    
+    for av in all_ab_verdicts:
+        for v in av["verdicts"]:
+            arrow = {"better": "лучше", "worse": "хуже", "no_diff": "без разницы"}
+            ab_comparisons.append({
+                "date": av["created_at"],
+                "environment": av.get("environment_desc", "") or av["environment"],
+                "base": av["base_variant"],
+                "variant": av["variant"],
+                "metric": v.metric,
+                "base_val": f"{v.base_value:.3f}",
+                "var_val": f"{v.variant_value:.3f}",
+                "delta": f"{v.variant_value - v.base_value:+.3f}",
+                "p_value": f"{v.p_value:.3f}",
+                "verdict": arrow.get(v.direction, v.direction),
+                "test": v.test,
+            })
+
     if not ab_comparisons:
         return ""
-    
+
     # Сортируем по дате (новые первые)
     ab_comparisons.sort(key=lambda x: x["date"], reverse=True)
-    
+
     lines = [
         "",
         "## A/B сравнения (закэшированные вердикты)",
@@ -409,11 +376,12 @@ _STATIC_SECTIONS = """## Как пользоваться
 """
 
 
-def render_markdown(runs: list[dict], cache: ResultCache, output_dir: Path) -> str:
+def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: ResultCache, output_dir: Path) -> str:
     """Собирает текст документа целиком.
 
     Args:
         runs: Прогоны из :func:`collect_runs`.
+        all_ab_verdicts: Все A/B вердикты из :func:`load_all_ab_verdicts`.
         cache: Хранилище результатов.
         output_dir: Каталог документа (для относительных ссылок).
 
@@ -464,7 +432,7 @@ def render_markdown(runs: list[dict], cache: ResultCache, output_dir: Path) -> s
         lines.append("")
 
     # Добавляем секцию с детальными A/B вердиктами
-    lines.append(_ab_verdicts_section(runs, cache, output_dir))
+    lines.append(_ab_verdicts_section(all_ab_verdicts, cache, output_dir))
 
     return "\n".join(lines)
 
@@ -480,8 +448,8 @@ def generate(cache: ResultCache, output: str | Path) -> int:
         int: Код возврата процесса (всегда 0).
     """
     output_path = Path(output)
-    runs = collect_runs(cache)
-    text = render_markdown(runs, cache, output_path.parent)
+    runs, all_ab_verdicts = collect_runs(cache)
+    text = render_markdown(runs, all_ab_verdicts, cache, output_path.parent)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(text, encoding="utf-8")
     logger.info("отчёт записан в %s (прогонов: %d)", output, len(runs))
