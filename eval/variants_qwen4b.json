@@ -1,0 +1,176 @@
+{
+  "variants": [
+    {
+      "name": "base",
+      "description": "gpt-oss:20b, bge-m3, rerank=on, support=off, grade=off, emb=qwen3-embedding:4b",
+      "settings": {
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "qwen36_gemma_r1g1",
+      "description": "llm=qwen3.6:35b-a3b-nvfp4, support=gemma4:e2b-mlx, rerank=on, grade=on, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "qwen3.6:35b-a3b-nvfp4",
+        "llm_support_model": "gemma4:e2b-mlx",
+        "rerank_enabled": true,
+        "grading_enabled": true,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "qwen36_gemma_r1g0",
+      "description": "llm=qwen3.6:35b-a3b-nvfp4, support=gemma4:e2b-mlx, rerank=on, grade=off, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "qwen3.6:35b-a3b-nvfp4",
+        "llm_support_model": "gemma4:e2b-mlx",
+        "rerank_enabled": true,
+        "grading_enabled": false,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "qwen36_gemma_r0g1",
+      "description": "llm=qwen3.6:35b-a3b-nvfp4, support=gemma4:e2b-mlx, rerank=off, grade=on, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "qwen3.6:35b-a3b-nvfp4",
+        "llm_support_model": "gemma4:e2b-mlx",
+        "rerank_enabled": false,
+        "grading_enabled": true,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "qwen36_gemma_r0g0",
+      "description": "llm=qwen3.6:35b-a3b-nvfp4, support=gemma4:e2b-mlx, rerank=off, grade=off, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "qwen3.6:35b-a3b-nvfp4",
+        "llm_support_model": "gemma4:e2b-mlx",
+        "rerank_enabled": false,
+        "grading_enabled": false,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "qwen36_self_r1g1",
+      "description": "llm=qwen3.6:35b-a3b-nvfp4, support=None, rerank=on, grade=on, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "qwen3.6:35b-a3b-nvfp4",
+        "llm_support_model": "None",
+        "rerank_enabled": true,
+        "grading_enabled": true,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "qwen36_self_r1g0",
+      "description": "llm=qwen3.6:35b-a3b-nvfp4, support=None, rerank=on, grade=off, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "qwen3.6:35b-a3b-nvfp4",
+        "llm_support_model": "None",
+        "rerank_enabled": true,
+        "grading_enabled": false,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "qwen36_self_r0g1",
+      "description": "llm=qwen3.6:35b-a3b-nvfp4, support=None, rerank=off, grade=on, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "qwen3.6:35b-a3b-nvfp4",
+        "llm_support_model": "None",
+        "rerank_enabled": false,
+        "grading_enabled": true,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "qwen36_self_r0g0",
+      "description": "llm=qwen3.6:35b-a3b-nvfp4, support=None, rerank=off, grade=off, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "qwen3.6:35b-a3b-nvfp4",
+        "llm_support_model": "None",
+        "rerank_enabled": false,
+        "grading_enabled": false,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "gptoss_gemma_r1g1",
+      "description": "llm=gpt-oss:20b, support=gemma4:e2b-mlx, rerank=on, grade=on, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "gpt-oss:20b",
+        "llm_support_model": "gemma4:e2b-mlx",
+        "rerank_enabled": true,
+        "grading_enabled": true,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "gptoss_gemma_r1g0",
+      "description": "llm=gpt-oss:20b, support=gemma4:e2b-mlx, rerank=on, grade=off, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "gpt-oss:20b",
+        "llm_support_model": "gemma4:e2b-mlx",
+        "rerank_enabled": true,
+        "grading_enabled": false,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "gptoss_gemma_r0g1",
+      "description": "llm=gpt-oss:20b, support=gemma4:e2b-mlx, rerank=off, grade=on, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "gpt-oss:20b",
+        "llm_support_model": "gemma4:e2b-mlx",
+        "rerank_enabled": false,
+        "grading_enabled": true,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "gptoss_gemma_r0g0",
+      "description": "llm=gpt-oss:20b, support=gemma4:e2b-mlx, rerank=off, grade=off, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "gpt-oss:20b",
+        "llm_support_model": "gemma4:e2b-mlx",
+        "rerank_enabled": false,
+        "grading_enabled": false,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "gptoss_self_r1g1",
+      "description": "llm=gpt-oss:20b, support=None, rerank=on, grade=on, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "gpt-oss:20b",
+        "llm_support_model": "None",
+        "rerank_enabled": true,
+        "grading_enabled": true,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "gptoss_self_r0g1",
+      "description": "llm=gpt-oss:20b, support=None, rerank=off, grade=on, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "gpt-oss:20b",
+        "llm_support_model": "None",
+        "rerank_enabled": false,
+        "grading_enabled": true,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    },
+    {
+      "name": "gptoss_self_r0g0",
+      "description": "llm=gpt-oss:20b, support=None, rerank=off, grade=off, emb=qwen3-embedding:4b",
+      "settings": {
+        "llm_model": "gpt-oss:20b",
+        "llm_support_model": "None",
+        "rerank_enabled": false,
+        "grading_enabled": false,
+        "embedding_model": "qwen3-embedding:4b"
+      }
+    }
+  ]
+}
