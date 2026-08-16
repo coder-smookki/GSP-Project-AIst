@@ -80,7 +80,7 @@ class TestRetrieveNode:
         state: AgentState = {"messages": [{"role": "human", "content": "Привет"}]}
         result = await app.ainvoke(state)
         assert result["messages"][-1].content == "Ответ по документам."
-        assert result.get("retrieved") is None
+        assert result.get("retrieved") == []
 
     @pytest.mark.asyncio
     async def test_sections_filter_reaches_search(self):
