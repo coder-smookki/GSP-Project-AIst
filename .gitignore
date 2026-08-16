@@ -1,7 +1,7 @@
 .chainlit/
 chainlit.md
 
-
+eval/*.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
