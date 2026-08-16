@@ -99,27 +99,53 @@ services:
   # ---------------------------------------------------------------- раннеры ---
   # Один deployment = один раннер. Имя deployment задаёт AIST_DEPLOYMENT_NAME;
   # все параметры (модель, поколение, источник, расписание) — через AIST_*/EMBEDDING_*.
-  # Дефолтный раннер: параметры берутся из .env основного стека.
+  #
+  # Три модельных раннера на три эмбеддера. Размерности разные, поэтому каждому
+  # кандидату — своя коллекция-поколение:
+  #   bge-m3:567m          (1024) → aist_chunks_v1  (существующий боевой индекс)
+  #   qwen3-embedding:4b   (2560) → aist_chunks_v2
+  #   qwen3-embedding:8b   (4096) → aist_chunks_v3
+  # Алиас не трогаем (AIST_SWITCH_ALIAS=0): он остаётся на v1, пока не выберем
+  # лучшую модель по золотому набору. Переключить — запустив прогон нужного
+  # раннера с параметром switch_alias=true.
+
+  # Дефолтный раннер = baseline на bge-m3:567m. Параметры берутся из .env
+  # основного стека; здесь они зафиксированы явно, чтобы deployment был
+  # воспроизводим.
   prefect-runner:
     <<: *runner-common
     environment:
       <<: *runner-env
       AIST_DEPLOYMENT_NAME: ${AIST_DEPLOYMENT_NAME:-aist-ingest}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3:567m}
+      EMBEDDING_QUERY_INSTRUCTION: ${EMBEDDING_QUERY_INSTRUCTION:-}
+      AIST_GENERATION: 1
+      AIST_FULL: ${AIST_FULL:-0}
+      AIST_SWITCH_ALIAS: 0
 
-  # Пример доп. пайплайна: новая коллекция под qwen3-embedding-8b (другая
-  # размерность!) с переключением алиаса. Поднять:
-  #   docker compose up -d prefect-runner-qwen3-v2
-  # Появится deployment «aist-ingest-qwen3-v2» в UI Prefect.
-  # prefect-runner-qwen3-v2:
-  #   <<: *runner-common
-  #   environment:
-  #     <<: *runner-env
-  #     AIST_DEPLOYMENT_NAME: aist-ingest-qwen3-v2
-  #     EMBEDDING_MODEL: qwen3-embedding-8b
-  #     EMBEDDING_QUERY_INSTRUCTION: "为这个句子生成表示以用于检索相关文章："
-  #     AIST_GENERATION: 2
-  #     AIST_FULL: 1
-  #     AIST_SWITCH_ALIAS: 1
+  # qwen3-embedding:4b → v2. Другая размерность, поэтому полная переиндексация.
+  prefect-runner-qwen4b:
+    <<: *runner-common
+    environment:
+      <<: *runner-env
+      AIST_DEPLOYMENT_NAME: aist-ingest-qwen4b
+      EMBEDDING_MODEL: qwen3-embedding:4b
+      EMBEDDING_QUERY_INSTRUCTION: "Найди в базе знаний фрагменты, релевантные этому вопросу: "
+      AIST_GENERATION: 2
+      AIST_FULL: 1
+      AIST_SWITCH_ALIAS: 0
+
+  # qwen3-embedding:8b → v3. Другая размерность, поэтому полная переиндексация.
+  prefect-runner-qwen8b:
+    <<: *runner-common
+    environment:
+      <<: *runner-env
+      AIST_DEPLOYMENT_NAME: aist-ingest-qwen8b
+      EMBEDDING_MODEL: qwen3-embedding:8b
+      EMBEDDING_QUERY_INSTRUCTION: "Найди в базе знаний фрагменты, релевантные этому вопросу: "
+      AIST_GENERATION: 3
+      AIST_FULL: 1
+      AIST_SWITCH_ALIAS: 0
 
 volumes:
   prefect_data:
