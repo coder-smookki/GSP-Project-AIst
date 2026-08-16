@@ -25,6 +25,13 @@ def _deployment_kwargs() -> dict[str, object]:
         "full": os.environ.get("AIST_FULL", "0") == "1",
         "switch_alias": os.environ.get("AIST_SWITCH_ALIAS", "0") == "1",
         "sync_tag": os.environ.get("AIST_SYNC_TAG") or None,
+        # Эмбеддинги: берём уже существующие EMBEDDING_* (они же в .env).
+        # Значения попадают в deployment, в UI их видно и можно переопределить.
+        "embedding_model": os.environ.get("EMBEDDING_MODEL") or None,
+        "embedding_provider": os.environ.get("EMBEDDING_PROVIDER") or None,
+        "embedding_query_instruction": os.environ.get(
+            "EMBEDDING_QUERY_INSTRUCTION"
+        ) or None,
     }
     return kwargs
 
