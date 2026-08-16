@@ -472,6 +472,8 @@ def _aggregate_configs(runs: list[dict]) -> list[dict]:
                 "graph": env[0],
                 "n": len(metrics),
                 "hit@1": avg("hit@1"),
+                "hit@3": avg("hit@3"),
+                "hit@5": avg("hit@5"),
                 "mrr": avg("mrr"),
                 "not_found": avg("not_found"),
                 "latency_median": avg("latency_median"),
@@ -589,11 +591,13 @@ def _recommendations_section(runs: list[dict], ab_groups: list[dict]) -> str:
     if leaderboard:
         leader = leaderboard[0]
         hit = f"{leader['hit@1']:.3f}" if leader["hit@1"] is not None else "—"
+        hit3 = f"{leader['hit@3']:.3f}" if leader["hit@3"] is not None else "—"
+        hit5 = f"{leader['hit@5']:.3f}" if leader["hit@5"] is not None else "—"
         mrr = f"{leader['mrr']:.3f}" if leader["mrr"] is not None else "—"
         lines.append(
             f"**Текущий лидер:** `{_human_config(leader['environment'])}` "
             f"(граф `{leader['graph']}`) — "
-            f"hit@1 = {hit}, MRR = {mrr}."
+            f"hit@1/3/5 = {hit}/{hit3}/{hit5}, MRR = {mrr}."
         )
         lines.append("")
 
@@ -656,10 +660,10 @@ def _leaderboard_section(runs: list[dict]) -> str:
             lines.append(f"### Граф: `{graph}`")
             lines.append("")
             lines.append(
-                "| конфигурация | hit@1 | MRR | not_found | лат., мед. | "
-                "кол-во | заметка |"
+                "| конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | "
+                "лат., мед. | кол-во | заметка |"
             )
-            lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         graph_rows = [r for r in rows if r["graph"] == graph]
         leader = graph_rows[0]
         fastest = min(
@@ -681,6 +685,8 @@ def _leaderboard_section(runs: list[dict]) -> str:
                 [
                     _human_config(row["environment"]),
                     _fmt_number(row["hit@1"]),
+                    _fmt_number(row["hit@3"]),
+                    _fmt_number(row["hit@5"]),
                     _fmt_number(row["mrr"]),
                     _fmt_number(row["not_found"]),
                     _fmt_number(row["latency_median"]),
@@ -730,8 +736,9 @@ def _graphs_summary_section(runs: list[dict]) -> str:
         "Лидер каждого графа агента. Прямое A/B между разными графами не "
         "считается: вердикты сравнивают варианты только внутри одного графа.",
         "",
-        "| граф | лучшая конфигурация | hit@1 | MRR | not_found | кол-во | заметка |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| граф | лучшая конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | "
+        "кол-во | заметка |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for graph in graphs:
         row = per_graph[graph]
@@ -743,6 +750,8 @@ def _graphs_summary_section(runs: list[dict]) -> str:
                     f"`{graph}`",
                     _human_config(row["environment"]),
                     _fmt_number(row["hit@1"]),
+                    _fmt_number(row["hit@3"]),
+                    _fmt_number(row["hit@5"]),
                     _fmt_number(row["mrr"]),
                     _fmt_number(row["not_found"]),
                     str(row["n"]),
