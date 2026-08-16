@@ -323,3 +323,114 @@ def compare_all(
         list[Verdict]: Вердикты по каждой метрике в порядке передачи.
     """
     return [compare_metric(m, base, variant, seed=seed) for m in metrics]
+
+
+def _paired_sample_p_value(diffs: list[float], seed: int) -> float:
+    """p-value для разностей метрик по бутстрап-выборкам.
+
+    Разности берутся по одной на выборку: ``d_k = variant_k - base_k``. При
+    ``scipy`` — знаково-ранговый критерий Уилкоксона (если разности не все
+    нулевые и их не слишком мало), иначе/в крайнем случае — парный
+    пермутационный тест: знаки разностей честной монетой, статистика — сумма
+    разностей.
+
+    Args:
+        diffs: Разности метрики по выборкам.
+        seed: Зерно ГПСЧ для пермутаций.
+
+    Returns:
+        float: p-value в диапазоне [0, 1].
+    """
+    if not any(d != 0 for d in diffs):
+        return 1.0
+    try:
+        from scipy.stats import wilcoxon
+
+        if len(diffs) >= 5:
+            result = wilcoxon(diffs)
+            p_value = float(getattr(result, "pvalue", 1.0))
+            if not math.isnan(p_value):
+                return p_value
+    except (ImportError, ValueError):
+        pass
+
+    observed = abs(sum(diffs))
+    rng = random.Random(_seed_for(seed, "bootstrap"))
+    extremes = 0
+    for _ in range(PERMUTATIONS):
+        flipped = [d if rng.random() < 0.5 else -d for d in diffs]
+        if abs(sum(flipped)) >= observed:
+            extremes += 1
+    return (extremes + 1) / (PERMUTATIONS + 1)
+
+
+def compare_bootstrapped(
+    metrics: Iterable[BaseMetric],
+    base: RunResult,
+    variant: RunResult,
+    seed: int = 42,
+) -> list[Verdict]:
+    """Сравнивает метрики двух вариантов по бутстрап-выборкам.
+
+    Классическое А/Б-сравнение парное по вопросам: оба варианта прогоняются
+    на одном наборе, и статистика снимается по вопросам. При бутстрепе вместо
+    этого каждый вариант прогнан ``N`` раз, по разу на каждый ресемплированный
+    пул; пары теперь — выборки, а не вопросы: ``d_k = variant_k - base_k`` на
+    одной и той же выборке (пулы детерминированы общим зерном).
+
+    Args:
+        metrics: Метрики для сравнения.
+        base: Агрегированный результат базового варианта.
+        variant: Агрегированный результат нового варианта.
+        seed: Зерно ГПСЧ для пермутаций.
+
+    Returns:
+        list[Verdict]: Вердикты по каждой метрике в порядке передачи.
+
+    Raises:
+        ValueError: Число выборок у вариантов не совпадает.
+    """
+    base_samples = base.meta.get("bootstrap", {}).get("samples")
+    variant_samples = variant.meta.get("bootstrap", {}).get("samples")
+    if base_samples is None or variant_samples is None:
+        return compare_all(metrics, base, variant, seed=seed)
+    if len(base_samples) != len(variant_samples):
+        raise ValueError("число бутстрап-выборок у вариантов разное")
+
+    verdicts: list[Verdict] = []
+    for metric in metrics:
+        base_values = [s.get(metric.key) for s in base_samples]
+        variant_values = [s.get(metric.key) for s in variant_samples]
+        pairs = [
+            (b, v)
+            for b, v in zip(base_values, variant_values, strict=True)
+            if b is not None and v is not None
+        ]
+        if not pairs:
+            verdicts.append(
+                Verdict(
+                    metric=metric.key,
+                    test="bootstrap",
+                    p_value=1.0,
+                    base_value=0.0,
+                    variant_value=0.0,
+                    direction="no_diff",
+                )
+            )
+            continue
+        diffs = [v - b for b, v in pairs]
+        base_value = sum(b for b, _ in pairs) / len(pairs)
+        variant_value = sum(v for _, v in pairs) / len(pairs)
+        observed = variant_value - base_value
+        p_value = _paired_sample_p_value(diffs, seed)
+        verdicts.append(
+            Verdict(
+                metric=metric.key,
+                test="bootstrap",
+                p_value=p_value,
+                base_value=base_value,
+                variant_value=variant_value,
+                direction=_direction(metric, observed, p_value),
+            )
+        )
+    return verdicts

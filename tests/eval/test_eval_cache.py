@@ -95,6 +95,24 @@ class TestCacheKey:
         config = RunConfig(runner="golden", limit=10)
         assert key_for() != key_for(config=config)
 
+    def test_graph_changes_key(self) -> None:
+        """Разный граф агента меняет ключ: кэши графов не смешиваются."""
+        config = RunConfig(runner="golden", graph="rd-v2")
+        assert key_for() != key_for(config=config)
+
+    def test_bootstrap_sample_split_keys(self) -> None:
+        """Разные бутстрап-выборки не должны делиться одним кэшем."""
+        base = RunConfig(runner="golden", bootstraps=3, sample_index=0)
+        other = RunConfig(runner="golden", bootstraps=3, sample_index=1)
+        assert key_for(config=base) != key_for(config=other)
+        assert key_for(config=RunConfig(runner="golden", seed=1)) != key_for()
+
+    def test_bootstraps_count_in_digest(self) -> None:
+        """Число выборок участвует в разграничении ключа."""
+        one = RunConfig(runner="golden", bootstraps=1)
+        many = RunConfig(runner="golden", bootstraps=5)
+        assert key_for(config=one) != key_for(config=many)
+
 
 class TestVersioning:
     """Версия метрик и хеш набора."""
@@ -190,3 +208,60 @@ class TestResultCache:
         restored = json.loads(payload)
         assert restored["variant"]["name"] == "base"
         assert "outcomes" in restored["result"]
+
+
+class TestGraphSeparation:
+    """Граф агента разделяет кэш и вердикты."""
+
+    def test_build_entry_records_graph(self) -> None:
+        """Запись кэша хранит тег графа агента."""
+        config = RunConfig(runner="golden", graph="rd-v2")
+        entry = build_entry(
+            key_for(config=config),
+            Variant(name="base"),
+            make_result([1, 2]),
+            ENV,
+            DATASET,
+            METRICS,
+            config,
+        )
+        assert entry["graph"] == "rd-v2"
+        assert entry["config"]["graph"] == "rd-v2"
+
+    def test_config_digest_distinguishes_graph(self) -> None:
+        """Дайджест конфига включает граф: без этого A/B смешал бы графы."""
+        base = key_for()
+        other = key_for(config=RunConfig(runner="golden", graph="base"))
+        assert base == other
+        assert base != key_for(config=RunConfig(runner="golden", graph="rd-v2"))
+
+    def test_ab_cache_key_isolates_graphs(self) -> None:
+        """Ключ A/B-вердиктов различается по графу."""
+        from eval.cache import ab_cache_key
+
+        base = Variant(name="base")
+        variant = Variant(name="v", settings={"retrieval_top_k": 6})
+        a = ab_cache_key(base, variant, DATASET, METRICS, ENV, CONFIG)
+        b = ab_cache_key(
+            base,
+            variant,
+            DATASET,
+            METRICS,
+            ENV,
+            RunConfig(runner="golden", graph="rd-v2"),
+        )
+        assert a != b
+
+    def test_build_ab_entry_records_graph(self) -> None:
+        """A/B-запись хранит граф, чтобы вердикты не смешивались."""
+        from eval.cache import ab_cache_key, build_ab_entry
+
+        base = Variant(name="base")
+        variant = Variant(name="v", settings={"retrieval_top_k": 6})
+        config = RunConfig(runner="golden", graph="rd-v2")
+        key = ab_cache_key(base, variant, DATASET, METRICS, ENV, config)
+        entry = build_ab_entry(
+            key, base, variant, [], ENV, DATASET, METRICS, config
+        )
+        assert entry["graph"] == "rd-v2"
+        assert entry["config"]["graph"] == "rd-v2"
