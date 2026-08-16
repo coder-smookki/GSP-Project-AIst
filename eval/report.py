@@ -353,6 +353,12 @@ def _human_config(desc: str) -> str:
         parts.append(f"реранк={params['rerank']}")
     if "cand" in params:
         parts.append(f"канд.={params['cand']}")
+    if "prefetch" in params:
+        parts.append(f"pref={params['prefetch']}")
+    if "rrf" in params:
+        parts.append(f"rrf={params['rrf']}")
+    if "min_rel" in params:
+        parts.append(f"min_rel={params['min_rel']}")
     if params.get("coll"):
         parts.append(f"колл.={params['coll']}")
     return ", ".join(parts)
@@ -431,24 +437,57 @@ def _metric_short(key: str) -> str:
     return _METRIC_SHORT.get(key, key)
 
 
-def _is_tune_run(run: dict) -> bool:
+def _tune_variant_names(tune_paths) -> set[str]:
+    """Имена вариантов-точек сетки из отчётов ``eval tune --output``.
+
+    Имя точки собирается из ключей значений параметров
+    (``retrieval_min_relevance=0.3``); однопараметровые сетки не содержат ``;``,
+    поэтому надёжнее исключать их из лидерборда по имени из вместе с ``;``.
+
+    Args:
+        tune_paths: Пути к отчётам ``eval tune --output``.
+
+    Returns:
+        set[str]: Имена вариантов, которые являются точками сетки.
+    """
+    names: set[str] = set()
+    for path in tune_paths:
+        file_path = Path(path)
+        if not file_path.exists():
+            continue
+        try:
+            payload = json.loads(file_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for point in payload.get("points", []):
+            name = point.get("name")
+            if name:
+                names.add(name)
+    return names
+
+
+def _is_tune_run(run: dict, tune_names: set[str] = ()) -> bool:
     """Точка ли это сетки ``eval tune``.
 
     Имя варианта сетки собирается из значений параметров через ``;``
-    (``retrieval_top_k=5;retrieval_prefetch=30;...``); точки сетки —
-    инструментальные измерения, они показываются в разделе «Итоги тюнинга
-    по сетке», а не в производственном лидерборде.
+    (``retrieval_top_k=5;retrieval_prefetch=30;...``); в однопараметровых сетках
+    имени ``;`` нет — такие точки дополняются именами из отчётов тюнинга.
+    Точки сетки — инструментальные измерения, они показываются в разделе
+    «Итоги тюнинга по сетке», а не в производственном лидерборде.
 
     Args:
         run: Прогон из :func:`collect_runs`.
+        tune_names: Имена вариантов-точек сетки (см. :func:`_tune_variant_names`).
 
     Returns:
         bool: ``True``, если прогон — точка сетки.
     """
-    return any(";" in variant for variant in run["variants"])
+    return any(
+        ";" in variant or variant in tune_names for variant in run["variants"]
+    )
 
 
-def _aggregate_configs(runs: list[dict]) -> list[dict]:
+def _aggregate_configs(runs: list[dict], tune_names: set[str] = ()) -> list[dict]:
     """Сводные конфигурации: окружение → средние метрики по прогонам.
 
     Одна и та же конфигурация (модель, эмбеддер, top_k, реранк) может быть
@@ -457,6 +496,7 @@ def _aggregate_configs(runs: list[dict]) -> list[dict]:
 
     Args:
         runs: Прогоны из :func:`collect_runs`.
+        tune_names: Имена вариантов-точек сетки (см. :func:`_tune_variant_names`).
 
     Returns:
         list[dict]: Конфигурации, отсортированные по ``mrr`` (и ``hit@1``).
@@ -465,7 +505,7 @@ def _aggregate_configs(runs: list[dict]) -> list[dict]:
     labels: dict[tuple[str, str], str] = {}
     order: list[tuple[str, str]] = []
     for run in runs:
-        if _is_tune_run(run):
+        if _is_tune_run(run, tune_names):
             continue
         graph = run.get("graph", "base")
         key = (graph, run.get("environment_key") or run["environment"])
@@ -497,6 +537,7 @@ def _aggregate_configs(runs: list[dict]) -> list[dict]:
                 "mrr": avg("mrr"),
                 "not_found": avg("not_found"),
                 "latency_median": avg("latency_median"),
+                "refusal_rate": avg("refusal_rate"),
             }
         )
 
@@ -505,6 +546,7 @@ def _aggregate_configs(runs: list[dict]) -> list[dict]:
             row["mrr"] is not None,
             row["mrr"] if row["mrr"] is not None else -1.0,
             row["hit@1"] if row["hit@1"] is not None else -1.0,
+            row["refusal_rate"] if row["refusal_rate"] is not None else -1.0,
         ),
         reverse=True,
     )
@@ -594,7 +636,9 @@ def _group_verdict(significant: list[Verdict]) -> str:
     return "паритет"
 
 
-def _recommendations_section(runs: list[dict], ab_groups: list[dict]) -> str:
+def _recommendations_section(
+    runs: list[dict], ab_groups: list[dict], tune_names: set[str] = ()
+) -> str:
     """Сводка «Рекомендации»: лидер и ключевые выводы из A/B.
 
     Args:
@@ -607,7 +651,7 @@ def _recommendations_section(runs: list[dict], ab_groups: list[dict]) -> str:
     if not runs:
         return ""
     lines = ["## Рекомендации", ""]
-    leaderboard = _aggregate_configs(runs)
+    leaderboard = _aggregate_configs(runs, tune_names)
     if leaderboard:
         leader = leaderboard[0]
         hit = f"{leader['hit@1']:.3f}" if leader["hit@1"] is not None else "—"
@@ -647,7 +691,7 @@ def _recommendations_section(runs: list[dict], ab_groups: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _leaderboard_section(runs: list[dict]) -> str:
+def _leaderboard_section(runs: list[dict], tune_names: set[str] = ()) -> str:
     """Лидерборд: агрегированные конфигурации по графам, отсортированы по MRR.
 
     Строки группируются по графу агента (``graph`` тег): каждый граф получает
@@ -656,11 +700,12 @@ def _leaderboard_section(runs: list[dict]) -> str:
 
     Args:
         runs: Прогоны из :func:`collect_runs`.
+        tune_names: Имена вариантов-точек сетки (см. :func:`_tune_variant_names`).
 
     Returns:
         str: Markdown-раздел или пустая строка, если кэш пуст.
     """
-    rows = _aggregate_configs(runs)
+    rows = _aggregate_configs(runs, tune_names)
     if not rows:
         return ""
     lines = [
@@ -681,9 +726,9 @@ def _leaderboard_section(runs: list[dict]) -> str:
             lines.append("")
             lines.append(
                 "| конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | "
-                "лат., мед. | кол-во | заметка |"
+                "лат., мед. | отказ | кол-во | заметка |"
             )
-            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
         graph_rows = [r for r in rows if r["graph"] == graph]
         leader = graph_rows[0]
         fastest = min(
@@ -710,6 +755,7 @@ def _leaderboard_section(runs: list[dict]) -> str:
                     _fmt_number(row["mrr"]),
                     _fmt_number(row["not_found"]),
                     _fmt_number(row["latency_median"]),
+                    _fmt_number(row["refusal_rate"]),
                     str(row["n"]),
                     ", ".join(notes) if notes else "—",
                 ]
@@ -720,7 +766,7 @@ def _leaderboard_section(runs: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _graphs_summary_section(runs: list[dict]) -> str:
+def _graphs_summary_section(runs: list[dict], tune_names: set[str] = ()) -> str:
     """Сводка «Лучшие по графам»: один лидер на каждый граф агента.
 
     Сравнение метрик внутри графа правомерно, а между разными графами — нет
@@ -730,11 +776,12 @@ def _graphs_summary_section(runs: list[dict]) -> str:
 
     Args:
         runs: Прогоны из :func:`collect_runs`.
+        tune_names: Имена вариантов-точек сетки (см. :func:`_tune_variant_names`).
 
     Returns:
         str: Markdown-раздел или пустая строка, если кэш пуст.
     """
-    rows = _aggregate_configs(runs)
+    rows = _aggregate_configs(runs, tune_names)
     if not rows:
         return ""
     per_graph: dict[str, dict] = {}
@@ -1165,9 +1212,10 @@ def render_markdown(
         str: Текст docs/BENCHMARK.md.
     """
     ab_groups = _ab_groups(all_ab_verdicts, runs)
-    recommendations = _recommendations_section(runs, ab_groups)
-    leaderboard = _leaderboard_section(runs)
-    graphs_summary = _graphs_summary_section(runs)
+    tune_names = _tune_variant_names(tune_paths)
+    recommendations = _recommendations_section(runs, ab_groups, tune_names)
+    leaderboard = _leaderboard_section(runs, tune_names)
+    graphs_summary = _graphs_summary_section(runs, tune_names)
 
     lines = [
         "# Бенчмарк качества",
