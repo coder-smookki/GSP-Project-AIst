@@ -75,7 +75,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     variant = Variant(name=args.variant, settings=settings)
     config = RunConfig(
-        golden=args.golden, limit=args.limit, with_answers=args.with_answers
+        golden=args.golden,
+        limit=args.limit,
+        with_answers=args.with_answers,
+        bootstraps=args.bootstraps,
+        seed=args.seed,
     )
 
     async def run() -> RunResult:
@@ -223,6 +227,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--limit", type=int, help="взять только первые N вопросов")
     run_p.add_argument(
+        "--bootstraps",
+        type=int,
+        default=1,
+        help="сколько независимых прогонов на ресемплированных пулах "
+        "вопросов (бутстрап с возвратом)",
+    )
+    run_p.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="зерно ресемплинга пула",
+    )
+    run_p.add_argument(
         "--variant", default="base", help="имя варианта (по умолчанию base)"
     )
     run_p.add_argument(
@@ -252,6 +269,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="дополнительно генерировать ответы и проверять отказ по тексту",
     )
     ab_p.add_argument("--limit", type=int, help="взять только первые N вопросов")
+    ab_p.add_argument(
+        "--bootstraps",
+        type=int,
+        default=1,
+        help="сколько независимых прогонов на ресемплированных пулах "
+        "вопросов (бутстрап с возвратом)",
+    )
+    ab_p.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="зерно ресемплинга пула: один пул для всех вариантов",
+    )
     ab_p.add_argument("--output", help="записать полный отчёт в файл")
     ab_p.add_argument(
         "--cache-dir",

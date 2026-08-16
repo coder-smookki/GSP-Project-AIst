@@ -61,6 +61,11 @@ class RunConfig:
         repeats: Прогонов на вопрос для операционного замера.
         concurrency: Уровни одновременных обращений.
         seed: Зерно ГПСЧ для воспроизводимости.
+        bootstraps: Сколько независимых прогонов на ресемплированных пулах
+            вопросов (бутстрап с возвратом); ``1`` — один прогон без
+            ресемплинга.
+        sample_index: Номер бутстрап-выборки в пределах прогона
+            (``0..bootstraps-1``); задаётся матричным прогоном.
     """
 
     runner: Literal["golden", "operational"] = "golden"
@@ -70,6 +75,8 @@ class RunConfig:
     repeats: int = 2
     concurrency: tuple[int, ...] = (1, 2, 4)
     seed: int = 42
+    bootstraps: int = 1
+    sample_index: int = 0
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,13 @@ class Environment:
         rerank_model: Модель реранкера.
         grading_enabled: Включён ли грейдинг релевантности.
         verify_numbers: Включена ли сверка чисел.
+        llm_provider: Провайдер LLM (``ollama-local``, ``llamacpp``, ``vllm``).
+        llm_reasoning: Включены ли размышления модели.
+        embedding_provider: Провайдер эмбеддингов.
+        retrieval_prefetch: Кандидатов на канал гибрида до слияния.
+        retrieval_rrf_k: Параметр RRF-слияния.
+        retrieval_min_relevance: Порог релевантности.
+        rerank_candidates: Сколько кандидатов переоценивает реранкер.
     """
 
     platform: str
@@ -102,6 +116,13 @@ class Environment:
     rerank_model: str
     grading_enabled: bool
     verify_numbers: bool
+    llm_provider: str = "ollama-local"
+    llm_reasoning: bool = False
+    embedding_provider: str = "ollama-local"
+    retrieval_prefetch: int = 30
+    retrieval_rrf_k: int = 60
+    retrieval_min_relevance: float = 0.55
+    rerank_candidates: int = 10
 
     def describe(self) -> str:
         """Краткое человекочитаемое описание окружения.
@@ -113,7 +134,9 @@ class Environment:
         rerank = "вкл" if self.rerank_enabled else "выкл"
         return (
             f"llm={self.llm_model}, emb={self.embedding_model}, "
-            f"top_k={self.retrieval_top_k}, rerank={rerank}"
+            f"top_k={self.retrieval_top_k}, prefetch={self.retrieval_prefetch}, "
+            f"rrf={self.retrieval_rrf_k}, rerank={rerank}, "
+            f"cand={self.rerank_candidates}, min_rel={self.retrieval_min_relevance}"
         )
 
     def fingerprint(self) -> str:
@@ -125,12 +148,19 @@ class Environment:
         values = [
             self.platform,
             self.python,
+            self.llm_provider,
             self.llm_model,
             self.llm_support_model,
+            str(self.llm_reasoning),
+            self.embedding_provider,
             self.embedding_model,
             str(self.retrieval_top_k),
+            str(self.retrieval_prefetch),
+            str(self.retrieval_rrf_k),
+            str(self.retrieval_min_relevance),
             str(self.rerank_enabled),
             self.rerank_model,
+            str(self.rerank_candidates),
             str(self.grading_enabled),
             str(self.verify_numbers),
         ]
@@ -152,12 +182,21 @@ def snapshot_environment(settings) -> Environment:
     return Environment(
         platform=f"{platform.system()}-{platform.machine()}",
         python=sys.version.split()[0],
+        llm_provider=getattr(settings, "llm_provider", "ollama-local"),
         llm_model=settings.llm_model,
-        llm_support_model=settings.llm_support_model,
+        llm_support_model=getattr(settings, "llm_support_model", "None"),
+        llm_reasoning=bool(getattr(settings, "llm_reasoning", False)),
+        embedding_provider=getattr(settings, "embedding_provider", "ollama-local"),
         embedding_model=settings.embedding_model,
         retrieval_top_k=settings.retrieval_top_k,
+        retrieval_prefetch=int(getattr(settings, "retrieval_prefetch", 30)),
+        retrieval_rrf_k=int(getattr(settings, "retrieval_rrf_k", 60)),
+        retrieval_min_relevance=float(
+            getattr(settings, "retrieval_min_relevance", 0.55)
+        ),
         rerank_enabled=settings.rerank_enabled,
         rerank_model=settings.rerank_model,
+        rerank_candidates=int(getattr(settings, "rerank_candidates", 10)),
         grading_enabled=settings.grading_enabled,
         verify_numbers=settings.verify_numbers,
     )

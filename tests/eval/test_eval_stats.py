@@ -26,6 +26,7 @@ from eval.stats import (
     PairedPermutationTest,
     WilcoxonTest,
     compare_all,
+    compare_bootstrapped,
     compare_metric,
     default_test,
 )
@@ -223,3 +224,59 @@ class TestDefaultTest:
         verdict = compare_metric(HitAtK(1), base, variant, test=PairedPermutationTest())
         assert verdict.test == "permutation (paired)"
         assert verdict.direction == "better"
+
+
+class TestBootstrapComparison:
+    """Сравнение по бутстрап-выборкам: пары — выборки, а не вопросы."""
+
+    @staticmethod
+    def _result(samples: list[dict[str, float]]) -> RunResult:
+        """Собирает агрегированный результат с выборками в ``meta``."""
+        return RunResult(
+            variant="test",
+            environment="env",
+            metrics=samples[-1],
+            outcomes=[],
+            meta={"bootstrap": {"n": len(samples), "samples": samples, "std": {}}},
+        )
+
+    def test_consistent_improvement(self) -> None:
+        """Вариант выше на каждой выборке — значимое улучшение."""
+        base = self._result([{"hit@1": 0.6} for _ in range(9)])
+        variant = self._result([{"hit@1": 0.9} for _ in range(9)])
+        verdict = compare_bootstrapped([HitAtK(1)], base, variant)[0]
+        assert verdict.test == "bootstrap"
+        assert verdict.direction == "better"
+        assert verdict.p_value < SIGNIFICANCE
+        assert verdict.base_value == pytest.approx(0.6)
+        assert verdict.variant_value == pytest.approx(0.9)
+
+    def test_identical_no_diff(self) -> None:
+        """Одинаковые значения на каждой выборке — без разницы."""
+        base = self._result([{"hit@1": 0.7} for _ in range(5)])
+        variant = self._result([{"hit@1": 0.7} for _ in range(5)])
+        verdict = compare_bootstrapped([HitAtK(1)], base, variant)[0]
+        assert verdict.direction == "no_diff"
+        assert verdict.p_value == 1.0
+
+    def test_latency_lower_better(self) -> None:
+        """Для непрерывной метрики меньшее время — улучшение."""
+        base = self._result([{"latency_median": 1.0} for _ in range(9)])
+        variant = self._result([{"latency_median": 0.5} for _ in range(9)])
+        verdict = compare_bootstrapped([LatencyMedian()], base, variant)[0]
+        assert verdict.direction == "better"
+
+    def test_falls_back_without_bootstrap_meta(self) -> None:
+        """Без метаданных выборок — обычное сравнение по вопросам."""
+        base = make_result([None] * 8)
+        variant = make_result([1] * 8)
+        verdict = compare_bootstrapped([HitAtK(1)], base, variant)[0]
+        assert verdict.test != "bootstrap"
+        assert verdict.direction == "better"
+
+    def test_mismatched_sample_counts(self) -> None:
+        """Разное число выборок у вариантов — ошибка."""
+        base = self._result([{"hit@1": 0.6} for _ in range(3)])
+        variant = self._result([{"hit@1": 0.8} for _ in range(4)])
+        with pytest.raises(ValueError, match="выборок"):
+            compare_bootstrapped([HitAtK(1)], base, variant)

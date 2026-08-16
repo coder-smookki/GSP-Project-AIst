@@ -95,6 +95,19 @@ class TestCacheKey:
         config = RunConfig(runner="golden", limit=10)
         assert key_for() != key_for(config=config)
 
+    def test_bootstrap_sample_split_keys(self) -> None:
+        """Разные бутстрап-выборки не должны делиться одним кэшем."""
+        base = RunConfig(runner="golden", bootstraps=3, sample_index=0)
+        other = RunConfig(runner="golden", bootstraps=3, sample_index=1)
+        assert key_for(config=base) != key_for(config=other)
+        assert key_for(config=RunConfig(runner="golden", seed=1)) != key_for()
+
+    def test_bootstraps_count_in_digest(self) -> None:
+        """Число выборок участвует в разграничении ключа."""
+        one = RunConfig(runner="golden", bootstraps=1)
+        many = RunConfig(runner="golden", bootstraps=5)
+        assert key_for(config=one) != key_for(config=many)
+
 
 class TestVersioning:
     """Версия метрик и хеш набора."""

@@ -86,6 +86,9 @@ def _config_digest(config: RunConfig) -> dict[str, Any]:
         "with_answers": config.with_answers,
         "repeats": config.repeats,
         "concurrency": list(config.concurrency),
+        "seed": config.seed,
+        "bootstraps": config.bootstraps,
+        "sample_index": config.sample_index,
     }
 
 

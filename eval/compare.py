@@ -32,8 +32,9 @@ import argparse
 import asyncio
 import json
 import logging
+import statistics
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,7 @@ from eval.golden import DEFAULT_GOLDEN
 from eval.metrics import BaseMetric, default_metrics
 from eval.result import RunResult, Verdict
 from eval.runners import GoldenSetRunner
-from eval.stats import compare_all
+from eval.stats import compare_bootstrapped
 from eval.variants import variant_environment
 
 #: Каталог кэша результатов по умолчанию.
@@ -92,6 +93,14 @@ async def run_matrix(
 ) -> list[RunResult]:
     """Прогоняет варианты, переиспользуя кэш.
 
+    При ``config.bootstraps > 1`` каждый вариант дополнительно прогоняется на
+    ``bootstraps`` ресемплированных пулах вопросов (бутстрап с возвратом,
+    :meth:`eval.golden.GoldenSet.resample`). Состав пула детерминирован
+    общим зерном и индексом выборки, поэтому base и варианты на одной выборке
+    видят одинаковые вопросы — сравнение остаётся парным (по выборкам, а не
+    по вопросам). Итоговые метрики варианта — среднее по выборкам, разброс
+    складывается в ``meta["bootstrap"]``.
+
     Args:
         variants: Варианты для прогона.
         config: Параметры прогона.
@@ -101,31 +110,93 @@ async def run_matrix(
         refresh_base: Переснять только первый вариант.
 
     Returns:
-        list[RunResult]: Результаты в порядке вариантов.
+        list[RunResult]: Результаты в порядке вариантов (по одному на
+        вариант, при бутстрепе — агрегированные по выборкам).
     """
     from eval.variants import build_variant, variant_environment
 
     runner = GoldenSetRunner(build=build_variant, metrics=metrics)
     dataset = file_hash(config.golden)
+    samples = max(1, config.bootstraps)
 
     results: list[RunResult] = []
     for position, variant in enumerate(variants):
         environment = variant_environment(variant)
-        key = cache_key(variant, dataset, metrics, environment, config)
-        cached = None
-        if not force and not (refresh_base and position == 0):
-            cached = cache.load(key)
-        if cached is not None:
-            logger.info("вариант %s: взят из кэша (%s)", variant.name, key)
-            results.append(cached)
-            continue
-        logger.info("прогон варианта %s", variant.name)
-        result = await runner.run(variant, config)
-        cache.save(
-            build_entry(key, variant, result, environment, dataset, metrics, config)
-        )
-        results.append(result)
+        per_sample: list[RunResult] = []
+        for sample_index in range(samples):
+            sample_config = (
+                replace(config, sample_index=sample_index)
+                if samples > 1
+                else config
+            )
+            key = cache_key(variant, dataset, metrics, environment, sample_config)
+            cached = None
+            if not force and not (refresh_base and position == 0):
+                cached = cache.load(key)
+            if cached is not None:
+                logger.info("вариант %s: взято из кэша (%s)", variant.name, key)
+                per_sample.append(cached)
+                continue
+            logger.info(
+                "прогон варианта %s (выборка %d/%d)",
+                variant.name,
+                sample_index + 1,
+                samples,
+            )
+            result = await runner.run(variant, sample_config)
+            cache.save(
+                build_entry(
+                    key, variant, result, environment, dataset, metrics, sample_config
+                )
+            )
+            per_sample.append(result)
+        results.append(_aggregate_bootstrap(variant, per_sample))
     return results
+
+
+def _aggregate_bootstrap(variant: Variant, runs: list[RunResult]) -> RunResult:
+    """Агрегирует прогоны варианта по бутстрап-выборкам.
+
+    Args:
+        variant: Вариант (для совместимости имени результата).
+        runs: Результаты прогонов по одной выборке на каждый.
+
+    Returns:
+        RunResult: При одной выборке — исходный результат; иначе метрики
+        становятся средним по выборкам, разброс — в ``meta["bootstrap"]``.
+    """
+    if len(runs) == 1:
+        return runs[0]
+
+    keys = {key for run in runs for key in run.metrics}
+    metrics: dict[str, float] = {}
+    std: dict[str, float] = {}
+    for key in keys:
+        values = [run.metrics.get(key) for run in runs]
+        values = [value for value in values if value is not None]
+        if not values:
+            continue
+        metrics[key] = statistics.mean(values)
+        std[key] = statistics.stdev(values) if len(values) > 1 else 0.0
+
+    last = runs[-1]
+    meta = {
+        **last.meta,
+        "bootstrap": {
+            "n": len(runs),
+            "seed": last.meta.get("sample_index", 0),
+            "samples": [run.metrics for run in runs],
+            "std": std,
+        },
+    }
+    return RunResult(
+        variant=last.variant,
+        environment=last.environment,
+        metrics=metrics,
+        outcomes=last.outcomes,
+        created_at=last.created_at,
+        meta=meta,
+    )
 
 
 def print_per_variant(results: list[RunResult], metrics: list[BaseMetric]) -> None:
@@ -137,10 +208,14 @@ def print_per_variant(results: list[RunResult], metrics: list[BaseMetric]) -> No
     """
     for result in results:
         print(f"\n{'=' * 72}\n{result.variant}\n{'=' * 72}")
+        std = result.meta.get("bootstrap", {}).get("std", {})
         for metric in metrics:
             value = result.metrics.get(metric.key)
-            if value is not None:
-                print(f"  {metric.display_name:<18} {value:.3f}")
+            if value is None:
+                continue
+            spread = std.get(metric.key)
+            suffix = f" ± {spread:.3f}" if spread else ""
+            print(f"  {metric.display_name:<18} {value:.3f}{suffix}")
 
 
 def print_table(results: list[RunResult], metrics: list[BaseMetric]) -> None:
@@ -171,8 +246,15 @@ def print_table(results: list[RunResult], metrics: list[BaseMetric]) -> None:
             if comparable:
                 best = max(comparable) if metric.higher_is_better else min(comparable)
         row = f"{metric.display_name:<18}"
-        for value in values:
-            text = f"{value:.3f}" if value is not None else "-"
+        for result in results:
+            value = result.metrics.get(metric.key)
+            if value is None:
+                text = "-"
+            else:
+                spread = result.meta.get("bootstrap", {}).get("std", {}).get(
+                    metric.key
+                )
+                text = f"{value:.3f}±{spread:.3f}" if spread else f"{value:.3f}"
             if best is not None and value == best:
                 text += "*"
             row += f"{text:>{width + 4}}"
@@ -194,7 +276,7 @@ def print_verdicts(
     print("=" * 72)
     for result in results:
         print(f"\n{result.variant}:")
-        for verdict in compare_all(metrics, base, result):
+        for verdict in compare_bootstrapped(metrics, base, result):
             arrow = {"better": "лучше", "worse": "хуже", "no_diff": "без разницы"}
             print(
                 f"  {verdict.metric:<18} {verdict.base_value:.3f} -> "
@@ -255,7 +337,11 @@ async def main_async(
         return 2
 
     config = RunConfig(
-        golden=args.golden, limit=args.limit, with_answers=args.with_answers
+        golden=args.golden,
+        limit=args.limit,
+        with_answers=args.with_answers,
+        bootstraps=args.bootstraps,
+        seed=args.seed,
     )
     cache = ResultCache(args.cache_dir)
 
@@ -281,7 +367,7 @@ async def main_async(
     for result in results[1:]:
         variant = next(v for v in variants if v.name == result.variant)
         environment = variant_environment(variant)
-        verdicts = compare_all(metrics, results[0], result)
+        verdicts = compare_bootstrapped(metrics, results[0], result)
         ab_key = ab_cache_key(base_variant, variant, dataset, metrics, environment, config)
         cache.save_ab(
             build_ab_entry(ab_key, base_variant, variant, verdicts, environment, dataset, metrics, config)
@@ -291,7 +377,7 @@ async def main_async(
     if args.output:
         verdicts: list[dict[str, Any]] = []
         for result in results[1:]:
-            for verdict in compare_all(metrics, results[0], result):
+            for verdict in compare_bootstrapped(metrics, results[0], result):
                 verdicts.append({"variant": result.variant, **asdict(verdict)})
         payload = _build_payload(variants, results, metrics, verdicts)
         await asyncio.to_thread(
@@ -325,6 +411,19 @@ def main() -> int:
         help="дополнительно генерировать ответы и проверять отказ по тексту",
     )
     parser.add_argument("--limit", type=int, help="взять только первые N вопросов")
+    parser.add_argument(
+        "--bootstraps",
+        type=int,
+        default=1,
+        help="сколько независимых прогонов на ресемплированных пулах "
+        "вопросов (бутстрап с возвратом)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="зерно ресемплинга пула: один пул для всех вариантов",
+    )
     parser.add_argument("--output", help="записать полный отчёт в файл")
     parser.add_argument(
         "--cache-dir",

@@ -134,6 +134,7 @@ def collect_runs(cache: ResultCache) -> list[dict]:
                 "variants": [result.variant for result in results],
                 "environment": first.get("environment_desc", "")
                 or first.get("environment", ""),
+                "environment_key": first.get("environment", ""),
                 "metric_keys": metric_keys,
                 "results": results,
                 "keys": [entry["key"] for entry in entries],
@@ -280,60 +281,495 @@ def _links_cell(run: dict, cache: ResultCache, output_dir: Path) -> str:
     return "<br>".join(links)
 
 
-def _ab_verdicts_section(all_ab_verdicts: list[dict], cache: ResultCache, output_dir: Path) -> str:
-    """Секция с детальными A/B вердиктами.
+#: Человекочитаемые имена атрибутов окружения для сводных таблиц.
+_ENV_LABELS = {
+    "llm": "LLM",
+    "emb": "эмбеддинг",
+    "top_k": "top_k",
+    "prefetch": "prefetch",
+    "rrf": "RRF-k",
+    "rerank": "реранк",
+    "cand": "кандидаты",
+    "min_rel": "мин. релевантность",
+}
+
+#: Короткие имена эмбеддеров для компактного лидерборда.
+_EMB_SHORT: dict[str, str] = {
+    "qwen3-embedding:4b": "qwen3-emb",
+    "qwen3-embedding:8b": "qwen3-emb-8b",
+    "bge-m3:567m": "bge-m3",
+}
+
+#: Короткие имена метрик для сводных таблиц.
+_METRIC_SHORT: dict[str, str] = {
+    "latency_median": "лат., мед.",
+    "latency_p95": "лат., p95",
+    "refusal_rate": "отказ",
+    "answer_chars": "длина ответа",
+    "not_found": "not_found",
+}
+
+
+def _env_params(desc: str) -> dict[str, str]:
+    """Разбирает описание окружения на пары ``ключ=значение``.
+
+    Args:
+        desc: Строка из :meth:`eval.config.Environment.describe`.
+
+    Returns:
+        dict[str, str]: Пары параметров.
+    """
+    params: dict[str, str] = {}
+    for chunk in desc.split(","):
+        chunk = chunk.strip()
+        if "=" in chunk:
+            key, _, value = chunk.partition("=")
+            params[key.strip()] = value.strip()
+    return params
+
+
+def _human_config(desc: str) -> str:
+    """Компактная человекочитаемая метка конфигурации.
+
+    Args:
+        desc: Описание окружения.
+
+    Returns:
+        str: Например, ``LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл``.
+    """
+    params = _env_params(desc)
+    parts: list[str] = []
+    if "llm" in params:
+        parts.append(f"LLM={params['llm']}")
+    if "emb" in params:
+        parts.append(f"emb={_EMB_SHORT.get(params['emb'], params['emb'])}")
+    if "top_k" in params:
+        parts.append(f"top_k={params['top_k']}")
+    if "rerank" in params:
+        parts.append(f"реранк={params['rerank']}")
+    if "cand" in params:
+        parts.append(f"канд.={params['cand']}")
+    return ", ".join(parts)
+
+
+def _env_diff(base: str, variant: str) -> str:
+    """Чем окружение variant отличается от base (человекочитаемо).
+
+    Args:
+        base: Описание окружения базового варианта.
+        variant: Описание окружения нового варианта.
+
+    Returns:
+        str: Список изменений через ``; `` или пустая строка, если
+        окружения идентичны.
+    """
+    base_params = _env_params(base)
+    variant_params = _env_params(variant)
+    changed: list[str] = []
+    for key in base_params.keys() | variant_params.keys():
+        old, new = base_params.get(key, "—"), variant_params.get(key, "—")
+        if old != new:
+            label = _ENV_LABELS.get(key, key)
+            changed.append(f"{label}: {old} → {new}")
+    return "; ".join(changed)
+
+
+def _variant_envs(runs: list[dict]) -> dict[str, list[str]]:
+    """Все окружения, где встречался каждый вариант.
+
+    Args:
+        runs: Прогоны из :func:`collect_runs`.
+
+    Returns:
+        dict[str, list[str]]: Имя варианта → список описаний окружения.
+    """
+    envs: dict[str, list[str]] = {}
+    for run in runs:
+        for variant in run["variants"]:
+            if run["environment"] not in envs.setdefault(variant, []):
+                envs[variant].append(run["environment"])
+    return envs
+
+
+def _best_base_env(base_name: str, variant_env: str, variant_envs: dict[str, list[str]]) -> str:
+    """Выбирает окружение базы, ближайшее к окружению варианта.
+
+    Имя базы может встречаться в нескольких прогонах (разные конфиги);
+    для описания «что изменилось» берём то окружение, которое меньше всего
+    отличается от окружения сравниваемого варианта.
+
+    Args:
+        base_name: Имя базового варианта.
+        variant_env: Описание окружения варианта.
+        variant_envs: Карта окружений вариантов.
+
+    Returns:
+        str: Описание окружения базы или пустая строка.
+    """
+    variant_params = _env_params(variant_env)
+    best, best_score = "", None
+    for env in variant_envs.get(base_name, []):
+        base_params = _env_params(env)
+        score = sum(
+            1
+            for key in base_params.keys() | variant_params.keys()
+            if base_params.get(key) != variant_params.get(key)
+        )
+        if best_score is None or score < best_score:
+            best, best_score = env, score
+    return best
+
+
+def _metric_short(key: str) -> str:
+    """Короткое имя метрики для сводных таблиц."""
+    return _METRIC_SHORT.get(key, key)
+
+
+def _aggregate_configs(runs: list[dict]) -> list[dict]:
+    """Сводные конфигурации: окружение → средние метрики по прогонам.
+
+    Одна и та же конфигурация (модель, эмбеддер, top_k, реранк) может быть
+    прогнана несколько раз или с разными вариантами промпта; лидерборд
+    показывает её среднее, чтобы не дублировать строки.
+
+    Args:
+        runs: Прогоны из :func:`collect_runs`.
+
+    Returns:
+        list[dict]: Конфигурации, отсортированные по ``mrr`` (и ``hit@1``).
+    """
+    grouped: dict[str, list[dict]] = {}
+    labels: dict[str, str] = {}
+    order: list[str] = []
+    for run in runs:
+        key = run.get("environment_key") or run["environment"]
+        if key not in grouped:
+            grouped[key] = []
+            labels[key] = run["environment"]
+            order.append(key)
+        for result in run["results"]:
+            grouped[key].append(result.metrics)
+
+    rows: list[dict] = []
+    for env in order:
+        metrics = grouped[env]
+
+        def avg(key: str, metrics: list[dict] = metrics) -> float | None:
+            values = [m.get(key) for m in metrics if m.get(key) is not None]
+            if not values:
+                return None
+            return sum(values) / len(values)
+
+        rows.append(
+            {
+                "environment": labels[env],
+                "n": len(metrics),
+                "hit@1": avg("hit@1"),
+                "mrr": avg("mrr"),
+                "not_found": avg("not_found"),
+                "latency_median": avg("latency_median"),
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            row["mrr"] is not None,
+            row["mrr"] if row["mrr"] is not None else -1.0,
+            row["hit@1"] if row["hit@1"] is not None else -1.0,
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def _verdict_line(verdict: Verdict) -> str:
+    """Одна строка значимого изменения метрики.
+
+    Args:
+        verdict: Вердикт A/B.
+
+    Returns:
+        str: ``метрика: base→variant (p=..., направление)``.
+    """
+    arrow = {"better": "улучшение", "worse": "ухудшение"}.get(verdict.direction, "без разницы")
+    return (
+        f"{_metric_short(verdict.metric)}: {verdict.base_value:.3f}→{verdict.variant_value:.3f} "
+        f"(p={verdict.p_value:.3f}, {arrow})"
+    )
+
+
+def _ab_groups(all_ab_verdicts: list[dict], runs: list[dict]) -> list[dict]:
+    """Свёрнутые A/B-сравнения: одна строка на пару вариантов.
+
+    Если пара (base, variant, окружение) прогнана несколько раз, берётся
+    последний прогон. Значимыми считаются вердикты с ``p < 0.05`` и
+    ненулевой разницей.
 
     Args:
         all_ab_verdicts: Все A/B вердикты из :func:`load_all_ab_verdicts`.
+        runs: Прогоны из :func:`collect_runs` (для описания изменений).
+
+    Returns:
+        list[dict]: Группы, отсортированные от свежих к старым.
+    """
+    latest: dict[tuple, dict] = {}
+    for av in all_ab_verdicts:
+        identity = (av["base_variant"], av["variant"], av["environment"], av.get("environment_desc", "") or av["environment"])
+        if identity not in latest or av["created_at"] > latest[identity]["created_at"]:
+            latest[identity] = av
+
+    variant_envs = _variant_envs(runs)
+    groups: list[dict] = []
+    for av in latest.values():
+        significant = [
+            verdict
+            for verdict in av["verdicts"]
+            if verdict.p_value < 0.05 and verdict.direction != "no_diff"
+        ]
+        variant_env = av.get("environment_desc", "") or av["environment"]
+        base_env = _best_base_env(av["base_variant"], variant_env, variant_envs)
+        essence = _env_diff(base_env, variant_env) if base_env else "—"
+        groups.append(
+            {
+                "date": av["created_at"],
+                "base": av["base_variant"],
+                "variant": av["variant"],
+                "environment": variant_env,
+                "essence": essence,
+                "verdicts": av["verdicts"],
+                "significant": significant,
+            }
+        )
+    groups.sort(key=lambda group: group["date"], reverse=True)
+    return groups
+
+
+def _group_verdict(significant: list[Verdict]) -> str:
+    """Итоговый вердикт группы по значимым изменениям.
+
+    Args:
+        significant: Значимые вердикты группы.
+
+    Returns:
+        str: ``лучше``, ``хуже``, ``неоднозначно`` или ``паритет``.
+    """
+    better = any(v.direction == "better" for v in significant)
+    worse = any(v.direction == "worse" for v in significant)
+    if better and worse:
+        return "неоднозначно"
+    if worse:
+        return "хуже"
+    if better:
+        return "лучше"
+    return "паритет"
+
+
+def _recommendations_section(runs: list[dict], ab_groups: list[dict]) -> str:
+    """Сводка «Рекомендации»: лидер и ключевые выводы из A/B.
+
+    Args:
+        runs: Прогоны из :func:`collect_runs`.
+        ab_groups: Группы из :func:`_ab_groups`.
+
+    Returns:
+        str: Markdown-раздел или пустая строка, если данных нет.
+    """
+    if not runs:
+        return ""
+    lines = ["## Рекомендации", ""]
+    leaderboard = _aggregate_configs(runs)
+    if leaderboard:
+        leader = leaderboard[0]
+        hit = f"{leader['hit@1']:.3f}" if leader["hit@1"] is not None else "—"
+        mrr = f"{leader['mrr']:.3f}" if leader["mrr"] is not None else "—"
+        lines.append(
+            f"**Текущий лидер:** `{_human_config(leader['environment'])}` — "
+            f"hit@1 = {hit}, MRR = {mrr}."
+        )
+        lines.append("")
+
+    impact = [group for group in ab_groups if group["significant"]]
+    if impact:
+        lines.append("**Значимые эффекты (p < 0.05):**")
+        for group in impact:
+            essence = group["essence"] or "конфигурация не менялась"
+            deltas = "; ".join(_verdict_line(v) for v in group["significant"])
+            verdict = _group_verdict(group["significant"])
+            lines.append(
+                f"- `{group['base']}` → `{group['variant']}` (_{essence}_): "
+                f"**{verdict}** — {deltas}"
+            )
+        lines.append("")
+    else:
+        lines.append("**Значимых A/B-эффектов (p < 0.05) пока нет.**")
+        lines.append("")
+
+    if ab_groups:
+        parity = len(ab_groups) - len(impact)
+        lines.append(
+            f"Проверено A/B-сравнений: {len(ab_groups)}, из них без значимых "
+            f"различий: {parity}."
+        )
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _leaderboard_section(runs: list[dict]) -> str:
+    """Лидерборд: агрегированные конфигурации, отсортированные по MRR.
+
+    Args:
+        runs: Прогоны из :func:`collect_runs`.
+
+    Returns:
+        str: Markdown-раздел или пустая строка, если кэш пуст.
+    """
+    rows = _aggregate_configs(runs)
+    if not rows:
+        return ""
+    leader = rows[0]
+    fastest = min(
+        (row for row in rows if row["latency_median"] is not None),
+        key=lambda row: row["latency_median"],
+        default=None,
+    )
+    lines = [
+        "## Лидерборд",
+        "",
+        "Каждая строка — уникальная конфигурация (модель, эмбеддер, top_k, "
+        "реранк), агрегированная по всем прогонам её вариантов. Сортировка — "
+        "по MRR.",
+        "",
+        "| конфигурация | hit@1 | MRR | not_found | лат., мед. | кол-во | заметка |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in rows:
+        notes: list[str] = []
+        if row is leader:
+            notes.append("максимальное качество")
+        if fastest is not None and row is fastest:
+            notes.append("самый быстрый")
+        params = _env_params(row["environment"])
+        if params.get("rerank") == "выкл":
+            notes.append("реранк выкл")
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _human_config(row["environment"]),
+                    _fmt_number(row["hit@1"]),
+                    _fmt_number(row["mrr"]),
+                    _fmt_number(row["not_found"]),
+                    _fmt_number(row["latency_median"]),
+                    str(row["n"]),
+                    ", ".join(notes) if notes else "—",
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _fmt_number(value: float | None) -> str:
+    """Форматирует число метрики: три знака или ``—`` для ``None``."""
+    return f"{value:.3f}" if value is not None else "—"
+
+
+def _ab_verdicts_section(
+    all_ab_verdicts: list[dict],
+    runs: list[dict],
+    cache: ResultCache,
+    output_dir: Path,
+) -> str:
+    """Секция с A/B вердиктами: сводка и подробности в ``<details>``.
+
+    Сводка показывает одну строку на пару вариантов и только значимые
+    отличия (``p < 0.05``); полная таблица по метрикам сворачивается.
+
+    Args:
+        all_ab_verdicts: Все A/B вердикты из :func:`load_all_ab_verdicts`.
+        runs: Прогоны из :func:`collect_runs` (для описания изменений).
         cache: Хранилище результатов.
         output_dir: Каталог документа.
 
     Returns:
-        str: Markdown секция с A/B вердиктами.
+        str: Markdown секция с A/B вердиктами или пустая строка.
     """
-    # Собираем все A/B сравнения из кэша
+    # Все A/B сравнения по метрикам (для подробной таблицы)
     ab_comparisons: list[dict] = []
     for av in all_ab_verdicts:
         for v in av["verdicts"]:
             arrow = {"better": "лучше", "worse": "хуже", "no_diff": "без разницы"}
-            ab_comparisons.append({
-                "date": av["created_at"],
-                "environment": av.get("environment_desc", "") or av["environment"],
-                "base": av["base_variant"],
-                "variant": av["variant"],
-                "metric": v.metric,
-                "base_val": f"{v.base_value:.3f}",
-                "var_val": f"{v.variant_value:.3f}",
-                "delta": f"{v.variant_value - v.base_value:+.3f}",
-                "p_value": f"{v.p_value:.3f}",
-                "verdict": arrow.get(v.direction, v.direction),
-                "test": v.test,
-            })
+            ab_comparisons.append(
+                {
+                    "date": av["created_at"],
+                    "environment": av.get("environment_desc", "") or av["environment"],
+                    "base": av["base_variant"],
+                    "variant": av["variant"],
+                    "metric": v.metric,
+                    "base_val": f"{v.base_value:.3f}",
+                    "var_val": f"{v.variant_value:.3f}",
+                    "delta": f"{v.variant_value - v.base_value:+.3f}",
+                    "p_value": f"{v.p_value:.3f}",
+                    "verdict": arrow.get(v.direction, v.direction),
+                    "test": v.test,
+                }
+            )
 
-    if not ab_comparisons:
-        return ""
+    groups = _ab_groups(all_ab_verdicts, runs)
+    blocks: list[str] = []
 
-    # Сортируем по дате (новые первые)
-    ab_comparisons.sort(key=lambda x: x["date"], reverse=True)
+    if groups:
+        blocks += [
+            "",
+            "## A/B сравнения (сводка)",
+            "",
+            "По одной строке на пару вариантов. Показаны только значимые "
+            "отличия (p < 0.05); остальные метрики не выводятся, чтобы не "
+            "засорять таблицу константами.",
+            "",
+            "| дата | тест (base → variant) | что изменилось | итог | значимые отличия (p < 0.05) |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for group in groups:
+            deltas = (
+                "; ".join(_verdict_line(v) for v in group["significant"])
+                or "—"
+            )
+            blocks.append(
+                f"| {_format_date(group['date'])} | "
+                f"`{group['base']}` → `{group['variant']}` | "
+                f"{group['essence']} | **{_group_verdict(group['significant'])}** | "
+                f"{deltas} |"
+            )
+        blocks.append("")
 
-    lines = [
-        "",
-        "## A/B сравнения (закэшированные вердикты)",
-        "",
-        "Таблица показывает все сохранённые A/B вердикты. «Δ» — разница variant - base.",
-        "Вердикт: «лучше» — значимое улучшение (p < 0.05), «хуже» — ухудшение, «без разницы» — нет значимых отличий.",
-        "",
-        "| дата | окружение | base | variant | метрика | base | variant | Δ | p-value | вердикт | тест |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-    ]
-    for c in ab_comparisons:
-        lines.append(
-            f"| {_format_date(c['date'])} | {c['environment']} | {c['base']} | {c['variant']} | "
-            f"{c['metric']} | {c['base_val']} | {c['var_val']} | {c['delta']} | {c['p_value']} | "
-            f"{c['verdict']} | {c['test']} |"
-        )
-    lines.append("")
-    return "\n".join(lines)
+    if ab_comparisons:
+        ab_comparisons.sort(key=lambda x: x["date"], reverse=True)
+        detail_lines = [
+            "| дата | окружение | base | variant | метрика | base | variant | Δ | p-value | вердикт | тест |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for c in ab_comparisons:
+            detail_lines.append(
+                f"| {_format_date(c['date'])} | {c['environment']} | {c['base']} | "
+                f"{c['variant']} | {c['metric']} | {c['base_val']} | {c['var_val']} | "
+                f"{c['delta']} | {c['p_value']} | {c['verdict']} | {c['test']} |"
+            )
+        blocks += [
+            "<details>",
+            f"<summary>все сравнения по метрикам ({len(ab_comparisons)})</summary>",
+            "",
+            "«Δ» — разница variant - base. Вердикт: «лучше» — значимое улучшение "
+            "(p < 0.05), «хуже» — ухудшение, «без разницы» — нет значимых отличий.",
+            "",
+            *detail_lines,
+            "",
+            "</details>",
+            "",
+        ]
+
+    return "\n".join(blocks)
 
 
 _STATIC_SECTIONS = """## Как пользоваться
@@ -388,6 +824,10 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
     Returns:
         str: Текст docs/BENCHMARK.md.
     """
+    ab_groups = _ab_groups(all_ab_verdicts, runs)
+    recommendations = _recommendations_section(runs, ab_groups)
+    leaderboard = _leaderboard_section(runs)
+
     lines = [
         "# Бенчмарк качества",
         "",
@@ -395,12 +835,19 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
         "вариантов и история результатов. Этот документ генерируется командой",
         "`uv run eval report` из кэша `eval/results/`.",
         "",
-        _STATIC_SECTIONS.strip(),
-        "",
+    ]
+    if recommendations:
+        lines.append(recommendations)
+    if leaderboard:
+        lines.append(leaderboard)
+    lines += [_STATIC_SECTIONS.strip(), ""]
+
+    lines += [
         "## История результатов",
         "",
         "Каждая строка — один прогон: группа вариантов, снятых на одном наборе,",
-        "окружении и конфиге.",
+        "окружении и конфиге. Сырые строки свёрнуты — обычно нужны только",
+        "«Рекомендации» и «Лидерборд» выше.",
         "",
     ]
 
@@ -410,12 +857,12 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
             "",
         ]
     else:
-        lines += [
+        history = [
             "| дата | окружение | варианты | метрики | вердикт | кэш |",
             "| --- | --- | --- | --- | --- | --- |",
         ]
         for run in runs:
-            lines.append(
+            history.append(
                 "| "
                 + " | ".join(
                     [
@@ -429,10 +876,19 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
                 )
                 + " |"
             )
-        lines.append("")
+        lines += [
+            "<details>",
+            f"<summary>сырые прогоны ({len(runs)})</summary>",
+            "",
+            *history,
+            "",
+            "</details>",
+            "",
+        ]
 
-    # Добавляем секцию с детальными A/B вердиктами
-    lines.append(_ab_verdicts_section(all_ab_verdicts, cache, output_dir))
+    ab_section = _ab_verdicts_section(all_ab_verdicts, runs, cache, output_dir)
+    if ab_section:
+        lines.append(ab_section)
 
     return "\n".join(lines)
 
