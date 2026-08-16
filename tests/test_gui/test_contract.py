@@ -22,6 +22,14 @@ class TestBuildInput:
     def test_empty_sections_omitted(self):
         assert "sections" not in build_input("привет", [])
 
+    def test_always_answer_with_db_true_added(self):
+        payload = build_input("привет", always_answer_with_db=True)
+        assert payload.get("always_answer_with_db") is True
+
+    def test_always_answer_with_db_false_omitted(self):
+        payload = build_input("привет", always_answer_with_db=False)
+        assert "always_answer_with_db" not in payload
+
 
 class TestDecodeAistEnvelope:
     def test_v1_direct_key(self):

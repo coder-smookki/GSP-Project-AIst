@@ -2,6 +2,7 @@ def build_input(
     content: str,
     sections: list[str] | None = None,
     areas: list[str] | None = None,
+    always_answer_with_db: bool = False,
 ) -> dict:
     """Собирает полезную нагрузку `client.runs.stream` (см. docs/GUI.md)."""
     payload: dict = {"messages": [{"type": "human", "content": content}]}
@@ -9,6 +10,8 @@ def build_input(
         payload["sections"] = sections
     if areas:
         payload["areas"] = areas
+    if always_answer_with_db:
+        payload["always_answer_with_db"] = always_answer_with_db
     return payload
 
 
