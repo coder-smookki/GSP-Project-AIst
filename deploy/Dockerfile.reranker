@@ -1,0 +1,29 @@
+# Образ реранкера для продакшена на NVIDIA GPU. Тот же код, что и хост-сервис
+# (deploy/rerank_server.py), но с CUDA-торчем. Собирается/запускается отдельно
+# (`docker compose -f docker-compose.reranker.yml up -d`) и не входит в
+# основной стек, который в dev ходит к хост-сервису через RERANK_ENDPOINT.
+# В prod в .env задаётся RERANK_ENDPOINT=http://reranker:8899.
+#
+# База с предустановленным CUDA-торчем: экономит ~2 ГБ скачивания против
+# pip-сборки и гарантирует совместимость cuDNN/CUDA.
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir "sentence-transformers>=3.0"
+
+COPY deploy/rerank_server.py ./rerank_server.py
+
+# Веса запекаются при сборке, чтобы сервис работал без обращений наружу
+# (требование кейса — ноль внешних API). snapshot_download кладёт файлы в
+# HF_HOME (тот же кэш, что transformers читает офлайн). Сверяйте с
+# RERANK_MODEL из .env — другую модель нужно запекать отдельной пересборкой.
+ENV HF_HOME=/opt/rerank-cache
+RUN HF_HUB_DISABLE_XET=1 python -c \
+    "from huggingface_hub import snapshot_download; snapshot_download('BAAI/bge-reranker-v2-m3')" \
+ && echo "reranker baked at build" >> /opt/reranker-baked
+ENV HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+EXPOSE 8899
+
+CMD ["python", "rerank_server.py"]

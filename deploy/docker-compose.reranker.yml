@@ -1,0 +1,34 @@
+# Реренкер для продакшена на NVIDIA GPU. В dev переоценку считает хост-сервис
+# (deploy/rerank_server.py, MPS на macOS); здесь — тот же код в контейнере
+# с CUDA (Dockerfile.reranker).
+#
+# В ТЕКУЩИЙ СТЕК НЕ ПОДКЛЮЧАЕТСЯ (не входит в include docker-compose.yml):
+# запускать только на машине с GPU
+#     docker compose -f docker-compose.reranker.yml up -d
+# и указать в .env прода
+#     RERANK_ENDPOINT=http://reranker:8899
+# Требует драйвера NVIDIA и nvidia-container-toolkit на хосте.
+services:
+  reranker:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.reranker
+    restart: unless-stopped
+    gpus: all
+    environment:
+      # Должен совпадать с моделью, запечённой в образ при сборке.
+      - RERANK_MODEL=${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+      - RERANK_PORT=${RERANK_PORT:-8899}
+    ports:
+      # Только для отладки с хоста; основной доступ — по имени сервиса
+      # `reranker` внутри общей сети стека.
+      - "127.0.0.1:${RERANK_PORT_MAP:-8899}:8899"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8899/health')"
+      interval: 10s
+      timeout: 5s
+      retries: 5

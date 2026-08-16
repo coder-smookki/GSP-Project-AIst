@@ -54,8 +54,9 @@ open http://localhost:3000
 
 **Переоценка кросс-энкодером** (`RERANK_ENABLED`). Даёт +17 пунктов hit@1 (0,561 →
 0,732 при 10 кандидатах) за +175 мс — поэтому **включена по умолчанию**
-(`RERANK_ENABLED=1`), веса запечены в образ при сборке (см. «Что осталось сделать»),
-офлайн (`HF_HUB_OFFLINE=1`). Без переоценки честный отказ работает как и с ней:
+(`RERANK_ENABLED=1`). Считается вне контейнера: на хосте (MPS, `deploy/rerank_server.py`)
+или в отдельном GPU-контейнере (`docker-compose.reranker.yml`), контейнер aegra
+ходит к ним по HTTP (`RERANK_ENDPOINT`), офлайн. Без переоценки честный отказ работает как и с ней:
 10 из 10 вопросов без ответа получают отказ. Таблица замеров и расчёты на CPU/docker —
 в `docs/RETRIEVE.md` (раздел 8).
 
@@ -143,9 +144,11 @@ EMBEDDING_MODEL="qwen3-embedding:4b"
 
 - [#4](https://github.com/coder-smookki/GSP-Project-AIst/issues/4) — ветвление диалога; помечено автором как необязательное и в спецификации не значится.
 
-Переоценка запекается в образ (`.[rerank]` + кэш весов + `HF_HUB_OFFLINE=1`) —
-см. `docs/RETRIEVE.md` (раздел 8) и `docs/DEPLOY.md`. При смене `RERANK_MODEL` образ
-нужно пересобрать.
+Переоценка вынесена из образа aegra: в dev её считает хост-сервис на MPS
+(`deploy/rerank_server.py`, `RERANK_ENDPOINT=http://host.docker.internal:8899`),
+в prod — отдельный GPU-контейнер `docker-compose.reranker.yml` (CUDA, веса модели
+запечены в его образ при сборке). См. `docs/RETRIEVE.md` (раздел 8) и
+`docs/DEPLOY.md`. При смене `RERANK_MODEL` пересобирается образ реранкера.
 
 ## Замеры на живом стенде
 
@@ -340,7 +343,7 @@ uv run ruff check .                 # линт (E/F/I/UP/B/SIM/ASYNC/RUF)
 | ~~[#3](https://github.com/coder-smookki/GSP-Project-AIst/issues/3)~~ | Мультичаты + именование | gui | готово |
 | [#4](https://github.com/coder-smookki/GSP-Project-AIst/issues/4) | Fork + replay | gui | **открыт**, помечен автором как необязательный |
 | ~~[#5](https://github.com/coder-smookki/GSP-Project-AIst/issues/5)~~ | Corrective RAG: грейдер + переписывание | agent | переписывание включено; грейдер реализован, замерен на полном пути ответа и выключен — не меняет ничего |
-| ~~[#6](https://github.com/coder-smookki/GSP-Project-AIst/issues/6)~~ | Реранкер (`RERANK_ENABLED`) | retrieval | реализован, даёт +17 пунктов hit@1; включён, веса запечены в образ при сборке (офлайн) |
+| ~~[#6](https://github.com/coder-smookki/GSP-Project-AIst/issues/6)~~ | Реранкер (`RERANK_ENABLED`) | retrieval | реализован, даёт +17 пунктов hit@1; включён, считается вне контейнера (хост MPS / GPU-контейнер, офлайн) |
 | ~~[#7](https://github.com/coder-smookki/GSP-Project-AIst/issues/7)~~ | Дата/время для временных запросов | agent | готово |
 | ~~[#8](https://github.com/coder-smookki/GSP-Project-AIst/issues/8)~~ | Search facade за протоколом `Search` | retrieval | готово |
 | ~~[#9](https://github.com/coder-smookki/GSP-Project-AIst/issues/9)~~ | FilesSource | ingest | готово |
