@@ -291,6 +291,7 @@ _ENV_LABELS = {
     "rerank": "реранк",
     "cand": "кандидаты",
     "min_rel": "мин. релевантность",
+    "coll": "коллекция",
 }
 
 #: Короткие имена эмбеддеров для компактного лидерборда.
@@ -349,6 +350,8 @@ def _human_config(desc: str) -> str:
         parts.append(f"реранк={params['rerank']}")
     if "cand" in params:
         parts.append(f"канд.={params['cand']}")
+    if params.get("coll"):
+        parts.append(f"колл.={params['coll']}")
     return ", ".join(parts)
 
 
@@ -802,6 +805,37 @@ _STATIC_SECTIONS = """## Как пользоваться
 | `refusal_rate` | доля вопросов без ответа, где система честно отказала | больше | без ответа |
 | `latency_median`, `latency_p95` | время поиска | меньше | все |
 | `answer_chars` | средняя длина ответа | — | с ответом |
+
+## Коллекции эмбеддингов
+
+Бенчмарк ходит в коллекцию из настройки `qdrant_collection` (по умолчанию алиас
+`aist_chunks`), а эмбеддинги считает моделью из `embedding_model`. Отпечаток
+окружения включает обе настройки, поэтому прогоны на разных коллекциях не
+смешиваются ни в кэше, ни в лидерборде.
+
+| коллекция | модель эмбеддингов | размерность |
+| --- | --- | --- |
+| `aist_chunks_v1` | `bge-m3:567m` | 1024 |
+| `aist_chunks_v2` | `qwen3-embedding:4b` | 2560 |
+| `aist_chunks_v3` | `qwen3-embedding:8b` | 4096 |
+
+Пара «коллекция → модель» обязана быть согласована: индекс построен конкретной
+моделью, и запросы должны эмбеддиться той же (размерности различаются). И поиск,
+и агент берут модель из одних оверрайдов, поэтому варианту достаточно задать обе
+настройки, например файл для `ab`:
+
+    {
+      "variants": [
+        {"name": "v1-bge",   "settings": {"qdrant_collection": "aist_chunks_v1", "embedding_model": "bge-m3:567m"}},
+        {"name": "v2-qwen4b", "settings": {"qdrant_collection": "aist_chunks_v2", "embedding_model": "qwen3-embedding:4b"}},
+        {"name": "v3-qwen8b", "settings": {"qdrant_collection": "aist_chunks_v3", "embedding_model": "qwen3-embedding:8b"}}
+      ]
+    }
+
+    uv run eval ab --variants collections.json --with-answers --bootstraps 5
+
+Алиас `aist_chunks` продолжает указывать на «боевую» коллекцию; конкретные
+поколения перебираются оверрайдами без смены алиаса.
 
 ## A/B-тест
 

@@ -227,6 +227,15 @@ class TestReportHelpers:
         assert "Qwen3" not in label and "qwen3-emb" in label
         assert "gpt-oss:20b" in label
 
+    def test_human_config_keeps_collection(self) -> None:
+        """Коллекция не теряется в метке конфигурации."""
+        desc = (
+            "llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, rerank=вкл, "
+            "cand=10, coll=aist_chunks_v2"
+        )
+        label = _human_config(desc)
+        assert "колл.=aist_chunks_v2" in label
+
     def test_env_diff_detects_only_change(self) -> None:
         """Различаются только изменённые параметры."""
         base = "llm=m, emb=e, top_k=5, rerank=вкл"

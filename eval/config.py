@@ -104,6 +104,9 @@ class Environment:
         retrieval_rrf_k: Параметр RRF-слияния.
         retrieval_min_relevance: Порог релевантности.
         rerank_candidates: Сколько кандидатов переоценивает реранкер.
+        qdrant_collection: Коллекция/алиас Qdrant, по которой идут запросы
+            (``aist_chunks``, ``aist_chunks_v2``, ...). Без неё результаты на
+            разных наборах эмбеддингов неотличимы ни в кэше, ни в отчёте.
     """
 
     platform: str
@@ -123,6 +126,7 @@ class Environment:
     retrieval_rrf_k: int = 60
     retrieval_min_relevance: float = 0.55
     rerank_candidates: int = 10
+    qdrant_collection: str = ""
 
     def describe(self) -> str:
         """Краткое человекочитаемое описание окружения.
@@ -132,12 +136,15 @@ class Environment:
             воспроизводим (для отчётов и истории).
         """
         rerank = "вкл" if self.rerank_enabled else "выкл"
-        return (
+        parts = (
             f"llm={self.llm_model}, emb={self.embedding_model}, "
             f"top_k={self.retrieval_top_k}, prefetch={self.retrieval_prefetch}, "
             f"rrf={self.retrieval_rrf_k}, rerank={rerank}, "
             f"cand={self.rerank_candidates}, min_rel={self.retrieval_min_relevance}"
         )
+        if self.qdrant_collection:
+            parts += f", coll={self.qdrant_collection}"
+        return parts
 
     def fingerprint(self) -> str:
         """Хеш окружения для ключа кэша.
@@ -163,6 +170,7 @@ class Environment:
             str(self.rerank_candidates),
             str(self.grading_enabled),
             str(self.verify_numbers),
+            self.qdrant_collection,
         ]
         return hashlib.sha256("|".join(values).encode("utf-8")).hexdigest()[:16]
 
@@ -199,4 +207,5 @@ def snapshot_environment(settings) -> Environment:
         rerank_candidates=int(getattr(settings, "rerank_candidates", 10)),
         grading_enabled=settings.grading_enabled,
         verify_numbers=settings.verify_numbers,
+        qdrant_collection=getattr(settings, "qdrant_collection", ""),
     )

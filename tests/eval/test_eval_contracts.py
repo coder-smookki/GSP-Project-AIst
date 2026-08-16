@@ -101,6 +101,7 @@ class _Settings:
         self.rerank_candidates = 10
         self.grading_enabled = False
         self.verify_numbers = True
+        self.qdrant_collection = ""
 
 
 class TestSnapshotEnvironment:
@@ -139,6 +140,21 @@ class TestSnapshotEnvironment:
         base = _Settings()
         other = _Settings()
         other.llm_reasoning = True
+        assert snapshot_environment(base).fingerprint() != snapshot_environment(
+            other
+        ).fingerprint()
+
+    def test_collection_in_describe(self) -> None:
+        """Коллекция попадает в описание окружения."""
+        settings = _Settings()
+        settings.qdrant_collection = "aist_chunks_v2"
+        assert "coll=aist_chunks_v2" in snapshot_environment(settings).describe()
+
+    def test_collection_changes_fingerprint(self) -> None:
+        """Разные коллекции не должны делиться одним кэшем."""
+        base = _Settings()
+        other = _Settings()
+        other.qdrant_collection = "aist_chunks_v2"
         assert snapshot_environment(base).fingerprint() != snapshot_environment(
             other
         ).fingerprint()
