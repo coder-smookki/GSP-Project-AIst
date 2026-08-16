@@ -5,8 +5,29 @@ import os
 from infrastructure.orchestration.ingest_flow import ingest_flow
 
 
+def _deployment_description() -> str:
+    """Человекочитаемая сводка конфигурации раннера для страницы deployment в UI."""
+    query = os.environ.get("EMBEDDING_QUERY_INSTRUCTION")
+    lines = [
+        "**Конфигурация раннера**",
+        "",
+        f"- Источник: `{os.environ.get('AIST_SOURCE_KIND', 'files')}`"
+        f" (каталог `{os.environ.get('AIST_CORPUS_DIR') or 'данные из настроек'}`)",
+        f"- Поколение коллекции: `v{os.environ.get('AIST_GENERATION', '1')}`",
+        f"- Эмбеддер: `{os.environ.get('EMBEDDING_MODEL') or 'из настроек'}`"
+        f" (`{os.environ.get('EMBEDDING_PROVIDER', 'ollama-local')}`)",
+        f"- Query-инструкция: `{query}`" if query else "- Query-инструкция: пусто",
+        f"- Dry-run: `{os.environ.get('AIST_DRY_RUN', '0')}`;"
+        f" полная переиндексация: `{os.environ.get('AIST_FULL', '0')}`;"
+        f" переключение алиаса: `{os.environ.get('AIST_SWITCH_ALIAS', '0')}`",
+        f"- Cron: `{os.environ.get('AIST_CRON') or 'нет'}`;"
+        f" интервал: `{os.environ.get('AIST_INTERVAL') or 'нет'}`",
+    ]
+    return "\n".join(lines)
+
+
 def _deployment_kwargs() -> dict[str, object]:
-    kwargs: dict[str, object] = {}
+    kwargs: dict[str, object] = {"description": _deployment_description()}
     cron = os.environ.get("AIST_CRON")
     if cron:
         kwargs["cron"] = cron
