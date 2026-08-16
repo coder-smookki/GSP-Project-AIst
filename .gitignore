@@ -1,9 +1,7 @@
 .chainlit/
 chainlit.md
 
-eval/*.json
-eval/outputs/*.json
-eval/variants/*.json
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

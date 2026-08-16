@@ -255,36 +255,14 @@ def build_source(
     )
 
 
-def build_index(
-    settings,
-    collection: str,
-    batch_size: int,
-    embedding_model: str | None = None,
-    embedding_provider: str | None = None,
-    embedding_query_instruction: str | None = None,
-):
+def build_index(settings, collection: str, batch_size: int):
     from qdrant_client import AsyncQdrantClient
 
-    from infrastructure.embeddings.ollama_client import OllamaEmbeddingClient
+    from infrastructure.config.model_registry import get_embedding, setup_registry
     from infrastructure.retrieval.store import QdrantStore
 
-    # Resolve embedding config: override > settings > default
-    model = embedding_model or settings.embedding_model
-    provider = embedding_provider or settings.embedding_provider
-
-    # Создаём ТОЛЬКО эмбеддер (LLM клиенты для индексации не нужны).
-    # Registry не задействуем: в одном процессе раннера живут несколько
-    # deployment-ов, и глобальный слот "default" привёл бы к их взаимному
-    # затиранию. embedding_query_instruction применяется на query-стороне
-    # (retrieval/factory.py), при индексации документов он не используется.
-    if provider == "ollama-local":
-        embedder = OllamaEmbeddingClient(
-            model=model,
-            base_url=settings.ollama_local_base_url,
-        )
-    else:
-        raise ValueError(f"Unsupported embedding provider: {provider}")
-
+    setup_registry(settings)
+    embedder = get_embedding("default")
     client = AsyncQdrantClient(
         url=settings.qdrant_url,
         api_key=settings.qdrant_api_key or None,
@@ -316,10 +294,6 @@ async def ingest_flow(
     switch_alias: bool = False,
     sync_tag: str | None = None,
     pipeline_version: str = PIPELINE_VERSION,
-    # NEW: параметры эмбеддингов (override настроек для этого прогона)
-    embedding_model: str | None = None,
-    embedding_provider: str | None = None,
-    embedding_query_instruction: str | None = None,
 ) -> IngestReport:
     run_logger = get_run_logger()
     settings = get_settings()
@@ -331,12 +305,7 @@ async def ingest_flow(
     known_hashes: dict[str, str] | None = None
     if not dry_run:
         client, store, embedder = build_index(
-            settings,
-            effective_collection,
-            settings.ingest_batch_size,
-            embedding_model=embedding_model,
-            embedding_provider=embedding_provider,
-            embedding_query_instruction=embedding_query_instruction,
+            settings, effective_collection, settings.ingest_batch_size
         )
         dim = await asyncio.to_thread(lambda: embedder.embedding_dim)
         await store.create_generation(effective_collection, dim)

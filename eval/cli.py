@@ -75,12 +75,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
     variant = Variant(name=args.variant, settings=settings)
     config = RunConfig(
-        golden=args.golden,
-        limit=args.limit,
-        with_answers=args.with_answers,
-        bootstraps=args.bootstraps,
-        seed=args.seed,
-        graph=args.graph,
+        golden=args.golden, limit=args.limit, with_answers=args.with_answers
     )
 
     async def run() -> RunResult:
@@ -156,22 +151,6 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     return asyncio.run(bench_main(args))
 
 
-def _cmd_tune(args: argparse.Namespace) -> int:
-    """Сеточный перебор параметров по целевой метрике.
-
-    Args:
-        args: Разобранные аргументы.
-
-    Returns:
-        int: Код возврата процесса.
-    """
-    from eval.tune import main_async as tune_main
-
-    if not _mock_guard():
-        return 2
-    return asyncio.run(tune_main(args))
-
-
 def _cmd_report(args: argparse.Namespace) -> int:
     """Генерирует docs/BENCHMARK.md из кэша результатов.
 
@@ -183,11 +162,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
     """
     from eval.report import generate
 
-    return generate(
-        ResultCache(args.cache_dir),
-        args.output,
-        tune_paths=getattr(args, "tune", None) or [],
-    )
+    return generate(ResultCache(args.cache_dir), args.output)
 
 
 def _cmd_cache(args: argparse.Namespace) -> int:
@@ -248,25 +223,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument("--limit", type=int, help="взять только первые N вопросов")
     run_p.add_argument(
-        "--bootstraps",
-        type=int,
-        default=1,
-        help="сколько независимых прогонов на ресемплированных пулах "
-        "вопросов (бутстрап с возвратом)",
-    )
-    run_p.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="зерно ресемплинга пула",
-    )
-    run_p.add_argument(
-        "--graph",
-        default="base",
-        help="тег версии графа агента (base, rd-v2, ...): отдельная секция "
-        "в отчёте и свой кэш",
-    )
-    run_p.add_argument(
         "--variant", default="base", help="имя варианта (по умолчанию base)"
     )
     run_p.add_argument(
@@ -296,25 +252,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="дополнительно генерировать ответы и проверять отказ по тексту",
     )
     ab_p.add_argument("--limit", type=int, help="взять только первые N вопросов")
-    ab_p.add_argument(
-        "--bootstraps",
-        type=int,
-        default=1,
-        help="сколько независимых прогонов на ресемплированных пулах "
-        "вопросов (бутстрап с возвратом)",
-    )
-    ab_p.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="зерно ресемплинга пула: один пул для всех вариантов",
-    )
-    ab_p.add_argument(
-        "--graph",
-        default="base",
-        help="тег версии графа агента (base, rd-v2, ...): отдельная секция "
-        "в отчёте и свой кэш",
-    )
     ab_p.add_argument("--output", help="записать полный отчёт в файл")
     ab_p.add_argument(
         "--cache-dir",
@@ -343,65 +280,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bench_p.add_argument("--output", help="записать результат в JSON")
 
-    tune_p = sub.add_parser(
-        "tune", help="сеточный перебор параметров по целевой метрике"
-    )
-    tune_p.add_argument(
-        "--params",
-        required=True,
-        help='JSON-спека сетки: \'{"retrieval_top_k": [3, 5, 8]}\'',
-    )
-    tune_p.add_argument(
-        "--objective",
-        default="hit@1",
-        help="ключ целевой метрики (по умолчанию hit@1)",
-    )
-    tune_p.add_argument(
-        "--direction", default="max", choices=("min", "max"), help="направление"
-    )
-    tune_p.add_argument(
-        "--golden", default=str(DEFAULT_GOLDEN), help="путь к золотому набору"
-    )
-    tune_p.add_argument("--limit", type=int, help="взять только первые N вопросов")
-    tune_p.add_argument(
-        "--with-answers",
-        action="store_true",
-        help="дополнительно генерировать ответы и проверять отказ по тексту",
-    )
-    tune_p.add_argument(
-        "--bootstraps",
-        type=int,
-        default=1,
-        help="прогонов на ресемплированных пулах (бутстрап с возвратом)",
-    )
-    tune_p.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="зерно ресемплинга пула",
-    )
-    tune_p.add_argument(
-        "--graph",
-        default="base",
-        help="тег версии графа агента (base, rd-v2, ...): отдельная секция "
-        "в отчёте и свой кэш",
-    )
-    tune_p.add_argument("--output", help="записать полный отчёт в JSON")
-    tune_p.add_argument(
-        "--cache-dir",
-        default=str(DEFAULT_DIR),
-        help="каталог кэша результатов",
-    )
-    tune_p.add_argument(
-        "--force", action="store_true", help="переснять все точки, игнорируя кэш"
-    )
-    tune_p.add_argument(
-        "--max-points",
-        type=int,
-        default=100,
-        help="максимум точек сетки (защита от гигантского перебора)",
-    )
-
     cache_p = sub.add_parser("cache", help="управление кэшем результатов")
     cache_p.add_argument("--dir", default=str(DEFAULT_DIR), help="каталог кэша")
     cache_sub = cache_p.add_subparsers(dest="cache_command", required=True)
@@ -422,13 +300,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         default=str(DEFAULT_REPORT),
         help="куда писать отчёт (по умолчанию docs/BENCHMARK.md)",
-    )
-    report_p.add_argument(
-        "--tune",
-        action="append",
-        default=[],
-        help="путь к отчёту `eval tune --output`; включается в документ "
-        "разделом «Итоги тюнинга по сетке»",
     )
 
     return parser
@@ -457,8 +328,6 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_ab(args)
     if args.command == "bench":
         return _cmd_bench(args)
-    if args.command == "tune":
-        return _cmd_tune(args)
     if args.command == "report":
         return _cmd_report(args)
     return _cmd_cache(args)
