@@ -20,7 +20,6 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 # При прямом запуске в sys.path попадает каталог eval, а не корень репозитория.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -135,11 +134,9 @@ def collect_runs(cache: ResultCache) -> list[dict]:
                 "variants": [result.variant for result in results],
                 "environment": first.get("environment_desc", "")
                 or first.get("environment", ""),
-                "environment_key": first.get("environment", ""),
                 "metric_keys": metric_keys,
                 "results": results,
                 "keys": [entry["key"] for entry in entries],
-                "graph": first.get("graph", "base"),
             }
         )
     runs.sort(key=lambda run: run["created_at"], reverse=True)
@@ -168,7 +165,6 @@ def load_all_ab_verdicts(cache: ResultCache) -> list[dict]:
             "dataset": data.get("dataset", ""),
             "metrics": data.get("metrics", ""),
             "config": data.get("config", {}),
-            "graph": data.get("graph", "base"),
             "created_at": data.get("created_at", ""),
         })
     # Сортируем по дате (новые первые)
@@ -284,807 +280,60 @@ def _links_cell(run: dict, cache: ResultCache, output_dir: Path) -> str:
     return "<br>".join(links)
 
 
-#: Человекочитаемые имена атрибутов окружения для сводных таблиц.
-_ENV_LABELS = {
-    "llm": "LLM",
-    "emb": "эмбеддинг",
-    "top_k": "top_k",
-    "prefetch": "prefetch",
-    "rrf": "RRF-k",
-    "rerank": "реранк",
-    "cand": "кандидаты",
-    "min_rel": "мин. релевантность",
-    "coll": "коллекция",
-}
-
-#: Короткие имена эмбеддеров для компактного лидерборда.
-_EMB_SHORT: dict[str, str] = {
-    "qwen3-embedding:4b": "qwen3-emb",
-    "qwen3-embedding:8b": "qwen3-emb-8b",
-    "bge-m3:567m": "bge-m3",
-}
-
-#: Короткие имена метрик для сводных таблиц.
-_METRIC_SHORT: dict[str, str] = {
-    "latency_median": "лат., мед.",
-    "latency_p95": "лат., p95",
-    "refusal_rate": "отказ",
-    "answer_chars": "длина ответа",
-    "not_found": "not_found",
-}
-
-
-def _env_params(desc: str) -> dict[str, str]:
-    """Разбирает описание окружения на пары ``ключ=значение``.
-
-    Args:
-        desc: Строка из :meth:`eval.config.Environment.describe`.
-
-    Returns:
-        dict[str, str]: Пары параметров.
-    """
-    params: dict[str, str] = {}
-    for chunk in desc.split(","):
-        chunk = chunk.strip()
-        if "=" in chunk:
-            key, _, value = chunk.partition("=")
-            params[key.strip()] = value.strip()
-    return params
-
-
-def _human_config(desc: str) -> str:
-    """Компактная человекочитаемая метка конфигурации.
-
-    Args:
-        desc: Описание окружения.
-
-    Returns:
-        str: Например, ``LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл``.
-    """
-    params = _env_params(desc)
-    parts: list[str] = []
-    if "llm" in params:
-        parts.append(f"LLM={params['llm']}")
-    if "emb" in params:
-        parts.append(f"emb={_EMB_SHORT.get(params['emb'], params['emb'])}")
-    if "top_k" in params:
-        parts.append(f"top_k={params['top_k']}")
-    if "rerank" in params:
-        parts.append(f"реранк={params['rerank']}")
-    if "cand" in params:
-        parts.append(f"канд.={params['cand']}")
-    if "prefetch" in params:
-        parts.append(f"pref={params['prefetch']}")
-    if "rrf" in params:
-        parts.append(f"rrf={params['rrf']}")
-    if "min_rel" in params:
-        parts.append(f"min_rel={params['min_rel']}")
-    if params.get("coll"):
-        parts.append(f"колл.={params['coll']}")
-    return ", ".join(parts)
-
-
-def _env_diff(base: str, variant: str) -> str:
-    """Чем окружение variant отличается от base (человекочитаемо).
-
-    Args:
-        base: Описание окружения базового варианта.
-        variant: Описание окружения нового варианта.
-
-    Returns:
-        str: Список изменений через ``; `` или пустая строка, если
-        окружения идентичны.
-    """
-    base_params = _env_params(base)
-    variant_params = _env_params(variant)
-    changed: list[str] = []
-    for key in base_params.keys() | variant_params.keys():
-        old, new = base_params.get(key, "—"), variant_params.get(key, "—")
-        if old != new:
-            label = _ENV_LABELS.get(key, key)
-            changed.append(f"{label}: {old} → {new}")
-    return "; ".join(changed)
-
-
-def _variant_envs(runs: list[dict]) -> dict[str, list[str]]:
-    """Все окружения, где встречался каждый вариант.
-
-    Args:
-        runs: Прогоны из :func:`collect_runs`.
-
-    Returns:
-        dict[str, list[str]]: Имя варианта → список описаний окружения.
-    """
-    envs: dict[str, list[str]] = {}
-    for run in runs:
-        for variant in run["variants"]:
-            if run["environment"] not in envs.setdefault(variant, []):
-                envs[variant].append(run["environment"])
-    return envs
-
-
-def _best_base_env(base_name: str, variant_env: str, variant_envs: dict[str, list[str]]) -> str:
-    """Выбирает окружение базы, ближайшее к окружению варианта.
-
-    Имя базы может встречаться в нескольких прогонах (разные конфиги);
-    для описания «что изменилось» берём то окружение, которое меньше всего
-    отличается от окружения сравниваемого варианта.
-
-    Args:
-        base_name: Имя базового варианта.
-        variant_env: Описание окружения варианта.
-        variant_envs: Карта окружений вариантов.
-
-    Returns:
-        str: Описание окружения базы или пустая строка.
-    """
-    variant_params = _env_params(variant_env)
-    best, best_score = "", None
-    for env in variant_envs.get(base_name, []):
-        base_params = _env_params(env)
-        score = sum(
-            1
-            for key in base_params.keys() | variant_params.keys()
-            if base_params.get(key) != variant_params.get(key)
-        )
-        if best_score is None or score < best_score:
-            best, best_score = env, score
-    return best
-
-
-def _metric_short(key: str) -> str:
-    """Короткое имя метрики для сводных таблиц."""
-    return _METRIC_SHORT.get(key, key)
-
-
-def _tune_variant_names(tune_paths) -> set[str]:
-    """Имена вариантов-точек сетки из отчётов ``eval tune --output``.
-
-    Имя точки собирается из ключей значений параметров
-    (``retrieval_min_relevance=0.3``); однопараметровые сетки не содержат ``;``,
-    поэтому надёжнее исключать их из лидерборда по имени из вместе с ``;``.
-
-    Args:
-        tune_paths: Пути к отчётам ``eval tune --output``.
-
-    Returns:
-        set[str]: Имена вариантов, которые являются точками сетки.
-    """
-    names: set[str] = set()
-    for path in tune_paths:
-        file_path = Path(path)
-        if not file_path.exists():
-            continue
-        try:
-            payload = json.loads(file_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        for point in payload.get("points", []):
-            name = point.get("name")
-            if name:
-                names.add(name)
-    return names
-
-
-def _is_tune_run(run: dict, tune_names: set[str] = ()) -> bool:
-    """Точка ли это сетки ``eval tune``.
-
-    Имя варианта сетки собирается из значений параметров через ``;``
-    (``retrieval_top_k=5;retrieval_prefetch=30;...``); в однопараметровых сетках
-    имени ``;`` нет — такие точки дополняются именами из отчётов тюнинга.
-    Точки сетки — инструментальные измерения, они показываются в разделе
-    «Итоги тюнинга по сетке», а не в производственном лидерборде.
-
-    Args:
-        run: Прогон из :func:`collect_runs`.
-        tune_names: Имена вариантов-точек сетки (см. :func:`_tune_variant_names`).
-
-    Returns:
-        bool: ``True``, если прогон — точка сетки.
-    """
-    return any(
-        ";" in variant or variant in tune_names for variant in run["variants"]
-    )
-
-
-def _aggregate_configs(runs: list[dict], tune_names: set[str] = ()) -> list[dict]:
-    """Сводные конфигурации: окружение → средние метрики по прогонам.
-
-    Одна и та же конфигурация (модель, эмбеддер, top_k, реранк) может быть
-    прогнана несколько раз или с разными вариантами промпта; лидерборд
-    показывает её среднее, чтобы не дублировать строки.
-
-    Args:
-        runs: Прогоны из :func:`collect_runs`.
-        tune_names: Имена вариантов-точек сетки (см. :func:`_tune_variant_names`).
-
-    Returns:
-        list[dict]: Конфигурации, отсортированные по ``mrr`` (и ``hit@1``).
-    """
-    grouped: dict[tuple[str, str], list[dict]] = {}
-    labels: dict[tuple[str, str], str] = {}
-    order: list[tuple[str, str]] = []
-    for run in runs:
-        if _is_tune_run(run, tune_names):
-            continue
-        graph = run.get("graph", "base")
-        key = (graph, run.get("environment_key") or run["environment"])
-        if key not in grouped:
-            grouped[key] = []
-            labels[key] = run["environment"]
-            order.append(key)
-        for result in run["results"]:
-            grouped[key].append(result.metrics)
-
-    rows: list[dict] = []
-    for env in order:
-        metrics = grouped[env]
-
-        def avg(key: str, metrics: list[dict] = metrics) -> float | None:
-            values = [m.get(key) for m in metrics if m.get(key) is not None]
-            if not values:
-                return None
-            return sum(values) / len(values)
-
-        rows.append(
-            {
-                "environment": labels[env],
-                "graph": env[0],
-                "n": len(metrics),
-                "hit@1": avg("hit@1"),
-                "hit@3": avg("hit@3"),
-                "hit@5": avg("hit@5"),
-                "mrr": avg("mrr"),
-                "not_found": avg("not_found"),
-                "latency_median": avg("latency_median"),
-                "refusal_rate": avg("refusal_rate"),
-            }
-        )
-
-    rows.sort(
-        key=lambda row: (
-            row["mrr"] is not None,
-            row["mrr"] if row["mrr"] is not None else -1.0,
-            row["hit@1"] if row["hit@1"] is not None else -1.0,
-            row["refusal_rate"] if row["refusal_rate"] is not None else -1.0,
-        ),
-        reverse=True,
-    )
-    return rows
-
-
-def _verdict_line(verdict: Verdict) -> str:
-    """Одна строка значимого изменения метрики.
-
-    Args:
-        verdict: Вердикт A/B.
-
-    Returns:
-        str: ``метрика: base→variant (p=..., направление)``.
-    """
-    arrow = {"better": "улучшение", "worse": "ухудшение"}.get(verdict.direction, "без разницы")
-    return (
-        f"{_metric_short(verdict.metric)}: {verdict.base_value:.3f}→{verdict.variant_value:.3f} "
-        f"(p={verdict.p_value:.3f}, {arrow})"
-    )
-
-
-def _ab_groups(all_ab_verdicts: list[dict], runs: list[dict]) -> list[dict]:
-    """Свёрнутые A/B-сравнения: одна строка на пару вариантов.
-
-    Если пара (base, variant, окружение) прогнана несколько раз, берётся
-    последний прогон. Значимыми считаются вердикты с ``p < 0.05`` и
-    ненулевой разницей.
+def _ab_verdicts_section(all_ab_verdicts: list[dict], cache: ResultCache, output_dir: Path) -> str:
+    """Секция с детальными A/B вердиктами.
 
     Args:
         all_ab_verdicts: Все A/B вердикты из :func:`load_all_ab_verdicts`.
-        runs: Прогоны из :func:`collect_runs` (для описания изменений).
-
-    Returns:
-        list[dict]: Группы, отсортированные от свежих к старым.
-    """
-    latest: dict[tuple, dict] = {}
-    for av in all_ab_verdicts:
-        identity = (av.get("graph", "base"), av["base_variant"], av["variant"], av["environment"], av.get("environment_desc", "") or av["environment"])
-        if identity not in latest or av["created_at"] > latest[identity]["created_at"]:
-            latest[identity] = av
-
-    variant_envs = _variant_envs(runs)
-    groups: list[dict] = []
-    for av in latest.values():
-        significant = [
-            verdict
-            for verdict in av["verdicts"]
-            if verdict.p_value < 0.05 and verdict.direction != "no_diff"
-        ]
-        variant_env = av.get("environment_desc", "") or av["environment"]
-        base_env = _best_base_env(av["base_variant"], variant_env, variant_envs)
-        essence = _env_diff(base_env, variant_env) if base_env else "—"
-        groups.append(
-            {
-                "date": av["created_at"],
-                "graph": av.get("graph", "base"),
-                "base": av["base_variant"],
-                "variant": av["variant"],
-                "environment": variant_env,
-                "essence": essence,
-                "verdicts": av["verdicts"],
-                "significant": significant,
-            }
-        )
-    groups.sort(key=lambda group: group["date"], reverse=True)
-    return groups
-
-
-def _group_verdict(significant: list[Verdict]) -> str:
-    """Итоговый вердикт группы по значимым изменениям.
-
-    Args:
-        significant: Значимые вердикты группы.
-
-    Returns:
-        str: ``лучше``, ``хуже``, ``неоднозначно`` или ``паритет``.
-    """
-    better = any(v.direction == "better" for v in significant)
-    worse = any(v.direction == "worse" for v in significant)
-    if better and worse:
-        return "неоднозначно"
-    if worse:
-        return "хуже"
-    if better:
-        return "лучше"
-    return "паритет"
-
-
-def _recommendations_section(
-    runs: list[dict], ab_groups: list[dict], tune_names: set[str] = ()
-) -> str:
-    """Сводка «Рекомендации»: лидер и ключевые выводы из A/B.
-
-    Args:
-        runs: Прогоны из :func:`collect_runs`.
-        ab_groups: Группы из :func:`_ab_groups`.
-
-    Returns:
-        str: Markdown-раздел или пустая строка, если данных нет.
-    """
-    if not runs:
-        return ""
-    lines = ["## Рекомендации", ""]
-    leaderboard = _aggregate_configs(runs, tune_names)
-    if leaderboard:
-        leader = leaderboard[0]
-        hit = f"{leader['hit@1']:.3f}" if leader["hit@1"] is not None else "—"
-        hit3 = f"{leader['hit@3']:.3f}" if leader["hit@3"] is not None else "—"
-        hit5 = f"{leader['hit@5']:.3f}" if leader["hit@5"] is not None else "—"
-        mrr = f"{leader['mrr']:.3f}" if leader["mrr"] is not None else "—"
-        lines.append(
-            f"**Текущий лидер:** `{_human_config(leader['environment'])}` "
-            f"(граф `{leader['graph']}`) — "
-            f"hit@1/3/5 = {hit}/{hit3}/{hit5}, MRR = {mrr}."
-        )
-        lines.append("")
-
-    impact = [group for group in ab_groups if group["significant"]]
-    if impact:
-        lines.append("**Значимые эффекты (p < 0.05):**")
-        for group in impact:
-            essence = group["essence"] or "конфигурация не менялась"
-            deltas = "; ".join(_verdict_line(v) for v in group["significant"])
-            verdict = _group_verdict(group["significant"])
-            lines.append(
-                f"- `{group['base']}` → `{group['variant']}` (_{essence}_): "
-                f"**{verdict}** — {deltas}"
-            )
-        lines.append("")
-    else:
-        lines.append("**Значимых A/B-эффектов (p < 0.05) пока нет.**")
-        lines.append("")
-
-    if ab_groups:
-        parity = len(ab_groups) - len(impact)
-        lines.append(
-            f"Проверено A/B-сравнений: {len(ab_groups)}, из них без значимых "
-            f"различий: {parity}."
-        )
-        lines.append("")
-    return "\n".join(lines)
-
-
-def _leaderboard_section(runs: list[dict], tune_names: set[str] = ()) -> str:
-    """Лидерборд: агрегированные конфигурации по графам, отсортированы по MRR.
-
-    Строки группируются по графу агента (``graph`` тег): каждый граф получает
-    свой подраздел и своего лидера, чтобы конфигурации разных графов не
-    сравнивались между собой.
-
-    Args:
-        runs: Прогоны из :func:`collect_runs`.
-        tune_names: Имена вариантов-точек сетки (см. :func:`_tune_variant_names`).
-
-    Returns:
-        str: Markdown-раздел или пустая строка, если кэш пуст.
-    """
-    rows = _aggregate_configs(runs, tune_names)
-    if not rows:
-        return ""
-    lines = [
-        "## Лидерборд",
-        "",
-        "Каждая строка — уникальная конфигурация (модель, эмбеддер, top_k, "
-        "реранк), агрегированная по всем прогонам её вариантов. Сортировка — "
-        "по MRR. Конфигурации разных графов агента не смешиваются: у каждого "
-        "графа своя секция и свой лидер.",
-        "",
-    ]
-    seen: set[str] = set()
-    for row in rows:
-        graph = row["graph"]
-        if graph not in seen:
-            seen.add(graph)
-            lines.append(f"### Граф: `{graph}`")
-            lines.append("")
-            lines.append(
-                "| конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | "
-                "лат., мед. | отказ | кол-во | заметка |"
-            )
-            lines.append("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
-        graph_rows = [r for r in rows if r["graph"] == graph]
-        leader = graph_rows[0]
-        fastest = min(
-            (r for r in graph_rows if r["latency_median"] is not None),
-            key=lambda r: r["latency_median"],
-            default=None,
-        )
-        notes: list[str] = []
-        if row is leader:
-            notes.append("максимальное качество")
-        if fastest is not None and row is fastest:
-            notes.append("самый быстрый")
-        params = _env_params(row["environment"])
-        if params.get("rerank") == "выкл":
-            notes.append("реранк выкл")
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    _human_config(row["environment"]),
-                    _fmt_number(row["hit@1"]),
-                    _fmt_number(row["hit@3"]),
-                    _fmt_number(row["hit@5"]),
-                    _fmt_number(row["mrr"]),
-                    _fmt_number(row["not_found"]),
-                    _fmt_number(row["latency_median"]),
-                    _fmt_number(row["refusal_rate"]),
-                    str(row["n"]),
-                    ", ".join(notes) if notes else "—",
-                ]
-            )
-            + " |"
-        )
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _graphs_summary_section(runs: list[dict], tune_names: set[str] = ()) -> str:
-    """Сводка «Лучшие по графам»: один лидер на каждый граф агента.
-
-    Сравнение метрик внутри графа правомерно, а между разными графами — нет
-    (разный агент, разные кэши, вердикты пишутся внутри одного графа);
-    поэтому колонки показывают каждого лидера отдельно и общий лидер по MRR
-    помечается.
-
-    Args:
-        runs: Прогоны из :func:`collect_runs`.
-        tune_names: Имена вариантов-точек сетки (см. :func:`_tune_variant_names`).
-
-    Returns:
-        str: Markdown-раздел или пустая строка, если кэш пуст.
-    """
-    rows = _aggregate_configs(runs, tune_names)
-    if not rows:
-        return ""
-    per_graph: dict[str, dict] = {}
-    for row in rows:
-        if row["graph"] not in per_graph:
-            per_graph[row["graph"]] = row
-    graphs = list(per_graph)
-    overall = max(
-        per_graph.values(),
-        key=lambda r: (
-            r["mrr"] is not None,
-            r["mrr"] if r["mrr"] is not None else -1.0,
-            r["hit@1"] if r["hit@1"] is not None else -1.0,
-        ),
-    )
-    lines = [
-        "## Лучшие по графам",
-        "",
-        "Лидер каждого графа агента. Прямое A/B между разными графами не "
-        "считается: вердикты сравнивают варианты только внутри одного графа.",
-        "",
-        "| граф | лучшая конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | "
-        "кол-во | заметка |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-    ]
-    for graph in graphs:
-        row = per_graph[graph]
-        notes = ["общий лидер по MRR"] if row is overall else "—"
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    f"`{graph}`",
-                    _human_config(row["environment"]),
-                    _fmt_number(row["hit@1"]),
-                    _fmt_number(row["hit@3"]),
-                    _fmt_number(row["hit@5"]),
-                    _fmt_number(row["mrr"]),
-                    _fmt_number(row["not_found"]),
-                    str(row["n"]),
-                    ", ".join(notes) if isinstance(notes, list) else notes,
-                ]
-            )
-            + " |"
-        )
-    lines.append("")
-    return "\n".join(lines)
-
-
-def _fmt_number(value: float | None) -> str:
-    """Форматирует число метрики: три знака или ``—`` для ``None``."""
-    return f"{value:.3f}" if value is not None else "—"
-
-
-#: Порядок и характер метрик в таблицах тюнинга: ``max`` идёт вверх, ``min`` — вниз.
-_TUNE_METRICS: dict[str, str] = {
-    "hit@1": "max",
-    "hit@3": "max",
-    "hit@5": "max",
-    "mrr": "max",
-    "not_found": "min",
-    "latency_median": "min",
-}
-
-
-def tune_section(path: str | Path) -> str:
-    """Раздел «Итоги тюнинга по сетке» из отчёта ``eval tune --output``.
-
-    Читает JSON-отчёт сетки: спека параметров, лучшая точка по целевой
-    метрике и направления влияния каждого параметра (средние метрики по
-    значениям, лучшие помечены звёздочкой, «плоские» параметры отмечены).
-    Точки сетки не попадают в лидерборд — это раздел именно для них.
-
-    Args:
-        path: Путь к JSON-отчёту тюнинга.
-
-    Returns:
-        str: Markdown-раздел или пустая строка, если файла/точек нет.
-    """
-    path = Path(path)
-    if not path.is_file():
-        return ""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    points = data.get("points") or []
-    if not points:
-        return ""
-    params = data.get("params") or {}
-    objective = data.get("objective", "hit@1")
-    direction = data.get("direction", "max")
-    graph = data.get("graph", "base")
-    keys = [key for key in _TUNE_METRICS if any(key in p["metrics"] for p in points)]
-
-    lines = [
-        "## Итоги тюнинга по сетке",
-        "",
-        f"Сетка из {len(points)} точек (граф `{graph}`), цель — `{objective}` "
-        f"({direction}). Точки кэшированы в `eval/results/`; в лидерборд они "
-        "не попадают, потому что это инструментальные измерения — сводка здесь.",
-        "",
-    ]
-
-    if params:
-        lines += ["| параметр | значения |", "| --- | --- |"]
-        for name, values in params.items():
-            lines.append(f"| `{name}` | {', '.join(str(v) for v in values)} |")
-        lines.append("")
-
-    best = (
-        max(points, key=lambda p: p["objective"])
-        if direction == "max"
-        else min(points, key=lambda p: p["objective"])
-    )
-    lines += [
-        f"**Лучшая точка** (по `{objective}`): `{best['name']}`.",
-        "",
-        "| метрика | значение |",
-        "| --- | --- |",
-    ]
-    for key in keys:
-        lines.append(f"| {key} | {_fmt_number(best['metrics'].get(key))} |")
-    lines.append("")
-
-    for name in params:
-        cells_by_value: list[tuple[Any, int, list[float | None]]] = []
-        for value in params[name]:
-            selected = [
-                p for p in points if p["settings"].get(name) == value
-            ]
-            cells: list[float | None] = []
-            for key in keys:
-                values = [
-                    p["metrics"].get(key) for p in selected
-                    if p["metrics"].get(key) is not None
-                ]
-                cells.append(sum(values) / len(values) if values else None)
-            cells_by_value.append((value, len(selected), cells))
-        flat = True
-        for i in range(len(keys)):
-            avgs = [cells[i] for _, _, cells in cells_by_value if cells[i] is not None]
-            if len(avgs) > 1 and max(avgs) - min(avgs) >= 1e-6:
-                flat = False
-        best_value: dict[str, Any] = {}
-        for i, key in enumerate(keys):
-            best = None
-            best_avg = None
-            for value, _, cells in cells_by_value:
-                avg = cells[i]
-                if avg is None:
-                    continue
-                if best_avg is None or (
-                    avg > best_avg
-                    if _TUNE_METRICS[key] == "max"
-                    else avg < best_avg
-                ):
-                    best_avg = avg
-                    best = value
-            best_value[key] = best
-        lines.append(f"### `{name}`")
-        lines.append("")
-        lines.append("| значение | n | " + " | ".join(keys) + " |")
-        lines.append(
-            "| --- | --- | " + " | ".join("---" for _ in keys) + " |"
-        )
-        for value, count, cells in cells_by_value:
-            rendered = [
-                f"{_fmt_number(cells[i])}"
-                f"{'*' if cells[i] is not None and value == best_value[key] else ''}"
-                for i, key in enumerate(keys)
-            ]
-            lines.append(
-                f"| {value} | {count} | " + " | ".join(rendered) + " |"
-            )
-        if flat:
-            lines.append("")
-            lines.append(f"*(параметр `{name}` не влияет на метрики во всём диапазоне)*")
-        lines.append("")
-
-    directions: list[str] = []
-    for name in params:
-        target = max if direction == "max" else min
-        best_value = target(
-            params[name],
-            key=lambda v: sum(
-                p["objective"]
-                for p in points
-                if p["settings"].get(name) == v
-            )
-            / max(1, sum(1 for p in points if p["settings"].get(name) == v)),
-        )
-        values_avg = {
-            v: sum(p["objective"] for p in points if p["settings"].get(name) == v)
-            / max(1, sum(1 for p in points if p["settings"].get(name) == v))
-            for v in params[name]
-        }
-        if max(values_avg.values()) - min(values_avg.values()) < 1e-6:
-            directions.append(f"`{name}` — не влияет")
-        else:
-            directions.append(f"`{name}` → `{best_value}`")
-    lines += [
-        "**Направления:** " + "; ".join(directions) + ".",
-        "",
-    ]
-    return "\n".join(lines)
-
-
-def _ab_verdicts_section(
-    all_ab_verdicts: list[dict],
-    runs: list[dict],
-    cache: ResultCache,
-    output_dir: Path,
-) -> str:
-    """Секция с A/B вердиктами: сводка и подробности в ``<details>``.
-
-    Сводка показывает одну строку на пару вариантов и только значимые
-    отличия (``p < 0.05``); полная таблица по метрикам сворачивается.
-
-    Args:
-        all_ab_verdicts: Все A/B вердикты из :func:`load_all_ab_verdicts`.
-        runs: Прогоны из :func:`collect_runs` (для описания изменений).
         cache: Хранилище результатов.
         output_dir: Каталог документа.
 
     Returns:
-        str: Markdown секция с A/B вердиктами или пустая строка.
+        str: Markdown секция с A/B вердиктами.
     """
-    # Все A/B сравнения по метрикам (для подробной таблицы)
+    # Собираем все A/B сравнения из кэша
     ab_comparisons: list[dict] = []
     for av in all_ab_verdicts:
         for v in av["verdicts"]:
             arrow = {"better": "лучше", "worse": "хуже", "no_diff": "без разницы"}
-            ab_comparisons.append(
-                {
-                    "date": av["created_at"],
-                    "graph": av.get("graph", "base"),
-                    "environment": av.get("environment_desc", "") or av["environment"],
-                    "base": av["base_variant"],
-                    "variant": av["variant"],
-                    "metric": v.metric,
-                    "base_val": f"{v.base_value:.3f}",
-                    "var_val": f"{v.variant_value:.3f}",
-                    "delta": f"{v.variant_value - v.base_value:+.3f}",
-                    "p_value": f"{v.p_value:.3f}",
-                    "verdict": arrow.get(v.direction, v.direction),
-                    "test": v.test,
-                }
-            )
+            ab_comparisons.append({
+                "date": av["created_at"],
+                "environment": av.get("environment_desc", "") or av["environment"],
+                "base": av["base_variant"],
+                "variant": av["variant"],
+                "metric": v.metric,
+                "base_val": f"{v.base_value:.3f}",
+                "var_val": f"{v.variant_value:.3f}",
+                "delta": f"{v.variant_value - v.base_value:+.3f}",
+                "p_value": f"{v.p_value:.3f}",
+                "verdict": arrow.get(v.direction, v.direction),
+                "test": v.test,
+            })
 
-    groups = _ab_groups(all_ab_verdicts, runs)
-    blocks: list[str] = []
+    if not ab_comparisons:
+        return ""
 
-    if groups:
-        blocks += [
-            "",
-            "## A/B сравнения (сводка)",
-            "",
-            "По одной строке на пару вариантов. Показаны только значимые "
-            "отличия (p < 0.05); остальные метрики не выводятся, чтобы не "
-            "засорять таблицу константами.",
-            "",
-            "| дата | граф | тест (base → variant) | что изменилось | итог | значимые отличия (p < 0.05) |",
-            "| --- | --- | --- | --- | --- | --- |",
-        ]
-        for group in groups:
-            deltas = (
-                "; ".join(_verdict_line(v) for v in group["significant"])
-                or "—"
-            )
-            blocks.append(
-                f"| {_format_date(group['date'])} | "
-                f"`{group['graph']}` | "
-                f"`{group['base']}` → `{group['variant']}` | "
-                f"{group['essence']} | **{_group_verdict(group['significant'])}** | "
-                f"{deltas} |"
-            )
-        blocks.append("")
+    # Сортируем по дате (новые первые)
+    ab_comparisons.sort(key=lambda x: x["date"], reverse=True)
 
-    if ab_comparisons:
-        ab_comparisons.sort(key=lambda x: x["date"], reverse=True)
-        detail_lines = [
-            "| дата | граф | окружение | base | variant | метрика | base | variant | Δ | p-value | вердикт | тест |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
-        ]
-        for c in ab_comparisons:
-            detail_lines.append(
-                f"| {_format_date(c['date'])} | `{c['graph']}` | {c['environment']} | "
-                f"{c['base']} | {c['variant']} | {c['metric']} | {c['base_val']} | "
-                f"{c['var_val']} | {c['delta']} | {c['p_value']} | {c['verdict']} | "
-                f"{c['test']} |"
-            )
-        blocks += [
-            "<details>",
-            f"<summary>все сравнения по метрикам ({len(ab_comparisons)})</summary>",
-            "",
-            "«Δ» — разница variant - base. Вердикт: «лучше» — значимое улучшение "
-            "(p < 0.05), «хуже» — ухудшение, «без разницы» — нет значимых отличий.",
-            "",
-            *detail_lines,
-            "",
-            "</details>",
-            "",
-        ]
-
-    return "\n".join(blocks)
+    lines = [
+        "",
+        "## A/B сравнения (закэшированные вердикты)",
+        "",
+        "Таблица показывает все сохранённые A/B вердикты. «Δ» — разница variant - base.",
+        "Вердикт: «лучше» — значимое улучшение (p < 0.05), «хуже» — ухудшение, «без разницы» — нет значимых отличий.",
+        "",
+        "| дата | окружение | base | variant | метрика | base | variant | Δ | p-value | вердикт | тест |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for c in ab_comparisons:
+        lines.append(
+            f"| {_format_date(c['date'])} | {c['environment']} | {c['base']} | {c['variant']} | "
+            f"{c['metric']} | {c['base_val']} | {c['var_val']} | {c['delta']} | {c['p_value']} | "
+            f"{c['verdict']} | {c['test']} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 _STATIC_SECTIONS = """## Как пользоваться
@@ -1099,7 +348,6 @@ _STATIC_SECTIONS = """## Как пользоваться
 | `uv run eval run --variant top6 --settings '{"retrieval_top_k": 6}'` | конкретный вариант |
 | `uv run eval ab --variants variants.json --with-answers` | A/B-сравнение вариантов из файла |
 | `uv run eval bench --repeats 3` | операционный замер: латенси и нагрузка |
-| `uv run eval tune --params '{"retrieval_top_k": [3, 5, 8]}' --objective hit@1` | перебор по сетке параметров |
 | `uv run eval report` | обновить этот документ из кэша |
 | `uv run eval cache list` | посмотреть, какие результаты сохранены |
 
@@ -1118,37 +366,6 @@ _STATIC_SECTIONS = """## Как пользоваться
 | `latency_median`, `latency_p95` | время поиска | меньше | все |
 | `answer_chars` | средняя длина ответа | — | с ответом |
 
-## Коллекции эмбеддингов
-
-Бенчмарк ходит в коллекцию из настройки `qdrant_collection` (по умолчанию алиас
-`aist_chunks`), а эмбеддинги считает моделью из `embedding_model`. Отпечаток
-окружения включает обе настройки, поэтому прогоны на разных коллекциях не
-смешиваются ни в кэше, ни в лидерборде.
-
-| коллекция | модель эмбеддингов | размерность |
-| --- | --- | --- |
-| `aist_chunks_v1` | `bge-m3:567m` | 1024 |
-| `aist_chunks_v2` | `qwen3-embedding:4b` | 2560 |
-| `aist_chunks_v3` | `qwen3-embedding:8b` | 4096 |
-
-Пара «коллекция → модель» обязана быть согласована: индекс построен конкретной
-моделью, и запросы должны эмбеддиться той же (размерности различаются). И поиск,
-и агент берут модель из одних оверрайдов, поэтому варианту достаточно задать обе
-настройки, например файл для `ab`:
-
-    {
-      "variants": [
-        {"name": "v1-bge",   "settings": {"qdrant_collection": "aist_chunks_v1", "embedding_model": "bge-m3:567m"}},
-        {"name": "v2-qwen4b", "settings": {"qdrant_collection": "aist_chunks_v2", "embedding_model": "qwen3-embedding:4b"}},
-        {"name": "v3-qwen8b", "settings": {"qdrant_collection": "aist_chunks_v3", "embedding_model": "qwen3-embedding:8b"}}
-      ]
-    }
-
-    uv run eval ab --variants collections.json --with-answers --bootstraps 5
-
-Алиас `aist_chunks` продолжает указывать на «боевую» коллекцию; конкретные
-поколения перебираются оверрайдами без смены алиаса.
-
 ## A/B-тест
 
 Варианты сравниваются на одном золотом наборе, поэтому выборки парные.
@@ -1156,48 +373,10 @@ _STATIC_SECTIONS = """## Как пользоваться
 МакНемара по расходящимся парам; непрерывные (`mrr`, латенси) — знаково-
 ранговый критерий Уилкоксона. Без scipy обе заменяются парным пермутационным
 тестом. Вердикт значим при `p < 0.05`.
-
-## Бутстрап-выборки
-
-Один прогон на наборе даёт точечные метрики без представления о разбросе.
-Флаг `--bootstraps N` (в `run` и `ab`) ресемплирует пул вопросов **с
-возвратом**: вариант N раз прогоняется на детерминированной выборке того же
-размера, состав выбирается общим зерном `--seed`, поэтому для всех вариантов
-на одной выборке вопросы совпадают. Итоговые метрики — среднее по выборкам,
-разброс печатается как `± std`. A/B-сравнение при бутстрепе — по парным
-разностям `variant_k − base_k` по выборкам (Уилкоксон, без scipy —
-пермутационный тест). Каждая выборка кэшируется отдельно, так что добивание
-уже снятых точек ничего не переснимает.
-
-## Тюнинг по сетке
-
-`eval tune` перебирает декартову сетку параметров и сортирует результаты по
-целевой метрике — «ручной» шаг поиска оптимума перед точечным A/B:
-
-    uv run eval tune --params '{"retrieval_top_k": [3, 5, 8], "rerank_candidates": [5, 10, 15]}' \
-        --objective hit@1 --direction max --bootstraps 5
-
-Параметры — реальные поля настроек (модель, `retrieval_top_k`,
-`rerank_candidates`, `rerank_enabled` и т.д.), имя точки собирается из её
-значений. Каждая точка кэшируется, поэтому расширение сетки доганяет только
-новые комбинации. `--max-points` (по умолчанию 100) защищает от гигантского
-перебора, `--output` пишет полный отчёт с метриками всех точек в JSON.
-Итоги сетки включаются в этот документ командой:
-
-    uv run eval report --tune eval/outputs/tune.json
-
-Точки сетки остаются в «Истории результатов», но в лидерборд не попадают —
-для них есть раздел «Итоги тюнинга по сетке».
 """
 
 
-def render_markdown(
-    runs: list[dict],
-    all_ab_verdicts: list[dict],
-    cache: ResultCache,
-    output_dir: Path,
-    tune_paths: list[Path] | tuple[Path, ...] = (),
-) -> str:
+def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: ResultCache, output_dir: Path) -> str:
     """Собирает текст документа целиком.
 
     Args:
@@ -1205,18 +384,10 @@ def render_markdown(
         all_ab_verdicts: Все A/B вердикты из :func:`load_all_ab_verdicts`.
         cache: Хранилище результатов.
         output_dir: Каталог документа (для относительных ссылок).
-        tune_paths: Пути к отчётам ``eval tune --output`` для раздела
-            «Итоги тюнинга по сетке».
 
     Returns:
         str: Текст docs/BENCHMARK.md.
     """
-    ab_groups = _ab_groups(all_ab_verdicts, runs)
-    tune_names = _tune_variant_names(tune_paths)
-    recommendations = _recommendations_section(runs, ab_groups, tune_names)
-    leaderboard = _leaderboard_section(runs, tune_names)
-    graphs_summary = _graphs_summary_section(runs, tune_names)
-
     lines = [
         "# Бенчмарк качества",
         "",
@@ -1224,27 +395,12 @@ def render_markdown(
         "вариантов и история результатов. Этот документ генерируется командой",
         "`uv run eval report` из кэша `eval/results/`.",
         "",
-    ]
-    if recommendations:
-        lines.append(recommendations)
-    if leaderboard:
-        lines.append(leaderboard)
-    if graphs_summary:
-        lines.append(graphs_summary)
-    lines += [_STATIC_SECTIONS.strip(), ""]
-
-    for tune_path in tune_paths:
-        section = tune_section(tune_path)
-        if section:
-            lines.append(section)
-
-    lines += [
+        _STATIC_SECTIONS.strip(),
+        "",
         "## История результатов",
         "",
         "Каждая строка — один прогон: группа вариантов, снятых на одном наборе,",
-        "окружении и конфиге. Сырые строки свёрнуты — обычно нужны только",
-        "«Рекомендации» и «Лидерборд» выше. Точки сетки `eval tune` попадают",
-        "в историю как есть, но в лидерборд не включаются.",
+        "окружении и конфиге.",
         "",
     ]
 
@@ -1254,17 +410,16 @@ def render_markdown(
             "",
         ]
     else:
-        history = [
-            "| дата | граф | окружение | варианты | метрики | вердикт | кэш |",
-            "| --- | --- | --- | --- | --- | --- | --- |",
+        lines += [
+            "| дата | окружение | варианты | метрики | вердикт | кэш |",
+            "| --- | --- | --- | --- | --- | --- |",
         ]
         for run in runs:
-            history.append(
+            lines.append(
                 "| "
                 + " | ".join(
                     [
                         _format_date(run["created_at"]),
-                        f"`{run['graph']}`",
                         run["environment"],
                         ", ".join(run["variants"]),
                         _metrics_cell(run),
@@ -1274,44 +429,27 @@ def render_markdown(
                 )
                 + " |"
             )
-        lines += [
-            "<details>",
-            f"<summary>сырые прогоны ({len(runs)})</summary>",
-            "",
-            *history,
-            "",
-            "</details>",
-            "",
-        ]
+        lines.append("")
 
-    ab_section = _ab_verdicts_section(all_ab_verdicts, runs, cache, output_dir)
-    if ab_section:
-        lines.append(ab_section)
+    # Добавляем секцию с детальными A/B вердиктами
+    lines.append(_ab_verdicts_section(all_ab_verdicts, cache, output_dir))
 
     return "\n".join(lines)
 
 
-def generate(
-    cache: ResultCache,
-    output: str | Path,
-    tune_paths: list[Path] | tuple[Path, ...] = (),
-) -> int:
+def generate(cache: ResultCache, output: str | Path) -> int:
     """Пишет docs/BENCHMARK.md из кэша.
 
     Args:
         cache: Хранилище результатов.
         output: Куда писать отчёт.
-        tune_paths: Пути к отчётам ``eval tune --output`` для раздела
-            «Итоги тюнинга по сетке».
 
     Returns:
         int: Код возврата процесса (всегда 0).
     """
     output_path = Path(output)
     runs, all_ab_verdicts = collect_runs(cache)
-    text = render_markdown(
-        runs, all_ab_verdicts, cache, output_path.parent, tune_paths=tune_paths
-    )
+    text = render_markdown(runs, all_ab_verdicts, cache, output_path.parent)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(text, encoding="utf-8")
     logger.info("отчёт записан в %s (прогонов: %d)", output, len(runs))
@@ -1335,18 +473,10 @@ def main() -> int:
         default=str(DEFAULT_OUTPUT),
         help="куда писать отчёт (по умолчанию docs/BENCHMARK.md)",
     )
-    parser.add_argument(
-        "--tune",
-        action="append",
-        default=[],
-        help="путь к отчёту `eval tune --output` (можно указать несколько)",
-    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    return generate(
-        ResultCache(args.cache_dir), args.output, tune_paths=args.tune
-    )
+    return generate(ResultCache(args.cache_dir), args.output)
 
 
 if __name__ == "__main__":

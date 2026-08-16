@@ -86,22 +86,14 @@ class _Settings:
     """Минимально совместимый с Settings объект."""
 
     def __init__(self, model: str = "m") -> None:
-        self.llm_provider = "ollama-local"
         self.llm_model = model
         self.llm_support_model = "s"
-        self.llm_reasoning = False
-        self.embedding_provider = "ollama-local"
         self.embedding_model = "e"
         self.retrieval_top_k = 5
-        self.retrieval_prefetch = 30
-        self.retrieval_rrf_k = 60
-        self.retrieval_min_relevance = 0.55
         self.rerank_enabled = False
         self.rerank_model = ""
-        self.rerank_candidates = 10
         self.grading_enabled = False
         self.verify_numbers = True
-        self.qdrant_collection = ""
 
 
 class TestSnapshotEnvironment:
@@ -117,47 +109,6 @@ class TestSnapshotEnvironment:
         """Отпечаток сразу пригоден как ключ кэша."""
         env = snapshot_environment(_Settings())
         assert env.fingerprint()
-
-    def test_new_params_in_describe(self) -> None:
-        """Параметры из .env попадают в описание окружения."""
-        env = snapshot_environment(_Settings())
-        assert "prefetch=30" in env.describe()
-        assert "rrf=60" in env.describe()
-        assert "cand=10" in env.describe()
-        assert "min_rel=0.55" in env.describe()
-
-    def test_prefetch_changes_fingerprint(self) -> None:
-        """Смена prefetch меняет ключ кэша."""
-        base = _Settings()
-        other = _Settings()
-        other.retrieval_prefetch = 60
-        assert snapshot_environment(base).fingerprint() != snapshot_environment(
-            other
-        ).fingerprint()
-
-    def test_reasoning_changes_fingerprint(self) -> None:
-        """Включение размышлений меняет ключ кэша."""
-        base = _Settings()
-        other = _Settings()
-        other.llm_reasoning = True
-        assert snapshot_environment(base).fingerprint() != snapshot_environment(
-            other
-        ).fingerprint()
-
-    def test_collection_in_describe(self) -> None:
-        """Коллекция попадает в описание окружения."""
-        settings = _Settings()
-        settings.qdrant_collection = "aist_chunks_v2"
-        assert "coll=aist_chunks_v2" in snapshot_environment(settings).describe()
-
-    def test_collection_changes_fingerprint(self) -> None:
-        """Разные коллекции не должны делиться одним кэшем."""
-        base = _Settings()
-        other = _Settings()
-        other.qdrant_collection = "aist_chunks_v2"
-        assert snapshot_environment(base).fingerprint() != snapshot_environment(
-            other
-        ).fingerprint()
 
 
 class TestRunResult:

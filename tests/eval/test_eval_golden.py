@@ -80,56 +80,6 @@ class TestLoad:
         assert golden.limited(None).total == 6
 
 
-class TestResample:
-    """Бутстрап-выборка вопросов."""
-
-    def test_same_size_and_source(self, tmp_path) -> None:
-        """Выборка сохраняет размер и берёт вопросы из пула."""
-        base = _valid()
-        answerable = [
-            {**base["answerable"][0], "question": f"вопрос {i}"} for i in range(5)
-        ]
-        unanswerable = [
-            {**base["unanswerable"][0], "question": f"вне области {i}"}
-            for i in range(3)
-        ]
-        payload = {"answerable": answerable, "unanswerable": unanswerable}
-        golden = GoldenSet.load(_write(tmp_path, payload))
-        sample = golden.resample(seed=42, sample_index=0)
-
-        assert len(sample.answerable) == 5
-        assert len(sample.unanswerable) == 3
-        source = {item["question"] for item in golden.answerable}
-        assert all(item["question"] in source for item in sample.answerable)
-
-    def test_deterministic(self, tmp_path) -> None:
-        """Та же пара (seed, index) даёт ту же выборку."""
-        golden = GoldenSet.load(_write(tmp_path, _valid()))
-        rng_answer = [
-            golden.resample(seed=7, sample_index=3).answerable
-            for _ in range(2)
-        ]
-        assert rng_answer[0] == rng_answer[1]
-
-    def test_samples_differ_across_indexes(self, tmp_path) -> None:
-        """Разные индексы дают разные выборки (на достаточно большом пуле)."""
-        base = _valid()
-        answerable = [
-            {**base["answerable"][0], "question": f"вопрос {i}"} for i in range(20)
-        ]
-        payload = {"answerable": answerable, "unanswerable": []}
-        golden = GoldenSet.load(_write(tmp_path, payload))
-        a = golden.resample(seed=42, sample_index=0).answerable
-        b = golden.resample(seed=42, sample_index=1).answerable
-        assert a != b
-
-    def test_empty_category(self, tmp_path) -> None:
-        """Пустая категория не приводит к ошибке ресемплинга."""
-        golden = GoldenSet.load(_write(tmp_path, _valid()))
-        sample = golden.resample(seed=1, sample_index=0)
-        assert len(sample.unanswerable) == 1
-
-
 class TestErrors:
     """Отказ на нарушении целостности."""
 

@@ -735,64 +735,9 @@ open http://localhost:4200
 ```
 
 Раннер исполняет `infrastructure.orchestration.serve`: регистрирует деплоймент
-`aist-ingest` (имя/расписание/параметры — из переменных `AIST_*` и `EMBEDDING_*`)
-и держит воркер, ждущий запусков. Параметры видны на странице Deployments →
-aist-ingest, оттуда же прогон запускается кнопкой **Run**. Дополнительные
-пайплайны — новые сервисы-раннеры в том же compose-файле (см. подраздел «Смена
-модели эмбеддингов»).
-
-### Смена модели эмбеддингов — один deployment = один раннер
-
-Размерность эмбеддера прошита в схему коллекции Qdrant и не меняется на лету:
-смена модели требует нового поколения коллекции и полной переиндексации,
-иначе поиск падает с `expected dim: XXX`. Модель: **один deployment в UI
-Prefect = один контейнер-раннер**. Каждый раннер при старте сам регистрирует
-свой deployment (`serve` в `infrastructure/orchestration/serve.py`) и ждёт
-запусков только в нём; новый пайплайн = новый раннер-контейнер, существующие
-не трогаются и образ не пересобирается.
-
-Изменения в `ingest_flow.py`:
-
-- В сигнатуру `ingest_flow` добавлены параметры `embedding_model`,
-  `embedding_provider`, `embedding_query_instruction` (override настроек для
-  конкретного прогона).
-- `build_index` принимает эти overrides и резолвит `override > settings >
-  default`. Эмбеддер создаётся напрямую (`OllamaEmbeddingClient`), а **не** через
-  глобальный реестр `model_registry`: в одном процессе раннера живут несколько
-  deployment-ов, и общий слот `"default"` привёл бы к их взаимному затиранию.
-  `embedding_query_instruction` применяется на query-стороне
-  (`infrastructure/retrieval/factory.py`), при индексации документов он не
-  используется.
-
-`serve.py` при старте кладёт эмбеддинг-параметры в deployment из уже
-существующих `EMBEDDING_*` (те же, что у агента в `.env`), поэтому новые
-`AIST_EMBEDDING_*` не заведены. В `deploy/docker-compose.orchestration.yml`
-вынесены общие якоря `x-runner-env` / `x-runner-common` (общий образ
-`aist-prefect-runner`), и добавлен блок-пример второго раннера.
-
-Шаги по смене модели (bge-m3 → qwen3-embedding-8b):
-
-1. Новая модель в Ollama: `ollama list`.
-2. В `deploy/docker-compose.orchestration.yml` раскомментировать/скопировать
-   блок-пример `prefect-runner-qwen3-v2`: `AIST_DEPLOYMENT_NAME`,
-   `EMBEDDING_MODEL=qwen3-embedding-8b`, `EMBEDDING_QUERY_INSTRUCTION`
-   (для qwen3-embedding обязательна, для bge-m3 пустая), `AIST_GENERATION=2`,
-   `AIST_FULL=1`, `AIST_SWITCH_ALIAS=1`.
-3. Поднять только новый раннер — существующие не пересоздаются:
-   ```bash
-   docker compose up -d prefect-runner-qwen3-v2
-   ```
-4. В UI (`http://localhost:4200` → **Deployments**) появился
-   `aist-ingest-qwen3-v2` → **Run**. `AIST_FULL=1` даёт полную переиндексацию,
-   `AIST_SWITCH_ALIAS=1` атомарно переключает алиас `aist_chunks` на
-   `aist_chunks_v2`. В артефакте `ingest-report` — строка «Алиас переключён».
-5. Агент (aegra) читает `EMBEDDING_MODEL` при старте и держит кэш эмбеддера —
-   UI Prefect на него не влияет; после смены модели нужен рестарт стека с новой
-   `.env`, иначе `preflight` упадёт по `expected dim`.
-
-Роллбэк: запустить существующий deployment `aist-ingest` с параметрами
-`{"generation": 1, "switch_alias": true, "full": false}` — алиас вернётся на
-`aist_chunks_v1`.
+`aist-ingest` (имя/расписание/параметры — из переменных `AIST_*`) и держит
+воркер, ждущий запусков. Параметры видны на странице Deployments → aist-ingest,
+оттуда же прогон запускается кнопкой **Run**.
 
 ### Ежедневная подгрузка и триггеры
 
