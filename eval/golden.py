@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -163,6 +164,34 @@ class GoldenSet:
             int: Отвечаемых и без ответа вместе.
         """
         return len(self.answerable) + len(self.unanswerable)
+
+    def resample(self, seed: int, sample_index: int) -> GoldenSet:
+        """Возвращает бутстрап-выборку вопросов (с возвратом).
+
+        Отвечаемые и вопросы без ответа ресемплируются отдельно, каждая
+        категория — до своего размера в исходном наборе (bootstrap). Зерно
+        выводится из ``seed`` и ``sample_index``: одна и та же выборка
+        воспроизводится при повторе и общая для всех вариантов прогона —
+        только тогда A/B-сравнение остаётся парным.
+
+        Args:
+            seed: Базовое зерно ресемплинга.
+            sample_index: Номер выборки (``0..N-1``).
+
+        Returns:
+            GoldenSet: Выборка того же размера, что исходный набор.
+        """
+        rng = random.Random(seed * 1000 + sample_index)
+
+        def draw(items: tuple[dict[str, Any], ...]) -> tuple[dict[str, Any], ...]:
+            if not items:
+                return ()
+            return tuple(items[rng.randrange(len(items))] for _ in items)
+
+        return GoldenSet(
+            answerable=draw(self.answerable),
+            unanswerable=draw(self.unanswerable),
+        )
 
 
 #: Сколько подряд идущих слов цитаты должно найтись во фрагменте, чтобы

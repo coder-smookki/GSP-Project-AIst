@@ -2,7 +2,6 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24.4.1
     restart: unless-stopped
-    profiles: ["obs"]
     environment:
       CLICKHOUSE_PASSWORD: ${OPENLIT_DB_PASSWORD:-OPENLIT}
       CLICKHOUSE_USER: ${OPENLIT_DB_USER:-default}
@@ -25,7 +24,6 @@ services:
   openlit:
     image: ghcr.io/openlit/openlit:latest
     restart: unless-stopped
-    profiles: ["obs"]
     environment:
       TELEMETRY_ENABLED: "false"
       INIT_DB_HOST: clickhouse
