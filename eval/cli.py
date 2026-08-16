@@ -80,6 +80,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         with_answers=args.with_answers,
         bootstraps=args.bootstraps,
         seed=args.seed,
+        graph=args.graph,
     )
 
     async def run() -> RunResult:
@@ -256,6 +257,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="зерно ресемплинга пула",
     )
     run_p.add_argument(
+        "--graph",
+        default="base",
+        help="тег версии графа агента (base, rd-v2, ...): отдельная секция "
+        "в отчёте и свой кэш",
+    )
+    run_p.add_argument(
         "--variant", default="base", help="имя варианта (по умолчанию base)"
     )
     run_p.add_argument(
@@ -297,6 +304,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=42,
         help="зерно ресемплинга пула: один пул для всех вариантов",
+    )
+    ab_p.add_argument(
+        "--graph",
+        default="base",
+        help="тег версии графа агента (base, rd-v2, ...): отдельная секция "
+        "в отчёте и свой кэш",
     )
     ab_p.add_argument("--output", help="записать полный отчёт в файл")
     ab_p.add_argument(
@@ -362,6 +375,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=42,
         help="зерно ресемплинга пула",
+    )
+    tune_p.add_argument(
+        "--graph",
+        default="base",
+        help="тег версии графа агента (base, rd-v2, ...): отдельная секция "
+        "в отчёте и свой кэш",
     )
     tune_p.add_argument("--output", help="записать полный отчёт в JSON")
     tune_p.add_argument(

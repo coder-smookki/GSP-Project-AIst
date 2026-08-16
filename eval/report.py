@@ -138,6 +138,7 @@ def collect_runs(cache: ResultCache) -> list[dict]:
                 "metric_keys": metric_keys,
                 "results": results,
                 "keys": [entry["key"] for entry in entries],
+                "graph": first.get("graph", "base"),
             }
         )
     runs.sort(key=lambda run: run["created_at"], reverse=True)
@@ -166,6 +167,7 @@ def load_all_ab_verdicts(cache: ResultCache) -> list[dict]:
             "dataset": data.get("dataset", ""),
             "metrics": data.get("metrics", ""),
             "config": data.get("config", {}),
+            "graph": data.get("graph", "base"),
             "created_at": data.get("created_at", ""),
         })
     # Сортируем по дате (новые первые)
@@ -441,11 +443,12 @@ def _aggregate_configs(runs: list[dict]) -> list[dict]:
     Returns:
         list[dict]: Конфигурации, отсортированные по ``mrr`` (и ``hit@1``).
     """
-    grouped: dict[str, list[dict]] = {}
-    labels: dict[str, str] = {}
-    order: list[str] = []
+    grouped: dict[tuple[str, str], list[dict]] = {}
+    labels: dict[tuple[str, str], str] = {}
+    order: list[tuple[str, str]] = []
     for run in runs:
-        key = run.get("environment_key") or run["environment"]
+        graph = run.get("graph", "base")
+        key = (graph, run.get("environment_key") or run["environment"])
         if key not in grouped:
             grouped[key] = []
             labels[key] = run["environment"]
@@ -466,6 +469,7 @@ def _aggregate_configs(runs: list[dict]) -> list[dict]:
         rows.append(
             {
                 "environment": labels[env],
+                "graph": env[0],
                 "n": len(metrics),
                 "hit@1": avg("hit@1"),
                 "mrr": avg("mrr"),
@@ -517,7 +521,7 @@ def _ab_groups(all_ab_verdicts: list[dict], runs: list[dict]) -> list[dict]:
     """
     latest: dict[tuple, dict] = {}
     for av in all_ab_verdicts:
-        identity = (av["base_variant"], av["variant"], av["environment"], av.get("environment_desc", "") or av["environment"])
+        identity = (av.get("graph", "base"), av["base_variant"], av["variant"], av["environment"], av.get("environment_desc", "") or av["environment"])
         if identity not in latest or av["created_at"] > latest[identity]["created_at"]:
             latest[identity] = av
 
@@ -535,6 +539,7 @@ def _ab_groups(all_ab_verdicts: list[dict], runs: list[dict]) -> list[dict]:
         groups.append(
             {
                 "date": av["created_at"],
+                "graph": av.get("graph", "base"),
                 "base": av["base_variant"],
                 "variant": av["variant"],
                 "environment": variant_env,
@@ -586,7 +591,8 @@ def _recommendations_section(runs: list[dict], ab_groups: list[dict]) -> str:
         hit = f"{leader['hit@1']:.3f}" if leader["hit@1"] is not None else "—"
         mrr = f"{leader['mrr']:.3f}" if leader["mrr"] is not None else "—"
         lines.append(
-            f"**Текущий лидер:** `{_human_config(leader['environment'])}` — "
+            f"**Текущий лидер:** `{_human_config(leader['environment'])}` "
+            f"(граф `{leader['graph']}`) — "
             f"hit@1 = {hit}, MRR = {mrr}."
         )
         lines.append("")
@@ -618,7 +624,11 @@ def _recommendations_section(runs: list[dict], ab_groups: list[dict]) -> str:
 
 
 def _leaderboard_section(runs: list[dict]) -> str:
-    """Лидерборд: агрегированные конфигурации, отсортированные по MRR.
+    """Лидерборд: агрегированные конфигурации по графам, отсортированы по MRR.
+
+    Строки группируются по графу агента (``graph`` тег): каждый граф получает
+    свой подраздел и своего лидера, чтобы конфигурации разных графов не
+    сравнивались между собой.
 
     Args:
         runs: Прогоны из :func:`collect_runs`.
@@ -629,23 +639,34 @@ def _leaderboard_section(runs: list[dict]) -> str:
     rows = _aggregate_configs(runs)
     if not rows:
         return ""
-    leader = rows[0]
-    fastest = min(
-        (row for row in rows if row["latency_median"] is not None),
-        key=lambda row: row["latency_median"],
-        default=None,
-    )
     lines = [
         "## Лидерборд",
         "",
         "Каждая строка — уникальная конфигурация (модель, эмбеддер, top_k, "
         "реранк), агрегированная по всем прогонам её вариантов. Сортировка — "
-        "по MRR.",
+        "по MRR. Конфигурации разных графов агента не смешиваются: у каждого "
+        "графа своя секция и свой лидер.",
         "",
-        "| конфигурация | hit@1 | MRR | not_found | лат., мед. | кол-во | заметка |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
+    seen: set[str] = set()
     for row in rows:
+        graph = row["graph"]
+        if graph not in seen:
+            seen.add(graph)
+            lines.append(f"### Граф: `{graph}`")
+            lines.append("")
+            lines.append(
+                "| конфигурация | hit@1 | MRR | not_found | лат., мед. | "
+                "кол-во | заметка |"
+            )
+            lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+        graph_rows = [r for r in rows if r["graph"] == graph]
+        leader = graph_rows[0]
+        fastest = min(
+            (r for r in graph_rows if r["latency_median"] is not None),
+            key=lambda r: r["latency_median"],
+            default=None,
+        )
         notes: list[str] = []
         if row is leader:
             notes.append("максимальное качество")
@@ -665,6 +686,67 @@ def _leaderboard_section(runs: list[dict]) -> str:
                     _fmt_number(row["latency_median"]),
                     str(row["n"]),
                     ", ".join(notes) if notes else "—",
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _graphs_summary_section(runs: list[dict]) -> str:
+    """Сводка «Лучшие по графам»: один лидер на каждый граф агента.
+
+    Сравнение метрик внутри графа правомерно, а между разными графами — нет
+    (разный агент, разные кэши, вердикты пишутся внутри одного графа);
+    поэтому колонки показывают каждого лидера отдельно и общий лидер по MRR
+    помечается.
+
+    Args:
+        runs: Прогоны из :func:`collect_runs`.
+
+    Returns:
+        str: Markdown-раздел или пустая строка, если кэш пуст.
+    """
+    rows = _aggregate_configs(runs)
+    if not rows:
+        return ""
+    per_graph: dict[str, dict] = {}
+    for row in rows:
+        if row["graph"] not in per_graph:
+            per_graph[row["graph"]] = row
+    graphs = list(per_graph)
+    overall = max(
+        per_graph.values(),
+        key=lambda r: (
+            r["mrr"] is not None,
+            r["mrr"] if r["mrr"] is not None else -1.0,
+            r["hit@1"] if r["hit@1"] is not None else -1.0,
+        ),
+    )
+    lines = [
+        "## Лучшие по графам",
+        "",
+        "Лидер каждого графа агента. Прямое A/B между разными графами не "
+        "считается: вердикты сравнивают варианты только внутри одного графа.",
+        "",
+        "| граф | лучшая конфигурация | hit@1 | MRR | not_found | кол-во | заметка |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for graph in graphs:
+        row = per_graph[graph]
+        notes = ["общий лидер по MRR"] if row is overall else "—"
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    f"`{graph}`",
+                    _human_config(row["environment"]),
+                    _fmt_number(row["hit@1"]),
+                    _fmt_number(row["mrr"]),
+                    _fmt_number(row["not_found"]),
+                    str(row["n"]),
+                    ", ".join(notes) if isinstance(notes, list) else notes,
                 ]
             )
             + " |"
@@ -706,6 +788,7 @@ def _ab_verdicts_section(
             ab_comparisons.append(
                 {
                     "date": av["created_at"],
+                    "graph": av.get("graph", "base"),
                     "environment": av.get("environment_desc", "") or av["environment"],
                     "base": av["base_variant"],
                     "variant": av["variant"],
@@ -731,8 +814,8 @@ def _ab_verdicts_section(
             "отличия (p < 0.05); остальные метрики не выводятся, чтобы не "
             "засорять таблицу константами.",
             "",
-            "| дата | тест (base → variant) | что изменилось | итог | значимые отличия (p < 0.05) |",
-            "| --- | --- | --- | --- | --- |",
+            "| дата | граф | тест (base → variant) | что изменилось | итог | значимые отличия (p < 0.05) |",
+            "| --- | --- | --- | --- | --- | --- |",
         ]
         for group in groups:
             deltas = (
@@ -741,6 +824,7 @@ def _ab_verdicts_section(
             )
             blocks.append(
                 f"| {_format_date(group['date'])} | "
+                f"`{group['graph']}` | "
                 f"`{group['base']}` → `{group['variant']}` | "
                 f"{group['essence']} | **{_group_verdict(group['significant'])}** | "
                 f"{deltas} |"
@@ -750,14 +834,15 @@ def _ab_verdicts_section(
     if ab_comparisons:
         ab_comparisons.sort(key=lambda x: x["date"], reverse=True)
         detail_lines = [
-            "| дата | окружение | base | variant | метрика | base | variant | Δ | p-value | вердикт | тест |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| дата | граф | окружение | base | variant | метрика | base | variant | Δ | p-value | вердикт | тест |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for c in ab_comparisons:
             detail_lines.append(
-                f"| {_format_date(c['date'])} | {c['environment']} | {c['base']} | "
-                f"{c['variant']} | {c['metric']} | {c['base_val']} | {c['var_val']} | "
-                f"{c['delta']} | {c['p_value']} | {c['verdict']} | {c['test']} |"
+                f"| {_format_date(c['date'])} | `{c['graph']}` | {c['environment']} | "
+                f"{c['base']} | {c['variant']} | {c['metric']} | {c['base_val']} | "
+                f"{c['var_val']} | {c['delta']} | {c['p_value']} | {c['verdict']} | "
+                f"{c['test']} |"
             )
         blocks += [
             "<details>",
@@ -888,6 +973,7 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
     ab_groups = _ab_groups(all_ab_verdicts, runs)
     recommendations = _recommendations_section(runs, ab_groups)
     leaderboard = _leaderboard_section(runs)
+    graphs_summary = _graphs_summary_section(runs)
 
     lines = [
         "# Бенчмарк качества",
@@ -901,6 +987,8 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
         lines.append(recommendations)
     if leaderboard:
         lines.append(leaderboard)
+    if graphs_summary:
+        lines.append(graphs_summary)
     lines += [_STATIC_SECTIONS.strip(), ""]
 
     lines += [
@@ -919,8 +1007,8 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
         ]
     else:
         history = [
-            "| дата | окружение | варианты | метрики | вердикт | кэш |",
-            "| --- | --- | --- | --- | --- | --- |",
+            "| дата | граф | окружение | варианты | метрики | вердикт | кэш |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
         ]
         for run in runs:
             history.append(
@@ -928,6 +1016,7 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
                 + " | ".join(
                     [
                         _format_date(run["created_at"]),
+                        f"`{run['graph']}`",
                         run["environment"],
                         ", ".join(run["variants"]),
                         _metrics_cell(run),

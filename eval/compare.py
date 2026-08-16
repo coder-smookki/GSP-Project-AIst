@@ -342,6 +342,7 @@ async def main_async(
         with_answers=args.with_answers,
         bootstraps=args.bootstraps,
         seed=args.seed,
+        graph=args.graph,
     )
     cache = ResultCache(args.cache_dir)
 
@@ -423,6 +424,12 @@ def main() -> int:
         type=int,
         default=42,
         help="зерно ресемплинга пула: один пул для всех вариантов",
+    )
+    parser.add_argument(
+        "--graph",
+        default="base",
+        help="тег версии графа агента (base, rd-v2, ...): отдельная секция "
+        "в отчёте и свой кэш",
     )
     parser.add_argument("--output", help="записать полный отчёт в файл")
     parser.add_argument(

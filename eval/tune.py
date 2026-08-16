@@ -153,6 +153,7 @@ def _write_output(
         "direction": args.direction,
         "bootstraps": args.bootstraps,
         "seed": args.seed,
+        "graph": args.graph,
         "points": points,
     }
     Path(args.output).write_text(
@@ -223,6 +224,7 @@ async def main_async(args: argparse.Namespace) -> int:
         with_answers=args.with_answers,
         bootstraps=args.bootstraps,
         seed=args.seed,
+        graph=args.graph,
     )
     cache = ResultCache(args.cache_dir)
     try:
@@ -281,6 +283,12 @@ def main() -> int:
         help="прогонов на ресемплированных пулах (бутстрап)",
     )
     parser.add_argument("--seed", type=int, default=42, help="зерно ресемплинга")
+    parser.add_argument(
+        "--graph",
+        default="base",
+        help="тег версии графа агента (base, rd-v2, ...): отдельная секция "
+        "в отчёте и свой кэш",
+    )
     parser.add_argument(
         "--cache-dir", help="каталог кэша результатов (по умолчанию eval/results)"
     )

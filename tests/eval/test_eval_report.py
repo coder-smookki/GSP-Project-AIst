@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 from eval.cache import ResultCache, build_entry, cache_key
-from eval.config import Environment, Variant
+from eval.config import Environment, RunConfig, Variant
 from eval.metrics import MRR, HitAtK, compute_metrics
 from eval.report import (
     _ab_groups,
@@ -147,7 +147,8 @@ class TestRenderMarkdown:
         runs, _ = collect_runs(cache)
         ab_verdicts = load_all_ab_verdicts(cache)
         text = render_markdown(runs, ab_verdicts, cache, tmp_path)
-        assert "| дата | окружение | варианты | метрики | вердикт | кэш |" in text
+        header = "| дата | граф | окружение | варианты | метрики | вердикт | кэш |"
+        assert header in text
         assert "base, top6" in text
         assert "hit@1" in text
         assert "хуже" in text
@@ -197,14 +198,15 @@ class TestRenderMarkdown:
         assert "максимальное качество" in text
 
 
-def _save_with(cache, variant, env, ranks, dataset) -> None:
-    """Кладёт запись в кэш с произвольным окружением и набором."""
+def _save_with(cache, variant, env, ranks, dataset, graph: str = "base") -> None:
+    """Кладёт запись в кэш с произвольным окружением, набором и графом."""
     result = make_result(ranks)
     result.variant = variant.name
     result.created_at = "2026-01-01T10:00:00+00:00"
     result.metrics = compute_metrics([HitAtK(1), MRR()], result.outcomes)
-    key = cache_key(variant, dataset, METRICS, env, CONFIG)
-    cache.save(build_entry(key, variant, result, env, dataset, METRICS, CONFIG))
+    config = RunConfig(runner="golden", graph=graph)
+    key = cache_key(variant, dataset, METRICS, env, config)
+    cache.save(build_entry(key, variant, result, env, dataset, METRICS, config))
 
 
 class TestReportHelpers:
@@ -262,6 +264,61 @@ class TestReportHelpers:
         groups = _ab_groups([av], [])
         assert len(groups) == 1
         assert [v.metric for v in groups[0]["significant"]] == ["hit@1"]
+
+    def test_ab_groups_separate_graphs(self) -> None:
+        """Вердикты разных графов не сворчиваются в один."""
+        from eval.result import Verdict
+
+        def av(graph: str, created: str) -> dict:
+            return {
+                "graph": graph,
+                "base_variant": "base",
+                "variant": "top",
+                "verdicts": [
+                    Verdict("hit@1", "mcnemar", 0.03, 0.7, 0.5, "worse"),
+                ],
+                "environment": "env1",
+                "environment_desc": "llm=m, rerank=вкл",
+                "created_at": created,
+            }
+
+        groups = _ab_groups(
+            [
+                av("base", "2026-01-01T10:00:00+00:00"),
+                av("rd-v2", "2026-01-01T10:05:00+00:00"),
+            ],
+            [],
+        )
+        assert len(groups) == 2
+        assert sorted(group["graph"] for group in groups) == ["base", "rd-v2"]
+
+    def test_leaderboard_split_by_graph(self, tmp_path) -> None:
+        """Разные графы — отдельные секции лидерборда и сводка по графам."""
+        cache = ResultCache(tmp_path)
+        _save_with(
+            cache,
+            Variant(name="base"),
+            ENV,
+            [1, 2, 3],
+            "d",
+            graph="base",
+        )
+        _save_with(
+            cache,
+            Variant(name="base"),
+            ENV,
+            [1, 1, 1],
+            "d",
+            graph="rd-v2",
+        )
+
+        runs, _ = collect_runs(cache)
+        assert sorted(run["graph"] for run in runs) == ["base", "rd-v2"]
+        text = render_markdown(runs, [], cache, tmp_path)
+        assert "### Граф: `base`" in text
+        assert "### Граф: `rd-v2`" in text
+        assert "## Лучшие по графам" in text
+        assert "общий лидер по MRR" in text
 
 
 class TestGenerate:

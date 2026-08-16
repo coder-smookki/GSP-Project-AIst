@@ -225,6 +225,7 @@ class GoldenSetRunner:
                 "with_answers": config.with_answers,
                 "bootstraps": config.bootstraps,
                 "sample_index": config.sample_index,
+                "graph": config.graph,
             },
         )
 

@@ -66,6 +66,9 @@ class RunConfig:
             ресемплинга.
         sample_index: Номер бутстрап-выборки в пределах прогона
             (``0..bootstraps-1``); задаётся матричным прогоном.
+        graph: Тег версии графа агента (``base``, ``rd-v2``, ...). Входит
+            в ключ кэша и в A/B-вердикты, поэтому результаты разных графов
+            не смешиваются и в отчёте дают отдельные секции.
     """
 
     runner: Literal["golden", "operational"] = "golden"
@@ -77,6 +80,7 @@ class RunConfig:
     seed: int = 42
     bootstraps: int = 1
     sample_index: int = 0
+    graph: str = "base"
 
 
 @dataclass(frozen=True)

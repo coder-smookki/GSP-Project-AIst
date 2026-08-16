@@ -89,6 +89,7 @@ def _config_digest(config: RunConfig) -> dict[str, Any]:
         "seed": config.seed,
         "bootstraps": config.bootstraps,
         "sample_index": config.sample_index,
+        "graph": config.graph,
     }
 
 
@@ -158,6 +159,7 @@ def build_entry(
         "dataset": dataset,
         "metrics": metrics_version(metrics),
         "config": _config_digest(config),
+        "graph": config.graph,
         "created_at": result.created_at,
         "result": result.to_dict(),
     }
@@ -231,6 +233,7 @@ def build_ab_entry(
         "dataset": dataset,
         "metrics": metrics_version(metrics),
         "config": _config_digest(config),
+        "graph": config.graph,
         "created_at": datetime.now(UTC).isoformat(),
     }
 
