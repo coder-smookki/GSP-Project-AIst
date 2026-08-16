@@ -7,10 +7,23 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from eval.cache import ResultCache, build_entry, cache_key
-from eval.config import Variant
+from eval.config import Environment, RunConfig, Variant
 from eval.metrics import MRR, HitAtK, compute_metrics
-from eval.report import collect_runs, generate, metric_from_key, render_markdown, load_all_ab_verdicts
+from eval.report import (
+    _ab_groups,
+    _aggregate_configs,
+    _env_diff,
+    _human_config,
+    collect_runs,
+    generate,
+    load_all_ab_verdicts,
+    metric_from_key,
+    render_markdown,
+    tune_section,
+)
 from tests.eval.test_eval_cache import CONFIG, ENV, METRICS
 from tests.eval.test_eval_stats import make_result
 
@@ -137,7 +150,8 @@ class TestRenderMarkdown:
         runs, _ = collect_runs(cache)
         ab_verdicts = load_all_ab_verdicts(cache)
         text = render_markdown(runs, ab_verdicts, cache, tmp_path)
-        assert "| дата | окружение | варианты | метрики | вердикт | кэш |" in text
+        header = "| дата | граф | окружение | варианты | метрики | вердикт | кэш |"
+        assert header in text
         assert "base, top6" in text
         assert "hit@1" in text
         assert "хуже" in text
@@ -148,6 +162,250 @@ class TestRenderMarkdown:
         cache = ResultCache(tmp_path)
         text = render_markdown([], [], cache, tmp_path)
         assert "Кэш пуст" in text
+
+    def test_recommendations_and_leaderboard_present(self, tmp_path) -> None:
+        """Сводка и лидерборд генерируются при наличии данных."""
+        cache = ResultCache(tmp_path / "results")
+        env_on = Environment(
+            platform="test",
+            python="3.14",
+            llm_model="m",
+            llm_support_model="s",
+            embedding_model="e",
+            retrieval_top_k=5,
+            rerank_enabled=True,
+            rerank_model="",
+            grading_enabled=False,
+            verify_numbers=True,
+        )
+        env_off = Environment(
+            platform="test",
+            python="3.14",
+            llm_model="m",
+            llm_support_model="s",
+            embedding_model="e",
+            retrieval_top_k=5,
+            rerank_enabled=False,
+            rerank_model="",
+            grading_enabled=False,
+            verify_numbers=True,
+        )
+        _save_with(cache, Variant(name="base"), env_on, [1] * 6, "d")
+        _save_with(cache, Variant(name="novariant"), env_off, [None] * 6, "d")
+
+        runs, _ = collect_runs(cache)
+        text = render_markdown(runs, [], cache, tmp_path)
+        assert "## Рекомендации" in text
+        assert "## Лидерборд" in text
+        assert "Текущий лидер" in text
+        assert "максимальное качество" in text
+
+
+def _save_with(cache, variant, env, ranks, dataset, graph: str = "base") -> None:
+    """Кладёт запись в кэш с произвольным окружением, набором и графом."""
+    result = make_result(ranks)
+    result.variant = variant.name
+    result.created_at = "2026-01-01T10:00:00+00:00"
+    result.metrics = compute_metrics([HitAtK(1), MRR()], result.outcomes)
+    config = RunConfig(runner="golden", graph=graph)
+    key = cache_key(variant, dataset, METRICS, env, config)
+    cache.save(build_entry(key, variant, result, env, dataset, METRICS, config))
+
+
+class TestReportHelpers:
+    """Вспомогательные функции сводного отчёта."""
+
+    def test_aggregate_group_by_environment(self, tmp_path) -> None:
+        """Одна конфигурация агрегируется в одну строку."""
+        cache = ResultCache(tmp_path)
+        _save(cache, Variant(name="base"), _result([1, 2], "base", "d-1"), dataset="a")
+        _save(cache, Variant(name="rep"), _result([2, 1], "rep", "d-1"), dataset="b")
+        runs, _ = collect_runs(cache)
+        rows = _aggregate_configs(runs)
+        assert len(rows) == 1
+        assert rows[0]["n"] == 2
+
+    def test_aggregate_ignores_tune_points(self, tmp_path) -> None:
+        """Точки сетки (имя варианта с ';') в лидерборд не попадают."""
+        from dataclasses import replace
+
+        cache = ResultCache(tmp_path)
+        _save_with(cache, Variant(name="base"), ENV, [1, 2], "a")
+        tune_env = replace(ENV, retrieval_top_k=8)
+        tune = Variant(
+            name="retrieval_top_k=8;retrieval_prefetch=40",
+            settings={"retrieval_top_k": 8, "retrieval_prefetch": 40},
+        )
+        _save_with(cache, tune, tune_env, [2, 2], "a")
+        runs, _ = collect_runs(cache)
+        assert len(runs) == 2
+        rows = _aggregate_configs(runs)
+        assert len(rows) == 1
+        assert rows[0]["n"] == 1
+
+    def test_human_config_shortens_embedder(self) -> None:
+        """Полное имя эмбеддера сокращается в лидерборде."""
+        desc = "llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, rerank=вкл"
+        label = _human_config(desc)
+        assert "Qwen3" not in label and "qwen3-emb" in label
+        assert "gpt-oss:20b" in label
+
+    def test_human_config_keeps_collection(self) -> None:
+        """Коллекция не теряется в метке конфигурации."""
+        desc = (
+            "llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, rerank=вкл, "
+            "cand=10, coll=aist_chunks_v2"
+        )
+        label = _human_config(desc)
+        assert "колл.=aist_chunks_v2" in label
+
+    def test_env_diff_detects_only_change(self) -> None:
+        """Различаются только изменённые параметры."""
+        base = "llm=m, emb=e, top_k=5, rerank=вкл"
+        variant = "llm=m, emb=e, top_k=5, rerank=выкл"
+        diff = _env_diff(base, variant)
+        assert "реранк: вкл → выкл" in diff
+        assert "LLM" not in diff
+
+    def test_ab_groups_filters_non_significant(self) -> None:
+        """В значимые отличия попадают только вердикты с p < 0.05."""
+        from eval.result import Verdict
+
+        av = {
+            "base_variant": "base",
+            "variant": "top",
+            "verdicts": [
+                Verdict("hit@1", "mcnemar", 0.03, 0.7, 0.5, "worse"),
+                Verdict("mrr", "wilcoxon", 1.0, 0.7, 0.7, "no_diff"),
+            ],
+            "environment": "env1",
+            "environment_desc": "llm=m, rerank=вкл",
+            "created_at": "2026-01-01T10:00:00+00:00",
+        }
+        groups = _ab_groups([av], [])
+        assert len(groups) == 1
+        assert [v.metric for v in groups[0]["significant"]] == ["hit@1"]
+
+    def test_ab_groups_separate_graphs(self) -> None:
+        """Вердикты разных графов не сворчиваются в один."""
+        from eval.result import Verdict
+
+        def av(graph: str, created: str) -> dict:
+            return {
+                "graph": graph,
+                "base_variant": "base",
+                "variant": "top",
+                "verdicts": [
+                    Verdict("hit@1", "mcnemar", 0.03, 0.7, 0.5, "worse"),
+                ],
+                "environment": "env1",
+                "environment_desc": "llm=m, rerank=вкл",
+                "created_at": created,
+            }
+
+        groups = _ab_groups(
+            [
+                av("base", "2026-01-01T10:00:00+00:00"),
+                av("rd-v2", "2026-01-01T10:05:00+00:00"),
+            ],
+            [],
+        )
+        assert len(groups) == 2
+        assert sorted(group["graph"] for group in groups) == ["base", "rd-v2"]
+
+    def test_leaderboard_split_by_graph(self, tmp_path) -> None:
+        """Разные графы — отдельные секции лидерборда и сводка по графам."""
+        cache = ResultCache(tmp_path)
+        _save_with(
+            cache,
+            Variant(name="base"),
+            ENV,
+            [1, 2, 3],
+            "d",
+            graph="base",
+        )
+        _save_with(
+            cache,
+            Variant(name="base"),
+            ENV,
+            [1, 1, 1],
+            "d",
+            graph="rd-v2",
+        )
+
+        runs, _ = collect_runs(cache)
+        assert sorted(run["graph"] for run in runs) == ["base", "rd-v2"]
+        text = render_markdown(runs, [], cache, tmp_path)
+        assert "### Граф: `base`" in text
+        assert "### Граф: `rd-v2`" in text
+        assert "## Лучшие по графам" in text
+        assert "общий лидер по MRR" in text
+
+
+class TestTuneSection:
+    """Раздел «Итоги тюнинга по сетке»."""
+
+    def _json(self, tmp_path) -> Path:
+        import json as _json
+        from pathlib import Path
+
+        path = Path(tmp_path) / "tune.json"
+        path.write_text(
+            _json.dumps(
+                {
+                    "params": {"retrieval_top_k": [3, 5]},
+                    "objective": "hit@1",
+                    "direction": "max",
+                    "bootstraps": 1,
+                    "seed": 42,
+                    "graph": "base",
+                    "points": [
+                        {
+                            "name": "retrieval_top_k=3",
+                            "settings": {"retrieval_top_k": 3},
+                            "metrics": {"hit@1": 0.6, "hit@3": 0.7,
+                                        "mrr": 0.65, "not_found": 0.40,
+                                        "latency_median": 0.2},
+                            "objective": 0.6,
+                            "std": 0.0,
+                        },
+                        {
+                            "name": "retrieval_top_k=5",
+                            "settings": {"retrieval_top_k": 5},
+                            "metrics": {"hit@1": 0.8, "hit@3": 0.9,
+                                        "mrr": 0.85, "not_found": 0.10,
+                                        "latency_median": 0.25},
+                            "objective": 0.8,
+                            "std": 0.0,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_renders_section(self, tmp_path) -> None:
+        """Лучшая точка, направления и средние по параметру на месте."""
+        section = tune_section(self._json(tmp_path))
+        assert "## Итоги тюнинга по сетке" in section
+        assert "`retrieval_top_k` → `5`" in section
+        assert "Лучшая точка" in section
+        assert "`retrieval_top_k=5`" in section
+        assert "*" in section
+
+    def test_missing_file_returns_empty(self, tmp_path) -> None:
+        """Отсутствующий отчёт — пустой раздел."""
+        assert tune_section(tmp_path / "nope.json") == ""
+
+    def test_integration_into_report(self, tmp_path) -> None:
+        """render_markdown встраивает секцию по переданному пути."""
+        from pathlib import Path
+
+        tune_path = self._json(tmp_path)
+        cache = ResultCache(tmp_path)
+        text = render_markdown([], [], cache, Path(tmp_path), tune_paths=[tune_path])
+        assert "## Итоги тюнинга по сетке" in text
 
 
 class TestGenerate:
