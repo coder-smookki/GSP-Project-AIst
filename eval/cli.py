@@ -155,6 +155,22 @@ def _cmd_bench(args: argparse.Namespace) -> int:
     return asyncio.run(bench_main(args))
 
 
+def _cmd_tune(args: argparse.Namespace) -> int:
+    """Сеточный перебор параметров по целевой метрике.
+
+    Args:
+        args: Разобранные аргументы.
+
+    Returns:
+        int: Код возврата процесса.
+    """
+    from eval.tune import main_async as tune_main
+
+    if not _mock_guard():
+        return 2
+    return asyncio.run(tune_main(args))
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     """Генерирует docs/BENCHMARK.md из кэша результатов.
 
@@ -310,6 +326,59 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bench_p.add_argument("--output", help="записать результат в JSON")
 
+    tune_p = sub.add_parser(
+        "tune", help="сеточный перебор параметров по целевой метрике"
+    )
+    tune_p.add_argument(
+        "--params",
+        required=True,
+        help='JSON-спека сетки: \'{"retrieval_top_k": [3, 5, 8]}\'',
+    )
+    tune_p.add_argument(
+        "--objective",
+        default="hit@1",
+        help="ключ целевой метрики (по умолчанию hit@1)",
+    )
+    tune_p.add_argument(
+        "--direction", default="max", choices=("min", "max"), help="направление"
+    )
+    tune_p.add_argument(
+        "--golden", default=str(DEFAULT_GOLDEN), help="путь к золотому набору"
+    )
+    tune_p.add_argument("--limit", type=int, help="взять только первые N вопросов")
+    tune_p.add_argument(
+        "--with-answers",
+        action="store_true",
+        help="дополнительно генерировать ответы и проверять отказ по тексту",
+    )
+    tune_p.add_argument(
+        "--bootstraps",
+        type=int,
+        default=1,
+        help="прогонов на ресемплированных пулах (бутстрап с возвратом)",
+    )
+    tune_p.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="зерно ресемплинга пула",
+    )
+    tune_p.add_argument("--output", help="записать полный отчёт в JSON")
+    tune_p.add_argument(
+        "--cache-dir",
+        default=str(DEFAULT_DIR),
+        help="каталог кэша результатов",
+    )
+    tune_p.add_argument(
+        "--force", action="store_true", help="переснять все точки, игнорируя кэш"
+    )
+    tune_p.add_argument(
+        "--max-points",
+        type=int,
+        default=100,
+        help="максимум точек сетки (защита от гигантского перебора)",
+    )
+
     cache_p = sub.add_parser("cache", help="управление кэшем результатов")
     cache_p.add_argument("--dir", default=str(DEFAULT_DIR), help="каталог кэша")
     cache_sub = cache_p.add_subparsers(dest="cache_command", required=True)
@@ -358,6 +427,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_ab(args)
     if args.command == "bench":
         return _cmd_bench(args)
+    if args.command == "tune":
+        return _cmd_tune(args)
     if args.command == "report":
         return _cmd_report(args)
     return _cmd_cache(args)
