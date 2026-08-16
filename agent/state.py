@@ -24,9 +24,21 @@ class AgentState(TypedDict):
     query: NotRequired[str]
     plan: NotRequired[SearchPlan]
     always_answer_with_db: NotRequired[bool]
-    retrieved: NotRequired[Annotated[list[dict], operator.add]]
+    retrieved: NotRequired[list[dict]]
+    branch_retrieved: NotRequired[Annotated[list[dict], operator.add]]
     failures: NotRequired[Annotated[list[str], operator.add]]
     followups: NotRequired[list[str]]
     retrieval_failed: NotRequired[bool]
     rewrite_attempts: NotRequired[int]
     needs_rewrite: NotRequired[bool]
+
+
+class SearchAgentState(TypedDict):
+    query: str
+    rounds: NotRequired[int]
+    sections: NotRequired[list[str]]
+    areas: NotRequired[list[str]]
+    retrieved: NotRequired[Annotated[list[dict], operator.add]]
+    failures: NotRequired[Annotated[list[str], operator.add]]
+    retrieval_failed: NotRequired[bool]
+    branch_messages: Annotated[list, add_messages]

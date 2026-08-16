@@ -8,30 +8,18 @@
 """
 
 import logging
-import operator
-from typing import Annotated, NotRequired, TypedDict
 
 from langchain_core.messages import SystemMessage, ToolMessage
-from langgraph.graph import END, START, StateGraph, add_messages
+from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 
 from infrastructure.retrieval.qdrant_search import SearchUnavailable
 from infrastructure.retrieval.search import Search, to_citation
 
 from .prompts import SEARCH_AGENT_PROMPT
+from .state import SearchAgentState
 
 logger = logging.getLogger(__name__)
-
-
-class SearchAgentState(TypedDict):
-    query: str
-    rounds: NotRequired[int]
-    sections: NotRequired[list[str]]
-    areas: NotRequired[list[str]]
-    retrieved: NotRequired[Annotated[list[dict], operator.add]]
-    failures: NotRequired[Annotated[list[str], operator.add]]
-    retrieval_failed: NotRequired[bool]
-    branch_messages: Annotated[list, add_messages]
 
 
 class RetrieveQuery(BaseModel):
@@ -54,9 +42,7 @@ def build_search_agent(support_model, search: Search, *, max_rounds: int = 2):
     async def agent_assistant(state: SearchAgentState):
         messages = [
             SystemMessage(
-                SEARCH_AGENT_PROMPT.format(
-                    query=state["query"], max_rounds=max_rounds
-                )
+                SEARCH_AGENT_PROMPT.format(query=state["query"], max_rounds=max_rounds)
             ),
             *state.get("branch_messages", []),
         ]
@@ -103,9 +89,7 @@ def build_search_agent(support_model, search: Search, *, max_rounds: int = 2):
         return {
             "rounds": rounds,
             "retrieved": items,
-            "branch_messages": [
-                ToolMessage(content=content, tool_call_id=call["id"])
-            ],
+            "branch_messages": [ToolMessage(content=content, tool_call_id=call["id"])],
         }
 
     def route_after_assistant(state: SearchAgentState) -> str:

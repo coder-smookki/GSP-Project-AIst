@@ -33,14 +33,12 @@ def create_application(settings: Settings | None = None):
         model,
         support_model,
         context_manager,
+        search=get_search(settings),
         store=InMemoryStore(),
         checkpointer=MemorySaver(),
         max_memories_count=15,
-        max_rewrites=settings.retrieval_max_rewrites,
-        # Без этого CLI-сборка агента шла вообще без поиска: узел retrieve
-        # молча возвращал пустоту, и агент отвечал по памяти модели.
-        search=get_search(settings),
-        grading=settings.grading_enabled,
-        grading_keep_partial=settings.grading_keep_partial,
+        max_requests=settings.retrieval_max_requests,
+        branch_retries=settings.retrieval_branch_retries,
+        top_k=settings.retrieval_top_k,
         verify_numbers=settings.verify_numbers,
     )
