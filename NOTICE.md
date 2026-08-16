@@ -31,9 +31,11 @@
 - **Где поставляется:** только образ оркестрации `deploy/Dockerfile.orchestration`
   (`pyproject` → extra `.[orchestration]`) и локальное dev-окружение / CI.
 - **Где НЕ поставляется:** основной API-образ `deploy/Dockerfile` (устанавливает
-  `.[rerank]`, `prefect` не подключается) и GUI-образ `deploy/Dockerfile.gui`
-  (Chainlit не зависит от `python-slugify`/`text-unidecode` — проверено через
-  `chainlit.Requires-Dist`).
+  проект без extras — `.[rerank]` и `prefect` не подключаются), GPU-образ
+  реранкера `deploy/Dockerfile.reranker` (ставит только `sentence-transformers`,
+  который `python-slugify`/`text-unidecode` не тянет) и GUI-образ
+  `deploy/Dockerfile.gui` (Chainlit не зависит от `python-slugify`/`text-unidecode`
+  — проверено через `chainlit.Requires-Dist`).
 - **Выбор для перераспространения:** для `text-unidecode` избрана
   **Artistic License** как допустимая альтернатива двойной лицензии; при таком
   выборе комбинация с кодом проекта (Apache 2.0) остаётся разрешающей.

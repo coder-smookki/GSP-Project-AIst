@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     rerank_device: str = ""
     rerank_half_precision: bool = True
 
+    #: URL хост-сервиса переоценки (deploy/rerank_server.py), например
+    #: http://host.docker.internal:8899. Colima не пробрасывает GPU, и инференс
+    #: кросс-энкодера в контейнере в ~16 раз медленнее нативного macOS-торча
+    #: (MPS). При пустом значении реранкер считается локально, как раньше.
+    rerank_endpoint: str = ""
+
     rerank_candidates: int = 10
 
     # ---------------------------------------------------------- грейдинг
