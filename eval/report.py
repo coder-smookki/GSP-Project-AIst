@@ -20,6 +20,7 @@ import logging
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # При прямом запуске в sys.path попадает каталог eval, а не корень репозитория.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -430,6 +431,23 @@ def _metric_short(key: str) -> str:
     return _METRIC_SHORT.get(key, key)
 
 
+def _is_tune_run(run: dict) -> bool:
+    """Точка ли это сетки ``eval tune``.
+
+    Имя варианта сетки собирается из значений параметров через ``;``
+    (``retrieval_top_k=5;retrieval_prefetch=30;...``); точки сетки —
+    инструментальные измерения, они показываются в разделе «Итоги тюнинга
+    по сетке», а не в производственном лидерборде.
+
+    Args:
+        run: Прогон из :func:`collect_runs`.
+
+    Returns:
+        bool: ``True``, если прогон — точка сетки.
+    """
+    return any(";" in variant for variant in run["variants"])
+
+
 def _aggregate_configs(runs: list[dict]) -> list[dict]:
     """Сводные конфигурации: окружение → средние метрики по прогонам.
 
@@ -447,6 +465,8 @@ def _aggregate_configs(runs: list[dict]) -> list[dict]:
     labels: dict[tuple[str, str], str] = {}
     order: list[tuple[str, str]] = []
     for run in runs:
+        if _is_tune_run(run):
+            continue
         graph = run.get("graph", "base")
         key = (graph, run.get("environment_key") or run["environment"])
         if key not in grouped:
@@ -769,6 +789,157 @@ def _fmt_number(value: float | None) -> str:
     return f"{value:.3f}" if value is not None else "—"
 
 
+#: Порядок и характер метрик в таблицах тюнинга: ``max`` идёт вверх, ``min`` — вниз.
+_TUNE_METRICS: dict[str, str] = {
+    "hit@1": "max",
+    "hit@3": "max",
+    "hit@5": "max",
+    "mrr": "max",
+    "not_found": "min",
+    "latency_median": "min",
+}
+
+
+def tune_section(path: str | Path) -> str:
+    """Раздел «Итоги тюнинга по сетке» из отчёта ``eval tune --output``.
+
+    Читает JSON-отчёт сетки: спека параметров, лучшая точка по целевой
+    метрике и направления влияния каждого параметра (средние метрики по
+    значениям, лучшие помечены звёздочкой, «плоские» параметры отмечены).
+    Точки сетки не попадают в лидерборд — это раздел именно для них.
+
+    Args:
+        path: Путь к JSON-отчёту тюнинга.
+
+    Returns:
+        str: Markdown-раздел или пустая строка, если файла/точек нет.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return ""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    points = data.get("points") or []
+    if not points:
+        return ""
+    params = data.get("params") or {}
+    objective = data.get("objective", "hit@1")
+    direction = data.get("direction", "max")
+    graph = data.get("graph", "base")
+    keys = [key for key in _TUNE_METRICS if any(key in p["metrics"] for p in points)]
+
+    lines = [
+        "## Итоги тюнинга по сетке",
+        "",
+        f"Сетка из {len(points)} точек (граф `{graph}`), цель — `{objective}` "
+        f"({direction}). Точки кэшированы в `eval/results/`; в лидерборд они "
+        "не попадают, потому что это инструментальные измерения — сводка здесь.",
+        "",
+    ]
+
+    if params:
+        lines += ["| параметр | значения |", "| --- | --- |"]
+        for name, values in params.items():
+            lines.append(f"| `{name}` | {', '.join(str(v) for v in values)} |")
+        lines.append("")
+
+    best = (
+        max(points, key=lambda p: p["objective"])
+        if direction == "max"
+        else min(points, key=lambda p: p["objective"])
+    )
+    lines += [
+        f"**Лучшая точка** (по `{objective}`): `{best['name']}`.",
+        "",
+        "| метрика | значение |",
+        "| --- | --- |",
+    ]
+    for key in keys:
+        lines.append(f"| {key} | {_fmt_number(best['metrics'].get(key))} |")
+    lines.append("")
+
+    for name in params:
+        cells_by_value: list[tuple[Any, int, list[float | None]]] = []
+        for value in params[name]:
+            selected = [
+                p for p in points if p["settings"].get(name) == value
+            ]
+            cells: list[float | None] = []
+            for key in keys:
+                values = [
+                    p["metrics"].get(key) for p in selected
+                    if p["metrics"].get(key) is not None
+                ]
+                cells.append(sum(values) / len(values) if values else None)
+            cells_by_value.append((value, len(selected), cells))
+        flat = True
+        for i in range(len(keys)):
+            avgs = [cells[i] for _, _, cells in cells_by_value if cells[i] is not None]
+            if len(avgs) > 1 and max(avgs) - min(avgs) >= 1e-6:
+                flat = False
+        best_value: dict[str, Any] = {}
+        for i, key in enumerate(keys):
+            best = None
+            best_avg = None
+            for value, _, cells in cells_by_value:
+                avg = cells[i]
+                if avg is None:
+                    continue
+                if best_avg is None or (
+                    avg > best_avg
+                    if _TUNE_METRICS[key] == "max"
+                    else avg < best_avg
+                ):
+                    best_avg = avg
+                    best = value
+            best_value[key] = best
+        lines.append(f"### `{name}`")
+        lines.append("")
+        lines.append("| значение | n | " + " | ".join(keys) + " |")
+        lines.append(
+            "| --- | --- | " + " | ".join("---" for _ in keys) + " |"
+        )
+        for value, count, cells in cells_by_value:
+            rendered = [
+                f"{_fmt_number(cells[i])}"
+                f"{'*' if cells[i] is not None and value == best_value[key] else ''}"
+                for i, key in enumerate(keys)
+            ]
+            lines.append(
+                f"| {value} | {count} | " + " | ".join(rendered) + " |"
+            )
+        if flat:
+            lines.append("")
+            lines.append(f"*(параметр `{name}` не влияет на метрики во всём диапазоне)*")
+        lines.append("")
+
+    directions: list[str] = []
+    for name in params:
+        target = max if direction == "max" else min
+        best_value = target(
+            params[name],
+            key=lambda v: sum(
+                p["objective"]
+                for p in points
+                if p["settings"].get(name) == v
+            )
+            / max(1, sum(1 for p in points if p["settings"].get(name) == v)),
+        )
+        values_avg = {
+            v: sum(p["objective"] for p in points if p["settings"].get(name) == v)
+            / max(1, sum(1 for p in points if p["settings"].get(name) == v))
+            for v in params[name]
+        }
+        if max(values_avg.values()) - min(values_avg.values()) < 1e-6:
+            directions.append(f"`{name}` — не влияет")
+        else:
+            directions.append(f"`{name}` → `{best_value}`")
+    lines += [
+        "**Направления:** " + "; ".join(directions) + ".",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _ab_verdicts_section(
     all_ab_verdicts: list[dict],
     runs: list[dict],
@@ -964,10 +1135,22 @@ _STATIC_SECTIONS = """## Как пользоваться
 значений. Каждая точка кэшируется, поэтому расширение сетки доганяет только
 новые комбинации. `--max-points` (по умолчанию 100) защищает от гигантского
 перебора, `--output` пишет полный отчёт с метриками всех точек в JSON.
+Итоги сетки включаются в этот документ командой:
+
+    uv run eval report --tune eval/outputs/tune.json
+
+Точки сетки остаются в «Истории результатов», но в лидерборд не попадают —
+для них есть раздел «Итоги тюнинга по сетке».
 """
 
 
-def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: ResultCache, output_dir: Path) -> str:
+def render_markdown(
+    runs: list[dict],
+    all_ab_verdicts: list[dict],
+    cache: ResultCache,
+    output_dir: Path,
+    tune_paths: list[Path] | tuple[Path, ...] = (),
+) -> str:
     """Собирает текст документа целиком.
 
     Args:
@@ -975,6 +1158,8 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
         all_ab_verdicts: Все A/B вердикты из :func:`load_all_ab_verdicts`.
         cache: Хранилище результатов.
         output_dir: Каталог документа (для относительных ссылок).
+        tune_paths: Пути к отчётам ``eval tune --output`` для раздела
+            «Итоги тюнинга по сетке».
 
     Returns:
         str: Текст docs/BENCHMARK.md.
@@ -1000,12 +1185,18 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
         lines.append(graphs_summary)
     lines += [_STATIC_SECTIONS.strip(), ""]
 
+    for tune_path in tune_paths:
+        section = tune_section(tune_path)
+        if section:
+            lines.append(section)
+
     lines += [
         "## История результатов",
         "",
         "Каждая строка — один прогон: группа вариантов, снятых на одном наборе,",
         "окружении и конфиге. Сырые строки свёрнуты — обычно нужны только",
-        "«Рекомендации» и «Лидерборд» выше.",
+        "«Рекомендации» и «Лидерборд» выше. Точки сетки `eval tune` попадают",
+        "в историю как есть, но в лидерборд не включаются.",
         "",
     ]
 
@@ -1052,19 +1243,27 @@ def render_markdown(runs: list[dict], all_ab_verdicts: list[dict], cache: Result
     return "\n".join(lines)
 
 
-def generate(cache: ResultCache, output: str | Path) -> int:
+def generate(
+    cache: ResultCache,
+    output: str | Path,
+    tune_paths: list[Path] | tuple[Path, ...] = (),
+) -> int:
     """Пишет docs/BENCHMARK.md из кэша.
 
     Args:
         cache: Хранилище результатов.
         output: Куда писать отчёт.
+        tune_paths: Пути к отчётам ``eval tune --output`` для раздела
+            «Итоги тюнинга по сетке».
 
     Returns:
         int: Код возврата процесса (всегда 0).
     """
     output_path = Path(output)
     runs, all_ab_verdicts = collect_runs(cache)
-    text = render_markdown(runs, all_ab_verdicts, cache, output_path.parent)
+    text = render_markdown(
+        runs, all_ab_verdicts, cache, output_path.parent, tune_paths=tune_paths
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(text, encoding="utf-8")
     logger.info("отчёт записан в %s (прогонов: %d)", output, len(runs))
@@ -1088,10 +1287,18 @@ def main() -> int:
         default=str(DEFAULT_OUTPUT),
         help="куда писать отчёт (по умолчанию docs/BENCHMARK.md)",
     )
+    parser.add_argument(
+        "--tune",
+        action="append",
+        default=[],
+        help="путь к отчёту `eval tune --output` (можно указать несколько)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    return generate(ResultCache(args.cache_dir), args.output)
+    return generate(
+        ResultCache(args.cache_dir), args.output, tune_paths=args.tune
+    )
 
 
 if __name__ == "__main__":

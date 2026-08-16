@@ -183,7 +183,11 @@ def _cmd_report(args: argparse.Namespace) -> int:
     """
     from eval.report import generate
 
-    return generate(ResultCache(args.cache_dir), args.output)
+    return generate(
+        ResultCache(args.cache_dir),
+        args.output,
+        tune_paths=getattr(args, "tune", None) or [],
+    )
 
 
 def _cmd_cache(args: argparse.Namespace) -> int:
@@ -418,6 +422,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         default=str(DEFAULT_REPORT),
         help="куда писать отчёт (по умолчанию docs/BENCHMARK.md)",
+    )
+    report_p.add_argument(
+        "--tune",
+        action="append",
+        default=[],
+        help="путь к отчёту `eval tune --output`; включается в документ "
+        "разделом «Итоги тюнинга по сетке»",
     )
 
     return parser

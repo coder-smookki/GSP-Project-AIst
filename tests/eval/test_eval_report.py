@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from eval.cache import ResultCache, build_entry, cache_key
 from eval.config import Environment, RunConfig, Variant
 from eval.metrics import MRR, HitAtK, compute_metrics
@@ -20,6 +22,7 @@ from eval.report import (
     load_all_ab_verdicts,
     metric_from_key,
     render_markdown,
+    tune_section,
 )
 from tests.eval.test_eval_cache import CONFIG, ENV, METRICS
 from tests.eval.test_eval_stats import make_result
@@ -222,6 +225,24 @@ class TestReportHelpers:
         assert len(rows) == 1
         assert rows[0]["n"] == 2
 
+    def test_aggregate_ignores_tune_points(self, tmp_path) -> None:
+        """Точки сетки (имя варианта с ';') в лидерборд не попадают."""
+        from dataclasses import replace
+
+        cache = ResultCache(tmp_path)
+        _save_with(cache, Variant(name="base"), ENV, [1, 2], "a")
+        tune_env = replace(ENV, retrieval_top_k=8)
+        tune = Variant(
+            name="retrieval_top_k=8;retrieval_prefetch=40",
+            settings={"retrieval_top_k": 8, "retrieval_prefetch": 40},
+        )
+        _save_with(cache, tune, tune_env, [2, 2], "a")
+        runs, _ = collect_runs(cache)
+        assert len(runs) == 2
+        rows = _aggregate_configs(runs)
+        assert len(rows) == 1
+        assert rows[0]["n"] == 1
+
     def test_human_config_shortens_embedder(self) -> None:
         """Полное имя эмбеддера сокращается в лидерборде."""
         desc = "llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, rerank=вкл"
@@ -319,6 +340,72 @@ class TestReportHelpers:
         assert "### Граф: `rd-v2`" in text
         assert "## Лучшие по графам" in text
         assert "общий лидер по MRR" in text
+
+
+class TestTuneSection:
+    """Раздел «Итоги тюнинга по сетке»."""
+
+    def _json(self, tmp_path) -> Path:
+        import json as _json
+        from pathlib import Path
+
+        path = Path(tmp_path) / "tune.json"
+        path.write_text(
+            _json.dumps(
+                {
+                    "params": {"retrieval_top_k": [3, 5]},
+                    "objective": "hit@1",
+                    "direction": "max",
+                    "bootstraps": 1,
+                    "seed": 42,
+                    "graph": "base",
+                    "points": [
+                        {
+                            "name": "retrieval_top_k=3",
+                            "settings": {"retrieval_top_k": 3},
+                            "metrics": {"hit@1": 0.6, "hit@3": 0.7,
+                                        "mrr": 0.65, "not_found": 0.40,
+                                        "latency_median": 0.2},
+                            "objective": 0.6,
+                            "std": 0.0,
+                        },
+                        {
+                            "name": "retrieval_top_k=5",
+                            "settings": {"retrieval_top_k": 5},
+                            "metrics": {"hit@1": 0.8, "hit@3": 0.9,
+                                        "mrr": 0.85, "not_found": 0.10,
+                                        "latency_median": 0.25},
+                            "objective": 0.8,
+                            "std": 0.0,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_renders_section(self, tmp_path) -> None:
+        """Лучшая точка, направления и средние по параметру на месте."""
+        section = tune_section(self._json(tmp_path))
+        assert "## Итоги тюнинга по сетке" in section
+        assert "`retrieval_top_k` → `5`" in section
+        assert "Лучшая точка" in section
+        assert "`retrieval_top_k=5`" in section
+        assert "*" in section
+
+    def test_missing_file_returns_empty(self, tmp_path) -> None:
+        """Отсутствующий отчёт — пустой раздел."""
+        assert tune_section(tmp_path / "nope.json") == ""
+
+    def test_integration_into_report(self, tmp_path) -> None:
+        """render_markdown встраивает секцию по переданному пути."""
+        from pathlib import Path
+
+        tune_path = self._json(tmp_path)
+        cache = ResultCache(tmp_path)
+        text = render_markdown([], [], cache, Path(tmp_path), tune_paths=[tune_path])
+        assert "## Итоги тюнинга по сетке" in text
 
 
 class TestGenerate:
