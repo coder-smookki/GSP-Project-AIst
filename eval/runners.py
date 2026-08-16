@@ -200,6 +200,8 @@ class GoldenSetRunner:
             ValueError: В ``BuildResult`` нет поиска.
         """
         golden = GoldenSet.load(config.golden).limited(config.limit)
+        if config.bootstraps > 1:
+            golden = golden.resample(config.seed, config.sample_index)
         built = self._build(variant, config)
         if built.search is None:
             raise ValueError("GoldenSetRunner требует поиск в BuildResult")
@@ -221,6 +223,9 @@ class GoldenSetRunner:
                 "golden": config.golden,
                 "limit": config.limit,
                 "with_answers": config.with_answers,
+                "bootstraps": config.bootstraps,
+                "sample_index": config.sample_index,
+                "graph": config.graph,
             },
         )
 
