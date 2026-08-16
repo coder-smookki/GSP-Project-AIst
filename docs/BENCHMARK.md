@@ -6,7 +6,7 @@
 
 ## Рекомендации
 
-**Текущий лидер:** `LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10` — hit@1 = 0.732, MRR = 0.776.
+**Текущий лидер:** `LLM=gpt-oss:20b, emb=bge-m3, top_k=8, реранк=вкл, канд.=10` — hit@1 = 0.744, MRR = 0.787.
 
 **Значимых A/B-эффектов (p < 0.05) пока нет.**
 
@@ -16,7 +16,9 @@
 
 | конфигурация | hit@1 | MRR | not_found | лат., мед. | кол-во | заметка |
 | --- | --- | --- | --- | --- | --- | --- |
-| LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10 | 0.732 | 0.776 | 0.146 | 0.312 | 1 | максимальное качество, самый быстрый |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=8, реранк=вкл, канд.=10 | 0.744 | 0.787 | 0.159 | 0.281 | 2 | максимальное качество, самый быстрый |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10 | 0.738 | 0.782 | 0.152 | 0.290 | 4 | — |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=3, реранк=вкл, канд.=10 | 0.740 | 0.775 | 0.187 | 0.290 | 3 | — |
 
 ## Как пользоваться
 
@@ -30,6 +32,7 @@
 | `uv run eval run --variant top6 --settings '{"retrieval_top_k": 6}'` | конкретный вариант |
 | `uv run eval ab --variants variants.json --with-answers` | A/B-сравнение вариантов из файла |
 | `uv run eval bench --repeats 3` | операционный замер: латенси и нагрузка |
+| `uv run eval tune --params '{"retrieval_top_k": [3, 5, 8]}' --objective hit@1` | перебор по сетке параметров |
 | `uv run eval report` | обновить этот документ из кэша |
 | `uv run eval cache list` | посмотреть, какие результаты сохранены |
 
@@ -56,6 +59,31 @@
 ранговый критерий Уилкоксона. Без scipy обе заменяются парным пермутационным
 тестом. Вердикт значим при `p < 0.05`.
 
+## Бутстрап-выборки
+
+Один прогон на наборе даёт точечные метрики без представления о разбросе.
+Флаг `--bootstraps N` (в `run` и `ab`) ресемплирует пул вопросов **с
+возвратом**: вариант N раз прогоняется на детерминированной выборке того же
+размера, состав выбирается общим зерном `--seed`, поэтому для всех вариантов
+на одной выборке вопросы совпадают. Итоговые метрики — среднее по выборкам,
+разброс печатается как `± std`. A/B-сравнение при бутстрепе — по парным
+разностям `variant_k − base_k` по выборкам (Уилкоксон, без scipy —
+пермутационный тест). Каждая выборка кэшируется отдельно, так что добивание
+уже снятых точек ничего не переснимает.
+
+## Тюнинг по сетке
+
+`eval tune` перебирает декартову сетку параметров и сортирует результаты по
+целевой метрике — «ручной» шаг поиска оптимума перед точечным A/B:
+
+    uv run eval tune --params '{"retrieval_top_k": [3, 5, 8], "rerank_candidates": [5, 10, 15]}'         --objective hit@1 --direction max --bootstraps 5
+
+Параметры — реальные поля настроек (модель, `retrieval_top_k`,
+`rerank_candidates`, `rerank_enabled` и т.д.), имя точки собирается из её
+значений. Каждая точка кэшируется, поэтому расширение сетки доганяет только
+новые комбинации. `--max-points` (по умолчанию 100) защищает от гигантского
+перебора, `--output` пишет полный отчёт с метриками всех точек в JSON.
+
 ## История результатов
 
 Каждая строка — один прогон: группа вариантов, снятых на одном наборе,
@@ -63,10 +91,18 @@
 «Рекомендации» и «Лидерборд» выше.
 
 <details>
-<summary>сырые прогоны (1)</summary>
+<summary>сырые прогоны (9)</summary>
 
 | дата | окружение | варианты | метрики | вердикт | кэш |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-16 08:42 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=8, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55 | retrieval_top_k=8 | hit@1 0.805<br>hit@3 0.902<br>hit@5 0.927<br>mrr 0.860<br>not_found 0.073<br>refusal_rate 0.300<br>latency_median 0.283<br>latency_p95 0.327<br>answer_chars 0.000 | — | [retrieval_top_k=8](../eval/results/5283b34ba08b44e55fce4c1b601f9540.json) |
+| 2026-08-16 08:42 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=8, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55 | retrieval_top_k=8 | hit@1 0.683<br>hit@3 0.732<br>hit@5 0.756<br>mrr 0.713<br>not_found 0.244<br>refusal_rate 0.700<br>latency_median 0.278<br>latency_p95 0.302<br>answer_chars 0.000 | — | [retrieval_top_k=8](../eval/results/20656a62a7a87d7dc6b2618b697750a0.json) |
+| 2026-08-16 08:42 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55 | retrieval_top_k=5 | hit@1 0.805<br>hit@3 0.902<br>hit@5 0.927<br>mrr 0.860<br>not_found 0.073<br>refusal_rate 0.300<br>latency_median 0.284<br>latency_p95 0.319<br>answer_chars 0.000 | — | [retrieval_top_k=5](../eval/results/d043acfa8f6f40e96c04933f4909cc07.json) |
+| 2026-08-16 08:41 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55 | retrieval_top_k=5 | hit@1 0.683<br>hit@3 0.732<br>hit@5 0.756<br>mrr 0.713<br>not_found 0.244<br>refusal_rate 0.700<br>latency_median 0.278<br>latency_p95 0.302<br>answer_chars 0.000 | — | [retrieval_top_k=5](../eval/results/58c014c02c0f11f9c66f1e0bb16621fe.json) |
+| 2026-08-16 08:41 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=3, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55 | retrieval_top_k=3 | hit@1 0.805<br>hit@3 0.902<br>hit@5 0.902<br>mrr 0.854<br>not_found 0.098<br>refusal_rate 0.300<br>latency_median 0.286<br>latency_p95 0.334<br>answer_chars 0.000 | — | [retrieval_top_k=3](../eval/results/4f7fb4aea477ebc6cdd69ee1aa74e606.json) |
+| 2026-08-16 08:41 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=3, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55 | retrieval_top_k=3 | hit@1 0.683<br>hit@3 0.732<br>hit@5 0.732<br>mrr 0.707<br>not_found 0.268<br>refusal_rate 0.700<br>latency_median 0.290<br>latency_p95 0.341<br>answer_chars 0.000 | — | [retrieval_top_k=3](../eval/results/1ca21a9dd7b917574e4954fcd7cf3ca2.json) |
+| 2026-08-16 08:40 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55 | retrieval_top_k=5 | hit@1 0.732<br>hit@3 0.805<br>hit@5 0.854<br>mrr 0.776<br>not_found 0.146<br>refusal_rate 0.500<br>latency_median 0.285<br>latency_p95 0.319<br>answer_chars 0.000 | — | [retrieval_top_k=5](../eval/results/c044e8e0f6615304201a43ea9740943e.json) |
+| 2026-08-16 08:40 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=3, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55 | retrieval_top_k=3 | hit@1 0.732<br>hit@3 0.805<br>hit@5 0.805<br>mrr 0.764<br>not_found 0.195<br>refusal_rate 0.500<br>latency_median 0.293<br>latency_p95 0.322<br>answer_chars 0.000 | — | [retrieval_top_k=3](../eval/results/8b36b5b6f238841f7e6b39097e554555.json) |
 | 2026-08-16 08:12 | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55 | base | hit@1 0.732<br>hit@3 0.805<br>hit@5 0.854<br>mrr 0.776<br>not_found 0.146<br>refusal_rate 1.000<br>latency_median 0.312<br>latency_p95 0.368<br>answer_chars 28.600 | — | [base](../eval/results/6e41cc21900dadc3dbaade7cabad6f5c.json) |
 
 </details>
