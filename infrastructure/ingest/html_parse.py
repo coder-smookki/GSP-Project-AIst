@@ -27,6 +27,7 @@ from infrastructure.ingest.patterns import (
     is_false_clause,
     restore_clause,
 )
+from infrastructure.ingest.table_md import render_table
 from infrastructure.retrieval.source import RawDocument
 
 logger = logging.getLogger(__name__)
@@ -37,20 +38,47 @@ class _BlockExtractor(HTMLParser):
         super().__init__(convert_charrefs=True)
         self._skip_content = config.skip_content
         self._block_tags = config.block_tags
+        self._render_markdown = config.render_tables_as_markdown
         self.blocks: list[tuple[str, str]] = []
         self._buffer: list[str] = []
         self._tag: str = "p"
         self._skip_depth = 0
         self._in_table = False
+        self._rows: list[list[str]] = []
+        self._row: list[str] | None = None
+        self._cell: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self._skip_content:
             self._skip_depth += 1
             return
         if tag == "table":
+            self._flush()
             self._in_table = True
+            self._rows = []
+            self._row = None
+            self._cell = None
+            return
         if tag == "br":
-            self._buffer.append(" ")
+            if self._in_table and self._cell is not None:
+                self._cell.append(" ")
+            elif not self._in_table:
+                self._buffer.append(" ")
+            return
+        if self._in_table:
+            if not self._render_markdown:
+                if tag in self._block_tags:
+                    self._flush()
+                    self._tag = tag
+                return
+            if tag == "tr":
+                self._close_cell()
+                self._row = []
+            elif tag in {"td", "th"}:
+                self._close_cell()
+                self._cell = []
+            elif tag in self._block_tags and self._cell is not None:
+                self._cell.append(" ")
             return
         if tag in self._block_tags:
             self._flush()
@@ -61,8 +89,25 @@ class _BlockExtractor(HTMLParser):
             self._skip_depth = max(0, self._skip_depth - 1)
             return
         if tag == "table":
-            self._flush()
+            self._close_row()
             self._in_table = False
+            if self._render_markdown:
+                markdown = render_table(self._rows)
+                if markdown:
+                    self.blocks.append(("table", markdown))
+            else:
+                self._flush()
+            self._rows = []
+            self._row = None
+            self._cell = None
+            return
+        if self._in_table and self._render_markdown:
+            if tag == "tr":
+                self._close_row()
+            elif tag in {"td", "th"}:
+                self._close_cell()
+            elif tag in self._block_tags and self._cell is not None:
+                self._cell.append(" ")
             return
         if tag in self._block_tags:
             self._flush()
@@ -70,7 +115,25 @@ class _BlockExtractor(HTMLParser):
     def handle_data(self, data: str) -> None:
         if self._skip_depth:
             return
+        if self._in_table and self._render_markdown:
+            if self._cell is not None:
+                self._cell.append(data)
+            return
         self._buffer.append(data)
+
+    def _close_cell(self) -> None:
+        if self._cell is None:
+            return
+        text = re.sub(r"\s+", " ", unescape("".join(self._cell))).strip()
+        self._cell = None
+        if self._row is not None:
+            self._row.append(text)
+
+    def _close_row(self) -> None:
+        self._close_cell()
+        if self._row:
+            self._rows.append(self._row)
+        self._row = None
 
     def _flush(self) -> None:
         text = re.sub(r"\s+", " ", unescape("".join(self._buffer))).strip()
@@ -86,6 +149,15 @@ class _BlockExtractor(HTMLParser):
 
     def close(self) -> None:
         super().close()
+        if self._in_table and self._render_markdown:
+            self._close_row()
+            self._in_table = False
+            markdown = render_table(self._rows)
+            if markdown:
+                self.blocks.append(("table", markdown))
+            self._rows = []
+            self._row = None
+            self._cell = None
         self._flush()
 
 
@@ -334,11 +406,12 @@ def build_document(
             current_type = SectionType(classify_section(current_title))
             continue
 
-        is_table = tag in {"td", "th"} or bool(TABLE_REF.search(text))
+        is_table = tag in {"td", "th", "table"} or bool(TABLE_REF.search(text))
         for clause, body in _split_clauses(text, current_no):
             previous = atoms[-1] if atoms else None
             joinable = (
                 clause is None
+                and tag != "table"
                 and pending_clause is not None
                 and previous is not None
                 and len(previous.text) + len(body) + 1 <= max_atom_chars

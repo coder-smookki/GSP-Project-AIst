@@ -13,6 +13,7 @@ class ParsingConfig:
     block_tags: frozenset[str] = frozenset(
         {"p", "li", "h1", "h2", "h3", "h4", "td", "th", "div"}
     )
+    render_tables_as_markdown: bool = True
 
 
 @dataclass(frozen=True, slots=True)
