@@ -44,12 +44,19 @@ from typing import Any
 # при пересборке окружения.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval.cache import ResultCache, build_entry, cache_key, file_hash, ab_cache_key, build_ab_entry
+from eval.cache import (
+    ResultCache,
+    ab_cache_key,
+    build_ab_entry,
+    build_entry,
+    cache_key,
+    file_hash,
+)
 from eval.config import RunConfig, Variant
 from eval.golden import DEFAULT_GOLDEN
-from eval.metrics import BaseMetric, default_metrics
-from eval.result import RunResult, Verdict
-from eval.runners import GoldenSetRunner
+from eval.metrics import BaseMetric, default_metrics, graph_metrics
+from eval.result import RunResult
+from eval.runners import GoldenSetRunner, GraphSetRunner
 from eval.stats import compare_bootstrapped
 from eval.variants import variant_environment
 
@@ -115,7 +122,12 @@ async def run_matrix(
     """
     from eval.variants import build_variant, variant_environment
 
-    runner = GoldenSetRunner(build=build_variant, metrics=metrics)
+    # Выбираем раннер в зависимости от режима
+    if config.graph_retrieval:
+        runner = GraphSetRunner(build=build_variant, metrics=metrics)
+    else:
+        runner = GoldenSetRunner(build=build_variant, metrics=metrics)
+
     dataset = file_hash(config.golden)
     samples = max(1, config.bootstraps)
 
@@ -343,8 +355,12 @@ async def main_async(
         bootstraps=args.bootstraps,
         seed=args.seed,
         graph=args.graph,
+        graph_retrieval=args.graph_retrieval,
     )
     cache = ResultCache(args.cache_dir)
+
+    # Выбираем метрики в зависимости от режима
+    metrics = graph_metrics() if args.graph_retrieval else default_metrics()
 
     try:
         results = await run_matrix(
@@ -368,19 +384,30 @@ async def main_async(
     for result in results[1:]:
         variant = next(v for v in variants if v.name == result.variant)
         environment = variant_environment(variant)
-        verdicts = compare_bootstrapped(metrics, results[0], result)
-        ab_key = ab_cache_key(base_variant, variant, dataset, metrics, environment, config)
+        verdict_objs = compare_bootstrapped(metrics, results[0], result)
+        ab_key = ab_cache_key(
+            base_variant, variant, dataset, metrics, environment, config
+        )
         cache.save_ab(
-            build_ab_entry(ab_key, base_variant, variant, verdicts, environment, dataset, metrics, config)
+            build_ab_entry(
+                ab_key,
+                base_variant,
+                variant,
+                verdict_objs,
+                environment,
+                dataset,
+                metrics,
+                config,
+            )
         )
         logger.info("A/B вердикты сохранены в кэш: %s", ab_key)
 
     if args.output:
-        verdicts: list[dict[str, Any]] = []
+        verdict_dicts: list[dict[str, Any]] = []
         for result in results[1:]:
             for verdict in compare_bootstrapped(metrics, results[0], result):
-                verdicts.append({"variant": result.variant, **asdict(verdict)})
-        payload = _build_payload(variants, results, metrics, verdicts)
+                verdict_dicts.append({"variant": result.variant, **asdict(verdict)})
+        payload = _build_payload(variants, results, metrics, verdict_dicts)
         await asyncio.to_thread(
             Path(args.output).write_text,
             json.dumps(payload, ensure_ascii=False, indent=2),
@@ -430,6 +457,13 @@ def main() -> int:
         default="base",
         help="тег версии графа агента (base, rd-v2, ...): отдельная секция "
         "в отчёте и свой кэш",
+    )
+    parser.add_argument(
+        "--graph-retrieval",
+        action="store_true",
+        help="запустить графовый замер (агент целиком) вместо замера сырого поиска; "
+        "включает метрики graph_hit@k, graph_mrr, graph_not_found, "
+        "graph_refusal_rate, avg_search_calls, graph_latency_median",
     )
     parser.add_argument("--output", help="записать полный отчёт в файл")
     parser.add_argument(

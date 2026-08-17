@@ -3,8 +3,61 @@ from langchain_core.messages import AIMessage
 from langgraph.store.memory import InMemoryStore
 
 from agent.graph import build_followups, create_app_agent
-from agent.state import AgentState
+from agent.state import AgentState, SearchPlan
 from tests.fakes.fake_search import MockSearch
+
+# (частично дублирует test_retrieve._SupportModel, но локален, чтобы
+# тест модуля followups не зависел от коллекции фикстур роутера поиска).
+
+
+def _tool_call(query: str, call_id: str = "call-1") -> AIMessage:
+    return AIMessage(
+        content="найдено",
+        tool_calls=[
+            {"name": "RetrieveQuery", "args": {"query": query}, "id": call_id}
+        ],
+    )
+
+
+class _Structured:
+    def __init__(self, plan):
+        self.plan = plan
+        self.calls = 0
+
+    def with_structured_output(self, schema, **kwargs):
+        self.schema = schema
+        return self
+
+    async def ainvoke(self, messages, **kwargs):
+        self.calls += 1
+        if isinstance(self.plan, Exception):
+            raise self.plan
+        return self.plan
+
+
+def _support(plan=None, answer="Ответ."):
+    plan = plan if plan is not None else SearchPlan(
+        mode="kb", subqueries=["Как часто проводится СОУТ?"]
+    )
+
+    class _Model:
+        def __init__(self):
+            self.raw = _Structured(plan)
+
+        async def ainvoke(self, messages, **kwargs):
+            if kwargs.get("tools"):
+                return _tool_call(messages[0].content[:0] or "СОУТ")
+            return AIMessage(content=answer)
+
+    return _Model()
+
+
+class _Model:
+    def __init__(self, answer="Ответ."):
+        self.answer = answer
+
+    async def ainvoke(self, messages, **kwargs):
+        return AIMessage(content=self.answer)
 
 
 class TestBuildFollowups:
@@ -47,17 +100,12 @@ class TestBuildFollowups:
         assert build_followups([]) == ["Что искать в базе знаний?"]
 
 
-class FakeModel:
-    async def ainvoke(self, messages):
-        return AIMessage(content="Ответ.")
-
-
 class TestFollowupsInGraph:
     @pytest.mark.asyncio
     async def test_followups_emitted(self):
         app = create_app_agent(
-            model=FakeModel(),
-            support_model=FakeModel(),
+            model=_Model(),
+            support_model=_support(),
             store=InMemoryStore(),
             search=MockSearch(),
         )
@@ -78,8 +126,8 @@ class TestFollowupsInGraph:
     @pytest.mark.asyncio
     async def test_followups_land_in_state(self):
         app = create_app_agent(
-            model=FakeModel(),
-            support_model=FakeModel(),
+            model=_Model(),
+            support_model=_support(),
             store=InMemoryStore(),
             search=MockSearch(),
         )
