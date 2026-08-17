@@ -69,6 +69,10 @@ class RunConfig:
         graph: Тег версии графа агента (``base``, ``rd-v2``, ...). Входит
             в ключ кэша и в A/B-вердикты, поэтому результаты разных графов
             не смешиваются и в отчёте дают отдельные секции.
+        graph_retrieval: Запускать графовый замер (агент целиком) вместо
+            замера сырого поиска. Включает метрики graph_hit@k, graph_mrr,
+            graph_not_found, graph_refusal_rate, avg_search_calls,
+            graph_latency_median.
     """
 
     runner: Literal["golden", "operational"] = "golden"
@@ -81,6 +85,7 @@ class RunConfig:
     bootstraps: int = 1
     sample_index: int = 0
     graph: str = "base"
+    graph_retrieval: bool = False
 
 
 @dataclass(frozen=True)

@@ -310,3 +310,164 @@ def compute_metrics(
         dict[str, float]: Значение метрики по её ключу.
     """
     return {metric.key: metric.evaluate(outcomes) for metric in metrics}
+
+
+@dataclass(frozen=True)
+class GraphHitAtK(BaseMetric):
+    """Доля отвечаемых вопросов, где ответ в первых ``k`` финальных фрагментах графа."""
+
+    k: int
+    kind: MetricKind = "categorical"
+
+    @property
+    def key(self) -> str:
+        return f"graph_hit@{self.k}"
+
+    @property
+    def display_name(self) -> str:
+        return f"Graph Hit@{self.k}"
+
+    def evaluate(self, outcomes: list[Outcome]) -> float:
+        relevant = answerable_outcomes(outcomes)
+        if not relevant:
+            return 0.0
+        hits = sum(
+            1 for o in relevant if o.graph_rank is not None and o.graph_rank <= self.k
+        )
+        return hits / len(relevant)
+
+    def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:
+        return answerable_outcomes(outcomes)
+
+
+@dataclass(frozen=True)
+class GraphMRR(BaseMetric):
+    """Средняя обратная позиция ответа в финальных фрагментах графа."""
+
+    kind: MetricKind = "continuous"
+
+    @property
+    def key(self) -> str:
+        return "graph_mrr"
+
+    @property
+    def display_name(self) -> str:
+        return "Graph MRR"
+
+    def evaluate(self, outcomes: list[Outcome]) -> float:
+        relevant = answerable_outcomes(outcomes)
+        if not relevant:
+            return 0.0
+        return sum(1.0 / o.graph_rank for o in relevant if o.graph_rank) / len(relevant)
+
+    def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:
+        return answerable_outcomes(outcomes)
+
+
+@dataclass(frozen=True)
+class GraphNotFoundRate(BaseMetric):
+    """Доля отвечаемых вопросов, где ответ не дошёл до финального контекста графа."""
+
+    kind: MetricKind = "categorical"
+    higher_is_better: bool | None = False
+
+    @property
+    def key(self) -> str:
+        return "graph_not_found"
+
+    @property
+    def display_name(self) -> str:
+        return "Graph Не найдено"
+
+    def evaluate(self, outcomes: list[Outcome]) -> float:
+        relevant = answerable_outcomes(outcomes)
+        if not relevant:
+            return 0.0
+        return sum(1 for o in relevant if o.graph_rank is None) / len(relevant)
+
+    def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:
+        return answerable_outcomes(outcomes)
+
+
+@dataclass(frozen=True)
+class GraphRefusalRate(BaseMetric):
+    """Доля вопросов без ответа, на которые агент честно отказал."""
+
+    kind: MetricKind = "categorical"
+
+    @property
+    def key(self) -> str:
+        return "graph_refusal_rate"
+
+    @property
+    def display_name(self) -> str:
+        return "Graph Честный отказ"
+
+    def evaluate(self, outcomes: list[Outcome]) -> float:
+        relevant = unanswerable_outcomes(outcomes)
+        if not relevant:
+            return 0.0
+        return sum(1 for o in relevant if o.refused) / len(relevant)
+
+    def relevant(self, outcomes: list[Outcome]) -> list[Outcome]:
+        return unanswerable_outcomes(outcomes)
+
+
+@dataclass(frozen=True)
+class AvgSearchCalls(BaseMetric):
+    """Среднее число обращений к поиску на один запрос (по trace/state)."""
+
+    kind: MetricKind = "continuous"
+    higher_is_better: bool | None = False
+
+    @property
+    def key(self) -> str:
+        return "avg_search_calls"
+
+    @property
+    def display_name(self) -> str:
+        return "Поиск. вызовов/запрос"
+
+    def evaluate(self, outcomes: list[Outcome]) -> float:
+        counts = [o.search_calls for o in outcomes if o.search_calls is not None]
+        if not counts:
+            return 0.0
+        return sum(counts) / len(counts)
+
+
+@dataclass(frozen=True)
+class GraphLatencyMedian(BaseMetric):
+    """Медианное время работы графа целиком."""
+
+    kind: MetricKind = "continuous"
+    higher_is_better: bool | None = False
+
+    @property
+    def key(self) -> str:
+        return "graph_latency_median"
+
+    @property
+    def display_name(self) -> str:
+        return "Graph время, медиана"
+
+    def evaluate(self, outcomes: list[Outcome]) -> float:
+        return percentile([o.seconds for o in outcomes], 0.5)
+
+
+def graph_metrics(k_values: tuple[int, ...] = (1, 3, 5)) -> list[BaseMetric]:
+    """Набор метрик для графа.
+    
+    Args:
+        k_values: Какие ``hit@k`` включить.
+        
+    Returns:
+        list[BaseMetric]: Метрики для графа.
+    """
+    return [
+        *[GraphHitAtK(k) for k in k_values],
+        GraphMRR(),
+        GraphNotFoundRate(),
+        GraphRefusalRate(),
+        AvgSearchCalls(),
+        GraphLatencyMedian(),
+    ]

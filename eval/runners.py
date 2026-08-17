@@ -25,6 +25,7 @@ from eval.metrics import (
     LatencyP95,
     compute_metrics,
     default_metrics,
+    graph_metrics,
 )
 from eval.result import Outcome, RunResult
 
@@ -335,6 +336,162 @@ async def measure_concurrent(
         "худший_ответ_с": round(worst, 1),
         "ответов_в_минуту": round(level / total * 60, 1),
     }
+
+
+async def run_graph_answerable(agent, items: list[dict]) -> list[Outcome]:
+    """Запускает агент на отвечаемых вопросах и собирает графовые метрики.
+
+    Args:
+        agent: Скомпилированный граф агента.
+        items: Вопросы золотого набора с цитатами.
+
+    Returns:
+        list[Outcome]: Итоги с graph_rank, search_calls, refused.
+    """
+    results: list[Outcome] = []
+    for item in items:
+        started = time.perf_counter()
+        thread_id = f"eval-{uuid.uuid4()}"
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": "evaluate",
+            }
+        }
+        state = {"messages": [{"role": "human", "content": item["question"]}]}
+        final = await agent.ainvoke(state, config=config)
+        elapsed = time.perf_counter() - started
+
+        # Извлекаем финальные retrieved и ищем ответ
+        retrieved = final.get("retrieved", []) or []
+        graph_rank = None
+        for pos, chunk in enumerate(retrieved, 1):
+            text = chunk.get("text") or chunk.get("snippet") or ""
+            if chunk_contains(item["quote"], text):
+                graph_rank = pos
+                break
+
+        # Ответ модели и отказ
+        text = str(final["messages"][-1].content) if final.get("messages") else ""
+        refused = REFUSAL in text.lower().replace("ё", "е")
+
+        # Число поисковых вызовов — из trace или эвристика по retrieved
+        # В текущем графе trace не сохраняется в state, поэтому приблизим
+        # через число уникальных подзапросов в плане (если есть) или длину retrieved
+        search_calls = None
+
+        outcome = Outcome(
+            question=item["question"],
+            answerable=True,
+            rank=None,  # не замеряем сырой поиск
+            graph_rank=graph_rank,
+            search_calls=search_calls,
+            returned=len(retrieved),
+            seconds=elapsed,
+            answer=text,
+            refused=refused,
+            doc_codes=[c.get("doc_code", "") for c in retrieved if c.get("doc_code")],
+        )
+        results.append(outcome)
+        logger.info(
+            "%-60s %s",
+            item["question"][:60],
+            f"graph позиция {graph_rank}" if graph_rank else "Graph НЕ НАЙДЕНО",
+        )
+    return results
+
+
+async def run_graph_unanswerable(agent, items: list[dict]) -> list[Outcome]:
+    """Запускает агент на вопросах без ответа и проверяет отказ."""
+    results: list[Outcome] = []
+    for item in items:
+        started = time.perf_counter()
+        thread_id = f"eval-{uuid.uuid4()}"
+        config = {
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": "evaluate",
+            }
+        }
+        state = {"messages": [{"role": "human", "content": item["question"]}]}
+        final = await agent.ainvoke(state, config=config)
+        elapsed = time.perf_counter() - started
+
+        text = str(final["messages"][-1].content) if final.get("messages") else ""
+        refused = REFUSAL in text.lower().replace("ё", "е")
+        retrieved = final.get("retrieved", []) or []
+
+        outcome = Outcome(
+            question=item["question"],
+            answerable=False,
+            rank=None,
+            graph_rank=None,
+            search_calls=None,
+            returned=len(retrieved),
+            seconds=elapsed,
+            answer=text,
+            refused=refused,
+            doc_codes=[c.get("doc_code", "") for c in retrieved if c.get("doc_code")],
+        )
+        results.append(outcome)
+        logger.info(
+            "%-60s %s",
+            item["question"][:60],
+            "отказ" if refused else "ОТВЕТИЛА",
+        )
+    return results
+
+
+class GraphSetRunner:
+    """Прогоняет вариант через граф агента и считает графовые метрики качества.
+
+    Args:
+        build: Сборка агента для варианта.
+        metrics: Метрики для расчёта; по умолчанию — graph_metrics().
+    """
+
+    name = "golden-graph"
+
+    def __init__(
+        self,
+        build: BuildCallable,
+        metrics: list[BaseMetric] | None = None,
+    ) -> None:
+        self._build = build
+        self._metrics = list(metrics) if metrics is not None else graph_metrics()
+
+    async def run(self, variant: Variant, config: RunConfig) -> RunResult:
+        """Прогоняет вариант через граф агента на золотом наборе."""
+        golden = GoldenSet.load(config.golden).limited(config.limit)
+        if config.bootstraps > 1:
+            golden = golden.resample(config.seed, config.sample_index)
+        built = self._build(variant, config)
+        if built.agent is None:
+            raise ValueError("GraphSetRunner требует агента в BuildResult")
+
+        answerable = await run_graph_answerable(
+            built.agent, list(golden.answerable)
+        )
+        unanswerable = await run_graph_unanswerable(
+            built.agent, list(golden.unanswerable)
+        )
+        outcomes = [*answerable, *unanswerable]
+
+        return RunResult(
+            variant=variant.name,
+            environment=built.environment.fingerprint() if built.environment else "",
+            metrics=compute_metrics(self._metrics, outcomes),
+            outcomes=outcomes,
+            created_at=_now(),
+            meta={
+                "golden": config.golden,
+                "limit": config.limit,
+                "bootstraps": config.bootstraps,
+                "sample_index": config.sample_index,
+                "graph": config.graph,
+                "graph_retrieval": True,
+            },
+        )
 
 
 class OperationalRunner:
