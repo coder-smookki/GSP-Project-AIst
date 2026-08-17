@@ -233,9 +233,18 @@ async def ingest_documents(
     progress: Callable[[str, int, int], None] | None = None,
     known_hashes: dict[str, str] | None = None,
     pipeline_version: str = PIPELINE_VERSION,
+    render_tables_as_markdown: bool = True,
 ) -> IngestReport:
     config = replace(
         DEFAULT_CONFIG,
+        parsing=replace(
+            DEFAULT_CONFIG.parsing,
+            render_tables_as_markdown=render_tables_as_markdown,
+        ),
+        docx=replace(
+            DEFAULT_CONFIG.docx,
+            render_tables_as_markdown=render_tables_as_markdown,
+        ),
         incremental=IncrementalConfig(pipeline_version=pipeline_version),
     )
     pipeline = IngestPipeline(config=config)

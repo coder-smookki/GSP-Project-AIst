@@ -71,6 +71,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="полная переиндексация: не пропускать неизменившиеся документы",
     )
     parser.add_argument(
+        "--no-render-tables-md",
+        action="store_true",
+        help="уплощать таблицы в обычный текст вместо Markdown-таблиц "
+        "(для A/B-сравнения)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="разобрать корпус и посчитать чанки, ничего не записывая",
@@ -180,6 +186,7 @@ async def run(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
             progress=show,
             known_hashes=known_hashes,
+            render_tables_as_markdown=not args.no_render_tables_md,
         )
 
         if (
