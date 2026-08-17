@@ -1,11 +1,11 @@
-# Схема графа агента (планируемая реализация, v2)
+# Схема графа агента (финальная реализация)
 
 Переработка схемы v1 по каноническим паттернам LangGraph:
-`module-4/map-reduce.ipynb` (структура Map-Reduce), `module-4/research-assistant.ipynb`
-(реальный кейс: планировщик → `Send` → ветки → reduce), `module-4/sub-graph.ipynb`
+`module-4/map-reduce.ipynb` (Map-Reduce), `module-4/research-assistant.ipynb`
+(планировщик → `Send` → ветки → reduce), `module-4/sub-graph.ipynb`
 (разделение состояний), `module-6/deployment/task_maistro.py` (роутинг).
 
-## Структура (одно вложение Map-Reduce)
+## Структура (Map-Reduce с ReAct-ветками)
 
 ```mermaid
 flowchart TD
@@ -14,11 +14,9 @@ flowchart TD
     CC --> PL[plan]
 
     PL -->|chat| AS[assistant]
-    PL -->|kb: Send x N| RB[retrieve_branch]
-    RB --> RD[reduce_retrieved]
-    RD -->|пусто, есть попытки| RQ[rewrite_query]
-    RQ -->|Send x 1| RB
-    RD -->|есть выдача| AS
+    PL -->|kb: Send x N| SA[search_agent]
+    SA --> FZ[finalize]
+    FZ --> AS
 
     AS --> WM{should_extract_memory}
     WM -- "есть что запомнить" --> WR[write_memory]
@@ -26,105 +24,96 @@ flowchart TD
     WR --> E([END])
 ```
 
-Ключевая идея — **один канонический Map-Reduce**, как в `map-reduce.ipynb`:
+Ключевая идея — **Map-Reduce с ReAct-ветками** (как `research-assistant.ipynb` +
+`sub-graph.ipynb`): планировщик разбивает запрос на подзапросы, каждая ветка —
+скомпилированный ReAct-сабграф с tool `retrieve_kb` (до 2 вызовов поиска).
 
-| Шаг | Academy (map-reduce.ipynb) | Наш проект |
+| Шаг | Academy (map-reduce.ipynb / research-assistant.ipynb) | Наш проект |
 | --- | --- | --- |
-| Планировщик | `generate_topics` + `Subjects(BaseModel)` | `plan` + `SearchPlan(BaseModel)` — `with_structured_output`, как `Perspectives` в research-assistant |
-| Map (Send) | отдельная функция `continue_to_jokes` | отдельная функция `continue_to_retrieve` — возвращает `[Send("retrieve_branch", {"query": q})]` |
-| Состояние ветки | `JokeState(TypedDict): subject: str` | `RetrieveState(TypedDict): query: str` |
-| Узел ветки | `generate_joke(state: JokeState)` | `retrieve_branch(state: RetrieveState)` |
-| Канал накопления | `jokes: Annotated[list, operator.add]` | `retrieved: Annotated[list[dict], operator.add]` |
-| Reduce | `best_joke` | `reduce_retrieved` |
+| Планировщик | `create_analysts` + `Perspectives(BaseModel)` | `plan` + `SearchPlan` — `with_structured_output`, как `grade_chunks` в `grading.py:44` |
+| Map (Send) | `continue_to_jokes` / `initiate_all_interviews` | `initiate_search_agents` — `[Send("search_agent", {"query": q, "sections": ..., "areas": ...})]` |
+| Состояние ветки | `InterviewState` в research-assistant | `SearchAgentState` в `agent/search_agent.py` — ReAct-петля с `retrieve_kb` |
+| Узел ветки | `conduct_interview` (сабграф) | `search_agent` (обёртка над скомпилированным сабграфом) |
+| Канал накопления | `sections: Annotated[list, operator.add]` | `branch_retrieved: Annotated[list[dict], operator.add]` |
+| Reduce | `write_report` / `best_joke` | `finalize` (дедуп, sort, cap, renumber, единый `sources`/`followups`) |
 
 ## Состояния
 
-### Родительское — `AgentState` (agent/state.py)
+### Родительское — `AgentState` (`agent/state.py`)
 
 ```python
 class SearchPlan(BaseModel):
-    """Структурированный вывод планировщика — как Perspectives/Analyst в
-    research-assistant.ipynb."""
     mode: Literal["chat", "kb"]
-    subqueries: list[str] = Field(
-        default_factory=list,
-        description="независимые поисковые подзапросы для kb-режима",
-    )
+    subqueries: list[str] = Field(default_factory=list)
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
-
     summary: NotRequired[str]
-    sections: NotRequired[list[str]]     # фильтр, виден всем веткам
-    areas: NotRequired[list[str]]        # фильтр, виден всем веткам
-
-    query: NotRequired[str]              # исходный вопрос (пишет plan, переписывает rewrite_query)
-    plan: NotRequired[SearchPlan]        # вывод планировщика
-
-    retrieved: NotRequired[Annotated[list[dict], operator.add]]  # канал накопления веток
-    failures: NotRequired[Annotated[list[str], operator.add]]    # канал сбоев веток
-    followups: NotRequired[list[str]]    # пишет только reduce_retrieved
-
-    retrieval_failed: NotRequired[bool]  # финализирует reduce_retrieved из failures
+    sections: NotRequired[list[str]]
+    areas: NotRequired[list[str]]
+    query: NotRequired[str]
+    plan: NotRequired[SearchPlan]
+    always_answer_with_db: NotRequired[bool]
+    retrieved: NotRequired[list[dict]]                    # финальные (после finalize)
+    branch_retrieved: NotRequired[Annotated[list[dict], operator.add]]  # сырой аккумулятор
+    failures: NotRequired[Annotated[list[str], operator.add]]           # сбои веток
+    followups: NotRequired[list[str]]
+    retrieval_failed: NotRequired[bool]
+    # устаревшие (удалены с графа):
     rewrite_attempts: NotRequired[int]
     needs_rewrite: NotRequired[bool]
 ```
 
-### Веточное — `RetrieveState` (свой TypedDict, не общий)
+### Веточное — `SearchAgentState` (`agent/search_agent.py`)
 
 ```python
-class RetrieveState(TypedDict):
-    query: str                    # payload Send
+class SearchAgentState(TypedDict):
+    query: str
+    rounds: NotRequired[int]
     sections: NotRequired[list[str]]
     areas: NotRequired[list[str]]
+    retrieved: NotRequired[Annotated[list[dict], operator.add]]
+    failures: NotRequired[Annotated[list[str], operator.add]]
+    retrieval_failed: NotRequired[bool]
+    branch_messages: Annotated[list, add_messages]   # ReAct-переписка
 ```
 
-Ветка получает только то, что ей нужно (`Send`-payload + общие каналы родителя) —
-как `JokeState` в map-reduce.ipynb. Никаких `subquery`-полей в общем состоянии.
+---
 
 ## Узлы и рёбра
 
-| Узел | Роль (аналог в Academy) | Что делает |
+| Узел | Роль | Что делает |
 | --- | --- | --- |
-| `reset_turn` | — | Сброс одноразовых полей (`query`, `plan`, `rewrite_attempts`, `needs_rewrite`, `retrieval_failed`) |
+| `reset_turn` | — | Сброс одноразовых полей (`plan`, `retrieved`, `branch_retrieved`, `failures`, `followups`, `retrieval_failed`) |
 | `condense_context` | — | Сжатие истории (без изменений) |
-| `plan` | `generate_topics` / `create_analysts` | `support_model.raw.with_structured_output(SearchPlan)` (тот же механизм, что `grade_chunks` в `agent/grading.py:44`). Один вызов, без парсинга JSON |
-| `retrieve_branch` | `generate_joke` | Один поиск по `state["query"]`; возврат `{"retrieved": [...]}` или `{"retrieved": [], "failures": [query]}` при `SearchUnavailable`. Не пишет `query`/`followups`, не решает про rewrite |
-| `reduce_retrieved` | `best_joke` / `write_report` | Fan-in: если есть `failures` → `retrieval_failed=True`; дедуп по `chunk_id`, сортировка по score, обрезка до `retrieval_top_k`, перенумерация `[n]`; `followups`; **единые** события `sources`/`followups` |
-| `rewrite_query` | — | Переписывание вопроса при пустой выдаче, `rewrite_attempts += 1` (максимум `max_rewrites`) |
-| `assistant` | `write_report`-финализация | Контекст из `retrieved`; при `plan.mode == "chat"` — «поиск не выполнялся», сверка чисел отключена |
+| `plan` | `generate_topics` / `create_analysts` | `support_model.raw.with_structured_output(SearchPlan)` — один вызов, фолбэк `kb [query]` |
+| `search_agent` | обёртка над сабграфом | Вызывает скомпилированный ReAct-сабграф (`agent/search_agent.py`), возвращает только `branch_retrieved` + `failures` |
+| `finalize` | `write_report` | Fan-in: дедуп по `chunk_id`, sort по score, cap `top_k`, перенумерация `[n]`, `retrieval_failed = bool(failures) and not retrieved`, `build_followups()`, единые события `sources`/`followups` |
+| `assistant` | — | Контекст из `retrieved`; при `plan.mode == "chat"` — поиск не выполнялся, сверка чисел отключена; при `retrieval_failed` — строгий текст «поиск недоступен» |
 | `write_memory` | — | Без изменений |
 
 | Рёбра | Тип |
 | --- | --- |
-| `plan → assistant` / `plan → retrieve_branch×N` | **conditional edge** `continue_to_retrieve`: возвращает строку `"assistant"` (chat) или список `[Send(...)]` (kb, N ≥ 1) — как `continue_to_jokes` |
-| `retrieve_branch → reduce_retrieved` | обычное ребро (fan-in: reduce ждёт все ветки) |
-| `reduce_retrieved → rewrite_query` / `assistant` | **conditional edge** `route_after_reduce`: `needs_rewrite` → rewrite, иначе assistant |
-| `rewrite_query → retrieve_branch` | **conditional edge** `continue_after_rewrite`: `[Send("retrieve_branch", {"query": rewritten})]` — один переписанный запрос, без повторного разбиения |
+| `plan → assistant` / `plan → search_agent×N` | **conditional edge** `initiate_search_agents`: `"assistant"` (chat) или `[Send("search_agent", {...})]` (kb) |
+| `search_agent → finalize` | обычное ребро (fan-in) |
+| `finalize → assistant` | обычное ребро |
+| `assistant → write_memory` / `END` | conditional edge `should_extract_memory` |
 
-## Что исправлено против схемы v1 (что было «кашей»)
+---
 
-1. **Планировщик-каша → один узел со структурированным выводом.** Было:
-   эвристический гейт + LLM + ручной парсинг JSON + фолбэки в одном узле. Стало:
-   `with_structured_output(SearchPlan)` — ровно как `create_analysts` с `Perspectives`
-   в research-assistant.ipynb. Единственный фолбэк: пустой `subqueries` → один
-   `Send` с исходным вопросом.
-2. **Общий узел `retrieve` с режимами `subquery or query` → отдельная ветка
-   с собственным состоянием.** Ветка `retrieve_branch(state: RetrieveState)` —
-   как `generate_joke(state: JokeState)`, а не переиспользование узла с флагами.
-3. **Свой редьюсер с дедупом в состоянии → `operator.add` + финализация в узле.**
-   Состояние не занимается бизнес-логикой: `retrieved: Annotated[list, operator.add]`
-   (как `jokes`/`sections`), а дедуп/сортировка/нумерация — в `reduce_retrieved`
-   (как `best_joke`). OR-редьюсер для `retrieval_failed` заменён каналом
-   `failures: Annotated[list, add]` — ветки только накапливают, решение — в reduce.
-4. **Map-шаг — отдельная функция conditional edge**, а не логика внутри узла
-   (как `continue_to_jokes` / `initiate_all_interviews`).
-5. **`subquery`-поле в общем состоянии убрано** — payload живёт только в `Send`.
+## Что исправлено против схемы v1
 
-## Upgrade-путь (не входит в v1)
+1. **Планировщик — один узел со структурированным выводом.** `with_structured_output(SearchPlan)` — ровно как `create_analysts` с `Perspectives`. Единственный фолбэк: пустой `subqueries` → `kb [query]`.
+2. **Веточный поиск — скомпилированный ReAct-сабграф** с tool `RetrieveQuery` (до `branch_retries+1=2` вызовов). Не простой узел, а сабграф с ReAct-петлёй (`agent/search_agent.py`).
+3. **Обёртка `search_agent` вместо прямого Send в сабграф** — избегает конфликта `InvalidUpdateError` на plain-каналах (`query`, `sections`, `areas`) при параллельных ветках. Обёртка вызывает сабграф и возвращает только накопительные каналы (`branch_retrieved`, `failures`).
+4. **Финализация — один узел после всех веток**. Дедуп/сортировка/кап/нумерация/единые события. Убран `rewrite_query` и коррекция — ветка сама делает до 2 вызовов (ReAct).
+5. **`always_answer_with_db`** — флаг из GUI принудительно включает kb-режим, обходя планировщик.
+6. **Budget контроль**: `retrieval_max_requests=10`, `retrieval_branch_retries=1` → макс. 5 подзапросов × 2 вызова = 10.
 
-Если ветке понадобится внутренний многошаговый цикл (переписывание подзапроса
-внутри ветки, ReAct с retrieve-tool) — ветку превращаем в **скомпилированный
-сабграф** с собственным состоянием и `output_schema` (паттерн
-`sub-graph.ipynb` + `conduct_interview` в research-assistant.ipynb); `Send`
-умеет целиться в сабграф, остальной граф не меняется.
+---
+
+## Upgrade-путь
+
+- Более сложная ветка: добавить дополнительные инструменты в `SearchAgentState` / `build_search_agent`.
+- Динамический бюджет: `max_requests` может зависеть от `plan.mode` или длины вопроса.
+- Логирование `search_calls` в trace для метрик eval.
