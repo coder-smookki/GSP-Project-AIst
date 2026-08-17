@@ -11,6 +11,7 @@ from infrastructure.ingest.config import DEFAULT_DOCX, DocxConfig
 from infrastructure.ingest.html_parse import build_document
 from infrastructure.ingest.models import ParsedDocument
 from infrastructure.ingest.patterns import DOC_CODE, PLACEHOLDER, SECTION_HEAD
+from infrastructure.ingest.table_md import render_table
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,10 @@ _PARAGRAPH: Final[re.Pattern[str]] = re.compile(r"<w:p[ >].*?</w:p>|<w:p/>", re.
 _RUN: Final[re.Pattern[str]] = re.compile(r"<w:t(?:\s[^>]*)?>(.*?)</w:t>", re.S)
 
 _TABLE: Final[re.Pattern[str]] = re.compile(r"<w:tbl[ >].*?</w:tbl>", re.S)
+
+_ROW: Final[re.Pattern[str]] = re.compile(r"<w:tr[ >].*?</w:tr>", re.S)
+
+_CELL: Final[re.Pattern[str]] = re.compile(r"<w:tc[ >].*?</w:tc>", re.S)
 
 _TAB: Final[re.Pattern[str]] = re.compile(r"<w:tab[^>]*/>")
 _BREAK: Final[re.Pattern[str]] = re.compile(r"<w:br[^>]*/>")
@@ -53,6 +58,13 @@ class DocxParser:
         self.kind = "docx"
 
     def read_paragraphs(self, path: str | Path) -> list[tuple[str, bool]]:
+        return [
+            (text, tag == "td")
+            for tag, text in self._extract_blocks(path)
+            if tag != "table"
+        ]
+
+    def _read_xml(self, path: str | Path) -> str:
         target = Path(path)
         try:
             with zipfile.ZipFile(target) as archive:
@@ -70,22 +82,67 @@ class DocxParser:
                 xml = archive.read("word/document.xml").decode("utf-8", "replace")
         except zipfile.BadZipFile as exc:
             raise ValueError(f"{target.name}: повреждённый архив — {exc}") from exc
+        return _BREAK.sub(" ", _TAB.sub(" ", xml))
 
-        xml = _BREAK.sub(" ", _TAB.sub(" ", xml))
+    def _paragraph_text(self, paragraph_xml: str) -> str:
+        return _unescape("".join(_RUN.findall(paragraph_xml)))
 
-        table_spans = [match.span() for match in _TABLE.finditer(xml)]
+    def _looks_like_heading(self, text: str) -> bool:
+        head = SECTION_HEAD.match(text)
+        return (
+            head is not None
+            and len(text) <= self.config.max_heading_len
+            and not text.rstrip().endswith(".")
+            and "  " not in text
+        )
+
+    def _table_rows(self, table_xml: str) -> list[list[str]]:
+        rows: list[list[str]] = []
+        for row in _ROW.finditer(table_xml):
+            cells = [
+                self._paragraph_text(cell.group(0))
+                for cell in _CELL.finditer(row.group(0))
+            ]
+            if any(cells):
+                rows.append(cells)
+        return rows
+
+    def _extract_blocks(self, path: str | Path) -> list[tuple[str, str]]:
+        xml = self._read_xml(path)
+        spans = [match.span() for match in _TABLE.finditer(xml)]
 
         def in_table(position: int) -> bool:
-            return any(start <= position < end for start, end in table_spans)
+            return any(start <= position < end for start, end in spans)
 
-        paragraphs: list[tuple[str, bool]] = []
+        if not self.config.render_tables_as_markdown:
+            blocks: list[tuple[str, str]] = []
+            for match in _PARAGRAPH.finditer(xml):
+                text = self._paragraph_text(match.group(0))
+                if not text:
+                    continue
+                if in_table(match.start()):
+                    blocks.append(("td", text))
+                elif self._looks_like_heading(text):
+                    blocks.append(("h2", text))
+                else:
+                    blocks.append(("p", text))
+            return blocks
+
+        events: list[tuple[int, tuple[str, str]]] = []
         for match in _PARAGRAPH.finditer(xml):
-            text = _unescape("".join(_RUN.findall(match.group(0))))
-            if text:
-                paragraphs.append((text, in_table(match.start())))
-
-        logger.debug("%s: абзацев %d", target.name, len(paragraphs))
-        return paragraphs
+            if in_table(match.start()):
+                continue
+            text = self._paragraph_text(match.group(0))
+            if not text:
+                continue
+            tag = "h2" if self._looks_like_heading(text) else "p"
+            events.append((match.start(), (tag, text)))
+        for match in _TABLE.finditer(xml):
+            markdown = render_table(self._table_rows(match.group(0)))
+            if markdown:
+                events.append((match.start(), ("table", markdown)))
+        events.sort(key=lambda item: item[0])
+        return [block for _, block in events]
 
     def to_blocks(self, paragraphs: list[tuple[str, bool]]) -> list[tuple[str, str]]:
         blocks: list[tuple[str, str]] = []
@@ -93,18 +150,13 @@ class DocxParser:
             if is_table:
                 blocks.append(("td", text))
                 continue
-            head = SECTION_HEAD.match(text)
-            looks_like_heading = (
-                head is not None
-                and len(text) <= self.config.max_heading_len
-                and not text.rstrip().endswith(".")
-                and "  " not in text
+            blocks.append(
+                ("h2", text) if self._looks_like_heading(text) else ("p", text)
             )
-            blocks.append(("h2", text) if looks_like_heading else ("p", text))
         return blocks
 
-    def extract_title(self, paragraphs: list[tuple[str, bool]]) -> str:
-        head = [text for text, _ in paragraphs[: self.config.title_scan_paragraphs]]
+    def extract_title(self, texts: list[str]) -> str:
+        head = texts[: self.config.title_scan_paragraphs]
 
         def usable(candidate: str) -> bool:
             without = PLACEHOLDER.sub("", candidate).strip(" -–—,.")
@@ -140,11 +192,12 @@ class DocxParser:
 
     def parse_file(self, path: str | Path, *, source: str = "files") -> ParsedDocument:
         target = Path(path)
-        paragraphs = self.read_paragraphs(target)
-        if not paragraphs:
+        blocks = self._extract_blocks(target)
+        texts = [text for _, text in blocks]
+        if not texts:
             raise ValueError(f"{target.name}: в документе нет текста")
 
-        joined = " ".join(text for text, _ in paragraphs[:40])
+        joined = " ".join(texts[:40])
         found = DOC_CODE.search(joined) or DOC_CODE.search(
             target.stem.replace("_", "-")
         )
@@ -154,10 +207,10 @@ class DocxParser:
             else target.stem[:40]
         )
 
-        title = self.extract_title(paragraphs) or target.stem
+        title = self.extract_title(texts) or target.stem
 
         document = build_document(
-            self.to_blocks(paragraphs),
+            blocks,
             doc_id=target.name,
             doc_code=doc_code,
             doc_title=title[:200],

@@ -21,6 +21,7 @@ class DocxConfig:
     max_xml_bytes: int = 64 * 1024 * 1024
     max_heading_len: int = 190
     title_scan_paragraphs: int = 40
+    render_tables_as_markdown: bool = True
 
 
 @dataclass(frozen=True, slots=True)
