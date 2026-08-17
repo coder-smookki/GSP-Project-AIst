@@ -12,17 +12,18 @@ from langchain_core.messages import (
 from langchain_core.runnables.config import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.store.base import BaseStore
+from langgraph.types import Send
 
 from domain.memory import MemoryCollection
-from infrastructure.retrieval.qdrant_search import SearchUnavailable
-from infrastructure.retrieval.search import Search, to_citation
+from infrastructure.retrieval.mock_search import MockSearch
+from infrastructure.retrieval.search import Search
 
-from .correction import rewrite_query as rewrite_query_model
 from .events import emit
-from .grading import grade_chunks
 from .memory_gate import worth_extracting
 from .numbers import annotate as annotate_numbers
+from .planner import plan_search
 from .prompts import MEMORY_EXTRACT_PROMPT, MODEL_SYSTEM_MESSAGE
+from .search_agent import SearchAgentState, build_search_agent
 from .state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -112,17 +113,24 @@ def should_extract_memory(state: AgentState) -> str:
     return END
 
 
-def route_after_retrieve(state: AgentState) -> str:
-    if state.get("needs_rewrite"):
-        return "rewrite"
-    return "assistant"
-
-
 def query_from_state(state: AgentState) -> str:
     last = (state.get("messages") or [])[-1]
     if not hasattr(last, "content"):
         return ""
     return str(last["content"] if isinstance(last, dict) else last.content).strip()
+
+
+def _dedup_retrieved(items: list[dict]) -> list[dict]:
+    """Убирает дубли по chunk_id, оставляя лучшую по score."""
+    best: dict = {}
+    for item in items:
+        cid = item.get("chunk_id")
+        if not cid:
+            continue
+        current = best.get(cid)
+        if current is None or item.get("score", 0.0) >= current.get("score", 0.0):
+            best[cid] = item
+    return list(best.values())
 
 
 def create_app_agent(
@@ -132,32 +140,147 @@ def create_app_agent(
     store=None,
     checkpointer=None,
     max_memories_count: int = 10,
-    max_rewrites: int = 1,
     search: Search | None = None,
-    grading: bool = False,
-    grading_keep_partial: bool = False,
+    max_requests: int = 10,
+    branch_retries: int = 1,
+    top_k: int = 5,
     verify_numbers: bool = True,
 ):
+    """Собирает граф агента: планирование → параллельные ветки-поиск → сборка.
+
+    Args:
+        model: Модель ответа (без tools).
+        support_model: Модель планирования и веточного поиска (с tools).
+        context_manager: Сворачивание истории (опционально).
+        store: Хранилище долгосрочной памяти.
+        checkpointer: Чекпоинтер (опционально).
+        max_memories_count: Лимит записей памяти.
+        search: Интерфейс поиска.
+        max_requests: Бюджет запросов к поиску на один запрос.
+        branch_retries: Повторы поиска в ветке-агенте.
+        top_k: Число фрагментов в финальном ответе.
+        verify_numbers: Сверка чисел по CONTEXT.
+
+    Returns:
+        CompiledStateGraph: Скомпилированный граф.
+    """
+    if search is None:
+        search = MockSearch()
+    search_agent_subgraph = build_search_agent(
+        support_model=support_model,
+        search=search,
+        max_rounds=branch_retries + 1,
+    )
 
     graph = StateGraph(AgentState)
 
     async def reset_turn(state: AgentState):
         return {
-            "query": "",
-            "rewrite_attempts": 0,
-            "needs_rewrite": False,
+            "plan": None,
+            "retrieved": [],
+            "branch_retrieved": [],
+            "failures": [],
+            "followups": [],
             "retrieval_failed": False,
         }
 
-    async def assistant(state: AgentState, config: RunnableConfig, *, store: BaseStore):
+    async def plan(state: AgentState):
+        question = query_from_state(state)
+        search_plan = await plan_search(
+            support_model,
+            question,
+            max_requests=max_requests,
+            retries=branch_retries,
+            always_answer_with_db=state.get("always_answer_with_db", False),
+        )
+        emit(
+            "trace",
+            {
+                "stage": "plan",
+                "mode": search_plan.mode,
+                "subqueries": len(search_plan.subqueries),
+            },
+        )
+        return {"plan": search_plan, "query": question}
 
+    async def initiate_search_agents(state: AgentState):
+        search_plan = state.get("plan") or None
+        if (
+            search_plan is None
+            or search_plan.mode == "chat"
+            or not search_plan.subqueries
+        ):
+            return "assistant"
+        return [
+            Send(
+                "search_agent",
+                {
+                    "query": q,
+                    "sections": state.get("sections"),
+                    "areas": state.get("areas"),
+                },
+            )
+            for q in search_plan.subqueries
+        ]
+
+    async def search_agent(state: AgentState):
+        if search is None:
+            return {"retrieved": [], "failures": []}
+        branch_input: SearchAgentState = {
+            "query": state.get("query") or "",
+            "sections": state.get("sections") or [],
+            "areas": state.get("areas") or [],
+            "rounds": 0,
+            "branch_messages": [],
+        }
+        result = await search_agent_subgraph.ainvoke(branch_input, config={"recursion_limit": 20})
+        retrieved = result.get("retrieved", []) or []
+        failures = result.get("failures", []) or []
+        emit(
+            "trace",
+            {
+                "stage": "search_agent",
+                "query": state.get("query"),
+                "retrieved": len(retrieved),
+                "failed": bool(failures),
+            },
+        )
+        return {"branch_retrieved": retrieved, "failures": failures}
+
+    async def finalize(state: AgentState):
+        raw = _dedup_retrieved(state.get("branch_retrieved") or [])
+        items = sorted(raw, key=lambda c: c.get("score", 0.0), reverse=True)[:top_k]
+        items = [dict(item, n=n) for n, item in enumerate(items, 1)]
+        failures = state.get("failures") or []
+        retrieval_failed = bool(failures) and not items
+        followups = build_followups(items)
+
+        emit("sources", {"items": items})
+        if followups:
+            emit("followups", {"items": followups})
+        emit(
+            "trace",
+            {
+                "stage": "finalize",
+                "retrieved": len(items),
+                "failures": len(failures),
+                "retrieval_failed": retrieval_failed,
+            },
+        )
+
+        return {
+            "retrieved": items,
+            "followups": followups,
+            "retrieval_failed": retrieval_failed,
+        }
+
+    async def assistant(state: AgentState, config: RunnableConfig, *, store: BaseStore):
         user_id = config.get("configurable", {"user_id": "default"}).get(
             "user_id", "default"
         )
 
         namespace = ("memories", user_id)
         memories = await store.asearch(namespace)
-
         info = "\n".join(f"- {mem.value['content']}" for mem in memories)
 
         if state.get("retrieval_failed"):
@@ -203,85 +326,14 @@ def create_app_agent(
             emit("trace", {"stage": "assistant", "status": "model_unavailable"})
             return {"messages": [AIMessage(content=MODEL_UNAVAILABLE_TEXT)]}
 
-        if verify_numbers and not state.get("retrieval_failed"):
+        items = state.get("retrieved", [])
+        if verify_numbers and items and not state.get("retrieval_failed"):
             text = str(getattr(answer, "content", "") or "")
             marked = annotate_numbers(text, context)
             if marked != text:
                 answer = AIMessage(content=marked)
 
         return {"messages": [answer]}
-
-    async def retrieve(state: AgentState):
-        if not search:
-            return {}
-        query = state.get("query") or query_from_state(state)
-        if not query:
-            return {"needs_rewrite": False}
-
-        try:
-            hits = await search.query(
-                query,
-                sections=state.get("sections"),
-                areas=state.get("areas"),
-            )
-        except SearchUnavailable as exc:
-            logger.error("поиск недоступен: %s", exc)
-            emit("trace", {"stage": "retrieve", "status": "unavailable"})
-            return {
-                "query": query,
-                "retrieved": [],
-                "followups": [],
-                "retrieval_failed": True,
-                "needs_rewrite": False,
-            }
-
-        items = [
-            to_citation(chunk, n, score).to_dict()
-            for n, (chunk, score) in enumerate(hits, 1)
-        ]
-
-        grading_before_rewrite = grading and items and support_model is not None
-        if grading_before_rewrite:
-            emit("trace", {"stage": "retrieve", "status": "grading"})
-            graded = await grade_chunks(
-                support_model,
-                query,
-                items,
-                keep_partial=grading_keep_partial,
-            )
-            if graded is not None:
-                items = [dict(item, n=n) for n, item in enumerate(graded, 1)]
-
-        if (
-            not items
-            and support_model is not None
-            and state.get("rewrite_attempts", 0) < max_rewrites
-        ):
-            emit("trace", {"stage": "retrieve", "status": "rewriting"})
-            return {"query": query, "needs_rewrite": True}
-
-        emit("sources", {"items": items})
-
-        followups = build_followups(items)
-        if followups:
-            emit("followups", {"items": followups})
-        return {
-            "query": query,
-            "retrieved": items,
-            "followups": followups,
-            "needs_rewrite": False,
-        }
-
-    async def rewrite_query(state: AgentState):
-        query = state.get("query") or ""
-        rewritten = await rewrite_query_model(support_model, query)
-        if rewritten:
-            logger.info("коррекция запроса дала источник: %s", rewritten[:80])
-        return {
-            "query": rewritten or query,
-            "rewrite_attempts": state.get("rewrite_attempts", 0) + 1,
-            "needs_rewrite": False,
-        }
 
     async def condense_context(state: AgentState):
         if not context_manager:
@@ -359,21 +411,23 @@ def create_app_agent(
         return {}
 
     graph.add_node("reset_turn", reset_turn)
+    graph.add_node("plan", plan)
+    graph.add_node("search_agent", search_agent)
+    graph.add_node("finalize", finalize)
     graph.add_node("assistant", assistant)
-    graph.add_node("retrieve", retrieve)
-    graph.add_node("rewrite_query", rewrite_query)
     graph.add_node("condense_context", condense_context)
     graph.add_node("write_memory", write_memory)
 
     graph.add_edge(START, "reset_turn")
     graph.add_edge("reset_turn", "condense_context")
-    graph.add_edge("condense_context", "retrieve")
+    graph.add_edge("condense_context", "plan")
     graph.add_conditional_edges(
-        "retrieve",
-        route_after_retrieve,
-        {"rewrite": "rewrite_query", "assistant": "assistant"},
+        "plan",
+        initiate_search_agents,
+        {"assistant": "assistant", "search_agent": "search_agent"},
     )
-    graph.add_edge("rewrite_query", "retrieve")
+    graph.add_edge("search_agent", "finalize")
+    graph.add_edge("finalize", "assistant")
     graph.add_conditional_edges(
         "assistant",
         should_extract_memory,

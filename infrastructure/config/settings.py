@@ -68,6 +68,17 @@ class Settings(BaseSettings):
     #: Сколько раз переписывать запрос при пустой выдаче (0 = без коррекции).
     retrieval_max_rewrites: int = 1
 
+    #: Общий бюджет обращений к поиску на один запрос пользователя.
+    #:
+    #: Ограничивает сверху сумму поисковых вызовов по всем веткам-агентам
+    #: (план + повторы). Число подзапросов планировщика выводится отсюда:
+    #: ``retrieval_max_requests // (retrieval_branch_retries + 1)``.
+    retrieval_max_requests: int = 10
+
+    #: Сколько раз веточный агент может повторить поиск (ReAct-петля).
+    #: ``0`` — без повторов, один поисковый вызов на ветку.
+    retrieval_branch_retries: int = Field(default=1, ge=0)
+
     # ------------------------------------------------------- переоценка
     rerank_enabled: bool = False
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
@@ -124,7 +135,12 @@ class Settings(BaseSettings):
             )
         return normalized
 
-    @field_validator("retrieval_top_k", "retrieval_prefetch", "ingest_batch_size")
+    @field_validator(
+        "retrieval_top_k",
+        "retrieval_prefetch",
+        "ingest_batch_size",
+        "retrieval_max_requests",
+    )
     @classmethod
     def _check_positive(cls, value: int) -> int:
         if value <= 0:

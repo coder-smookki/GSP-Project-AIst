@@ -195,7 +195,16 @@ async def on_chat_start():
             label="Области знаний",
             items=AREA_CHOICES,
             initial=DEFAULT_AREAS,
-        )
+        ),
+        cl.input_widget.Checkbox(
+            id="always_answer_with_db",
+            label="Всегда искать в базе знаний",
+            initial=False,
+            description=(
+                "Принудительно использовать поиск по базе "
+                "даже для общих вопросов"
+            ),
+        ),
     ]
     chat_settings = cl.ChatSettings(inputs=widgets)
     await chat_settings.send()
@@ -248,6 +257,11 @@ async def on_settings_update(settings: dict):
         areas = [raw]
     cl.user_session.set("areas", areas)
 
+    # чекбокс «Всегда искать в базе знаний»
+    always_db = settings.get("always_answer_with_db")
+    if isinstance(always_db, bool):
+        cl.user_session.set("always_answer_with_db", always_db)
+
 
 @cl.on_message
 async def on_message(message: cl.Message):
@@ -272,24 +286,33 @@ async def on_message(message: cl.Message):
     sidebar_drawn = False
 
     areas: list[str] | None = cl.user_session.get("areas")
+    always_db: bool = cl.user_session.get("always_answer_with_db", False)
+
+    sidebar_key = f"sources-{msg.id or uuid.uuid4()}"
+    sidebar_drawn = False
+
     sources_items: list[dict] = []
     followups: list[str] = []
     partials: dict[str, str] = {}
     assistant_final: list[str] = []
     run_error: Exception | None = None
 
+    # Гейт: стримим токены ТОЛЬКО от узла assistant
+    should_stream = False
+
     try:
         async for chunk in client.runs.stream(
             thread_id=thread_id,
             assistant_id=assistant_id,
-            input=build_input(message.content, areas=areas),
+            input=build_input(
+                message.content, areas=areas, always_answer_with_db=always_db
+            ),
             config={"configurable": {"user_id": user_id or "anonymous"}},
             stream_mode=["messages", "updates", "custom"],
             version="v1",
         ):
-            mode = (chunk.event or "").split("|", 1)[0]
-
-            if mode == "messages/partial":
+            # --- messages/partial: стриминг токенов, но только если should_stream ---
+            if chunk.event == "messages/partial" and should_stream:
                 for item in chunk.data:
                     if item.get("type") != "ai":
                         continue
@@ -300,10 +323,27 @@ async def on_message(message: cl.Message):
                     prev = partials.get(mid, "")
                     if len(content) > len(prev):
                         partials[mid] = content
-                        await msg.stream_token(content[len(prev) :])
+                        await msg.stream_token(content[len(prev):])
                 continue
 
-            if mode == "custom":
+            if chunk.event != "updates":
+                continue
+
+            # --- updates: управляем should_stream по узлам графа ---
+            for node_name, data in chunk.data.items():
+                if node_name == "finalize" and data:
+                    # После finalize начинается assistant — включаем стрим
+                    should_stream = True
+                elif node_name == "assistant" and data:
+                    # assistant завершился — выключаем стрим и забираем финальный ответ
+                    should_stream = False
+                    for m in data.get("messages") or []:
+                        if m.get("type") == "ai" and not m.get("tool_calls"):
+                            content = str(m.get("content") or "")
+                            partials[m.get("id", "")] = content
+                            assistant_final.append(content)
+
+            if chunk.event == "custom":
                 env = decode_aist_envelope(chunk.data or {})
                 if env:
                     kind = env.get("kind")
@@ -327,15 +367,6 @@ async def on_message(message: cl.Message):
                     elif kind == "followups":
                         followups = payload.get("items") or []
                 continue
-
-            if chunk.event != "updates":
-                continue
-
-            for node_name, data in chunk.data.items():
-                if node_name == "assistant" and data:
-                    for m in data.get("messages") or []:
-                        if m.get("type") == "ai" and not m.get("tool_calls"):
-                            assistant_final.append(str(m.get("content") or ""))
     except Exception as exc:
         run_error = exc
         logger.exception("run stream failed")

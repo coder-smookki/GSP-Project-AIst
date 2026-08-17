@@ -59,6 +59,8 @@ class TestEnvironment:
             rerank_model="",
             grading_enabled=False,
             verify_numbers=True,
+            retrieval_max_requests=10,
+            retrieval_branch_retries=1,
         )
         assert (
             Environment(**fields).fingerprint() == Environment(**fields).fingerprint()
@@ -77,6 +79,8 @@ class TestEnvironment:
             rerank_model="",
             grading_enabled=False,
             verify_numbers=True,
+            retrieval_max_requests=10,
+            retrieval_branch_retries=1,
         )
         other = {**base, "llm_model": "m2"}
         assert Environment(**base).fingerprint() != Environment(**other).fingerprint()
@@ -102,6 +106,8 @@ class _Settings:
         self.grading_enabled = False
         self.verify_numbers = True
         self.qdrant_collection = ""
+        self.retrieval_max_requests = 10
+        self.retrieval_branch_retries = 1
 
 
 class TestSnapshotEnvironment:
@@ -125,6 +131,12 @@ class TestSnapshotEnvironment:
         assert "rrf=60" in env.describe()
         assert "cand=10" in env.describe()
         assert "min_rel=0.55" in env.describe()
+
+    def test_retrieval_budget_in_describe(self) -> None:
+        """Бюджет запросов и повторы попадают в описание окружения."""
+        env = snapshot_environment(_Settings())
+        assert "max_req=10" in env.describe()
+        assert "retries=1" in env.describe()
 
     def test_prefetch_changes_fingerprint(self) -> None:
         """Смена prefetch меняет ключ кэша."""
@@ -155,6 +167,24 @@ class TestSnapshotEnvironment:
         base = _Settings()
         other = _Settings()
         other.qdrant_collection = "aist_chunks_v2"
+        assert snapshot_environment(base).fingerprint() != snapshot_environment(
+            other
+        ).fingerprint()
+
+    def test_max_requests_changes_fingerprint(self) -> None:
+        """Смена бюджета запросов меняет ключ кэша."""
+        base = _Settings()
+        other = _Settings()
+        other.retrieval_max_requests = 20
+        assert snapshot_environment(base).fingerprint() != snapshot_environment(
+            other
+        ).fingerprint()
+
+    def test_branch_retries_changes_fingerprint(self) -> None:
+        """Смена числа повторов ветки меняет ключ кэша."""
+        base = _Settings()
+        other = _Settings()
+        other.retrieval_branch_retries = 2
         assert snapshot_environment(base).fingerprint() != snapshot_environment(
             other
         ).fingerprint()

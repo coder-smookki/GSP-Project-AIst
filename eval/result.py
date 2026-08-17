@@ -20,10 +20,14 @@ class Outcome:
         answerable: Отвечаемый ли вопрос (есть эталонная цитата). Вопросы без
             ответа в базе помечаются ``False`` — метрики считаются по разным
             подмножествам.
-        rank: Позиция первого фрагмента с ответом, начиная с 1;
-            ``None`` — ответа нет ни в одном фрагменте.
+        rank: Позиция первого фрагмента с ответом в сырой выдаче поиска,
+            начиная с 1; ``None`` — ответа нет ни в одном фрагменте.
+        graph_rank: Позиция ответа в финальном контексте графа (после дедупа/
+            капа/нумерации). ``None`` — ответ не попал в контекст.
+        search_calls: Число обращений к поиску за вопрос (по trace/state);
+            ``None`` — не замерялось.
         returned: Сколько фрагментов вернул поиск.
-        seconds: Время поиска.
+        seconds: Время поиска / графа.
         answer: Ответ модели, если он запрашивался.
         refused: Отказалась ли система отвечать.
         doc_codes: Коды документов найденных фрагментов.
@@ -32,6 +36,8 @@ class Outcome:
     question: str
     answerable: bool = True
     rank: int | None = None
+    graph_rank: int | None = None
+    search_calls: int | None = None
     returned: int = 0
     seconds: float = 0.0
     answer: str | None = None
@@ -126,5 +132,5 @@ class Verdict:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Verdict":
+    def from_dict(cls, data: dict[str, Any]) -> Verdict:
         return cls(**data)

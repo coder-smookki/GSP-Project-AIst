@@ -69,6 +69,10 @@ class RunConfig:
         graph: Тег версии графа агента (``base``, ``rd-v2``, ...). Входит
             в ключ кэша и в A/B-вердикты, поэтому результаты разных графов
             не смешиваются и в отчёте дают отдельные секции.
+        graph_retrieval: Запускать графовый замер (агент целиком) вместо
+            замера сырого поиска. Включает метрики graph_hit@k, graph_mrr,
+            graph_not_found, graph_refusal_rate, avg_search_calls,
+            graph_latency_median.
     """
 
     runner: Literal["golden", "operational"] = "golden"
@@ -81,6 +85,7 @@ class RunConfig:
     bootstraps: int = 1
     sample_index: int = 0
     graph: str = "base"
+    graph_retrieval: bool = False
 
 
 @dataclass(frozen=True)
@@ -111,6 +116,8 @@ class Environment:
         qdrant_collection: Коллекция/алиас Qdrant, по которой идут запросы
             (``aist_chunks``, ``aist_chunks_v2``, ...). Без неё результаты на
             разных наборах эмбеддингов неотличимы ни в кэше, ни в отчёте.
+        retrieval_max_requests: Бюджет обращений к поиску на один запрос.
+        retrieval_branch_retries: Повторы поиска в ветке-агенте.
     """
 
     platform: str
@@ -131,6 +138,8 @@ class Environment:
     retrieval_min_relevance: float = 0.55
     rerank_candidates: int = 10
     qdrant_collection: str = ""
+    retrieval_max_requests: int = 10
+    retrieval_branch_retries: int = 1
 
     def describe(self) -> str:
         """Краткое человекочитаемое описание окружения.
@@ -144,7 +153,9 @@ class Environment:
             f"llm={self.llm_model}, emb={self.embedding_model}, "
             f"top_k={self.retrieval_top_k}, prefetch={self.retrieval_prefetch}, "
             f"rrf={self.retrieval_rrf_k}, rerank={rerank}, "
-            f"cand={self.rerank_candidates}, min_rel={self.retrieval_min_relevance}"
+            f"cand={self.rerank_candidates}, min_rel={self.retrieval_min_relevance}, "
+            f"max_req={self.retrieval_max_requests}, "
+            f"retries={self.retrieval_branch_retries}"
         )
         if self.qdrant_collection:
             parts += f", coll={self.qdrant_collection}"
@@ -175,6 +186,8 @@ class Environment:
             str(self.grading_enabled),
             str(self.verify_numbers),
             self.qdrant_collection,
+            str(self.retrieval_max_requests),
+            str(self.retrieval_branch_retries),
         ]
         return hashlib.sha256("|".join(values).encode("utf-8")).hexdigest()[:16]
 
@@ -212,4 +225,10 @@ def snapshot_environment(settings) -> Environment:
         grading_enabled=settings.grading_enabled,
         verify_numbers=settings.verify_numbers,
         qdrant_collection=getattr(settings, "qdrant_collection", ""),
+        retrieval_max_requests=int(
+            getattr(settings, "retrieval_max_requests", 10)
+        ),
+        retrieval_branch_retries=int(
+            getattr(settings, "retrieval_branch_retries", 1)
+        ),
     )
