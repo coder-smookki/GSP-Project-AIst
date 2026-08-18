@@ -37,9 +37,14 @@ fi
 step "2. Тесты без живых сервисов"
 if $PY -m pytest -q -m "not llm and not embeddings and not qdrant and not integration" \
      >/tmp/aist_tests.txt 2>&1; then
-  ok "$(tail -1 /tmp/aist_tests.txt)"
+  ok "$(grep -E "passed|failed" /tmp/aist_tests.txt | tail -1)"
 else
-  bad "тесты упали:"; tail -8 /tmp/aist_tests.txt | sed 's/^/       /'
+  # Именно сводка и список упавших: в хвосте файла обычно шум от логгера
+  # Prefect при остановке временного сервера, и по нему причину не понять.
+  bad "тесты упали:"
+  grep -E "^FAILED|^ERROR" /tmp/aist_tests.txt | head -6 | sed 's/^/       /'
+  grep -E "passed|failed" /tmp/aist_tests.txt | tail -1 | sed 's/^/       /'
+  echo "       полный вывод: /tmp/aist_tests.txt"
 fi
 
 step "3. Проверки исправленных дефектов"
@@ -139,7 +144,10 @@ if [ "$FULL" = "0" ]; then
 fi
 
 step "6. Индексация корпуса"
-if $PY scripts/ingest.py --source files --dry-run >/tmp/aist_ingest.txt 2>&1; then
+# Не --dry-run: полный режим должен оставить наполненный индекс, иначе шаг 7
+# упрётся в «Collection aist_chunks doesn't exist». Прогон инкрементальный,
+# на неизменившемся корпусе занимает пару секунд.
+if $PY scripts/ingest.py --source files --switch-alias >/tmp/aist_ingest.txt 2>&1; then
   grep -E "индексация завершена|Ошибок" /tmp/aist_ingest.txt | sed 's/^/       /'
   if grep -q "ошибок 0" /tmp/aist_ingest.txt; then ok "разбор корпуса без ошибок"
   else bad "при разборе корпуса есть ошибки"; fi
@@ -149,6 +157,13 @@ fi
 
 step "7. Качество на золотом наборе"
 echo "  (может занять несколько минут)"
+if ! $PY -c "
+import urllib.request, os
+url = os.environ.get('QDRANT_URL', 'http://localhost:6333')
+urllib.request.urlopen(url + '/collections', timeout=3)
+" >/dev/null 2>&1; then
+  bad "Qdrant недоступен: поднимите стек (cd deploy && docker compose up -d)"
+fi
 if $PY -m eval.cli run >/tmp/aist_eval.txt 2>&1; then
   grep -iE "hit@|mrr|отказ|not_found" /tmp/aist_eval.txt | head -8 | sed 's/^/       /'
   ok "замер качества выполнен"
@@ -157,7 +172,8 @@ else
 fi
 
 step "8. Операционный замер"
-if $PY scripts/benchmark.py --repeats 3 --concurrency 1 2 4 \
+# Замер переехал в пакет eval: scripts/benchmark.py больше не существует.
+if $PY -m eval.cli bench --repeats 3 --concurrency 1 2 4 \
      --output eval/results/bench_verify.json >/tmp/aist_bench.txt 2>&1; then
   grep -E "медиана|ответов в час|запросов:" /tmp/aist_bench.txt | sed 's/^/       /'
   ok "операционный замер выполнен, подробности в eval/results/bench_verify.json"
