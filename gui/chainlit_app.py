@@ -27,6 +27,7 @@ from gui.db import (
     seed_admin,
     update_password,
 )
+from gui.stages import StageView
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +202,7 @@ async def on_chat_start():
             label="Всегда искать в базе знаний",
             initial=False,
             description=(
-                "Принудительно использовать поиск по базе "
-                "даже для общих вопросов"
+                "Принудительно использовать поиск по базе даже для общих вопросов"
             ),
         ),
     ]
@@ -277,7 +277,24 @@ async def on_message(message: cl.Message):
         return
 
     msg = cl.Message(content="")
-    await msg.send()
+    msg_sent = False
+
+    async def ensure_message_sent() -> None:
+        """Отправляет пустое сообщение ответа не раньше, чем оно нужно.
+
+        Порядок в ленте задаётся моментом отправки. Если отправить сообщение
+        сразу, шаги этапов встанут ПОД пустым пузырём ответа, и ход работы
+        читался бы после самого ответа (см. docs/GUI.md).
+
+        Returns:
+            None
+        """
+        nonlocal msg_sent
+        if not msg_sent:
+            msg_sent = True
+            await msg.send()
+
+    stages = StageView()
 
     # Ключ панели источников создаётся ДО цикла: панель рисуется по событию
     # sources, а поток завершается только после узла write_memory — то есть
@@ -323,7 +340,8 @@ async def on_message(message: cl.Message):
                     prev = partials.get(mid, "")
                     if len(content) > len(prev):
                         partials[mid] = content
-                        await msg.stream_token(content[len(prev):])
+                        await ensure_message_sent()
+                        await msg.stream_token(content[len(prev) :])
                 continue
 
             # --- custom: панель источников и подсказки ---
@@ -355,6 +373,8 @@ async def on_message(message: cl.Message):
                             sidebar_drawn = True
                     elif kind == "followups":
                         followups = payload.get("items") or []
+                    elif kind == "trace":
+                        await stages.handle(payload)
                 continue
 
             if chunk.event != "updates":
@@ -385,7 +405,10 @@ async def on_message(message: cl.Message):
 
     except Exception as exc:
         run_error = exc
-        logger.exception("run stream failed")
+        logger.exception("поток запуска графа оборван")
+    finally:
+        # Незакрытый шаг остался бы «выполняется» навсегда.
+        await stages.close()
 
     msg.content = pick_final_text(partials, assistant_final, error=run_error)
 
@@ -403,6 +426,7 @@ async def on_message(message: cl.Message):
             for label in followups[:4]
         ]
 
+    await ensure_message_sent()
     await msg.update()
 
 

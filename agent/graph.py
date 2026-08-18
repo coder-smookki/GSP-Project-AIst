@@ -49,6 +49,18 @@ def _model_errors() -> tuple[type[BaseException], ...]:
         errors.append(OutputParserException)
     except ImportError:
         pass
+    try:
+        # Провайдеры vLLM и llama.cpp ходят через OpenAI-совместимый SDK, а он
+        # заворачивает сетевые сбои в собственные классы и наружу httpx не
+        # отдаёт. Без этой ветки отказ такого сервера пролетал мимо перехвата,
+        # и пользователь вместо понятного сообщения видел трассировку.
+        # APIError — общий предок APIConnectionError, APITimeoutError и
+        # APIStatusError, поэтому одного класса достаточно.
+        from openai import APIError
+
+        errors.append(APIError)
+    except ImportError:
+        pass
     return tuple(errors)
 
 
@@ -231,6 +243,7 @@ def create_app_agent(
 
     async def plan(state: AgentState):
         question = query_from_state(state)
+        emit("trace", {"stage": "plan", "status": "start"})
         search_plan = await plan_search(
             support_model,
             question,
@@ -242,6 +255,7 @@ def create_app_agent(
             "trace",
             {
                 "stage": "plan",
+                "status": "done",
                 "mode": search_plan.mode,
                 "subqueries": len(search_plan.subqueries),
             },
@@ -271,6 +285,10 @@ def create_app_agent(
     async def search_agent(state: AgentState):
         if search is None:
             return {"retrieved": [], "failures": []}
+        emit(
+            "trace",
+            {"stage": "search_agent", "status": "start", "query": state.get("query")},
+        )
         branch_input: SearchAgentState = {
             "query": state.get("query") or "",
             "sections": state.get("sections") or [],
@@ -292,6 +310,7 @@ def create_app_agent(
             "trace",
             {
                 "stage": "search_agent",
+                "status": "done",
                 "query": state.get("query"),
                 "retrieved": len(retrieved),
                 "failed": bool(failures),
@@ -314,6 +333,7 @@ def create_app_agent(
             "trace",
             {
                 "stage": "finalize",
+                "status": "done",
                 "retrieved": len(items),
                 "failures": len(failures),
                 "retrieval_failed": retrieval_failed,
@@ -327,6 +347,7 @@ def create_app_agent(
         }
 
     async def assistant(state: AgentState, config: RunnableConfig, *, store: BaseStore):
+        emit("trace", {"stage": "assistant", "status": "start"})
         user_id = config.get("configurable", {"user_id": "default"}).get(
             "user_id", "default"
         )
@@ -385,11 +406,19 @@ def create_app_agent(
             if marked != text:
                 answer = AIMessage(content=marked)
 
+        emit("trace", {"stage": "assistant", "status": "done"})
         return {"messages": [answer]}
 
     async def condense_context(state: AgentState):
         if not context_manager:
             return {}
+        # Этап показываем пользователю только когда сворачивание дойдёт до
+        # модели: проверка дешёвая, а иначе шаг мигал бы на каждом сообщении.
+        shown = context_manager.should_condense(
+            state["messages"], state.get("summary", "")
+        )
+        if shown:
+            emit("trace", {"stage": "condense", "status": "start"})
         try:
             summary = await context_manager.condense(
                 state["messages"],
@@ -397,9 +426,15 @@ def create_app_agent(
             )
         except MODEL_ERRORS as exc:
             logger.warning("история не сжата: %s: %s", type(exc).__name__, exc)
+            if shown:
+                emit("trace", {"stage": "condense", "status": "error"})
             return {}
         if summary is None:
+            if shown:
+                emit("trace", {"stage": "condense", "status": "done", "condensed": 0})
             return {}
+        if shown:
+            emit("trace", {"stage": "condense", "status": "done", "condensed": 1})
         removals = [
             RemoveMessage(id=m.id)
             for m in state["messages"][: -context_manager.keep_last]

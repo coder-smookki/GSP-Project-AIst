@@ -265,25 +265,19 @@ def build_index(
 ):
     from qdrant_client import AsyncQdrantClient
 
-    from infrastructure.embeddings.ollama_client import OllamaEmbeddingClient
+    from infrastructure.config.model_registry import build_embedding_client
     from infrastructure.retrieval.store import QdrantStore
-
-    # Resolve embedding config: override > settings > default
-    model = embedding_model or settings.embedding_model
-    provider = embedding_provider or settings.embedding_provider
 
     # Создаём ТОЛЬКО эмбеддер (LLM клиенты для индексации не нужны).
     # Registry не задействуем: в одном процессе раннера живут несколько
     # deployment-ов, и глобальный слот "default" привёл бы к их взаимному
-    # затиранию. embedding_query_instruction применяется на query-стороне
-    # (retrieval/factory.py), при индексации документов он не используется.
-    if provider == "ollama-local":
-        embedder = OllamaEmbeddingClient(
-            model=model,
-            base_url=settings.ollama_local_base_url,
-        )
-    else:
-        raise ValueError(f"Unsupported embedding provider: {provider}")
+    # затиранию. Сборщик клиента общий с реестром, чтобы индексация знала
+    # ровно тех же провайдеров, что и рантайм. embedding_query_instruction
+    # применяется на query-стороне (retrieval/factory.py), при индексации
+    # документов он не используется.
+    embedder = build_embedding_client(
+        settings, model=embedding_model, provider=embedding_provider
+    )
 
     client = AsyncQdrantClient(
         url=settings.qdrant_url,

@@ -473,8 +473,9 @@ HTTP-клиент с фолбэком на локальный расчёт, ес
   чего не было — `aput` с новым uuid. Сбой `MODEL_ERRORS` или разбор JSON
   (`_parse_memory_json`, стр. 72) → память не трогают, запрос не роняют.
 - События `sources` / `followups` / `trace` шлются через конверт
-  `{"aist": {...}}` (`events.py`). Статусы `trace`: `model_unavailable`,
-  `unavailable`, `rewriting`, `grading`.
+  `{"aist": {...}}` (`events.py`). Статусы `trace`: `start` и `done` у каждого
+  долгого узла плюс `model_unavailable`, `unavailable`, `error` на сбоях;
+  разбор этапов и таблица полей — в `docs/AGENT.md` и `docs/GUI.md`.
 
 ---
 

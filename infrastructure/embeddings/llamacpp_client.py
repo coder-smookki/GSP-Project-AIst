@@ -1,31 +1,16 @@
-from langchain_openai import OpenAIEmbeddings
-from pydantic import SecretStr
+"""Клиент эмбеддингов llama.cpp через OpenAI-совместимый слой."""
+
+from .openai_compat import OpenAICompatEmbeddingClient
 
 
-class LlamaCppEmbeddingClient:
+class LlamaCppEmbeddingClient(OpenAICompatEmbeddingClient):
+    """Эмбеддер, обслуживаемый сервером llama.cpp."""
+
     def __init__(self, model: str, base_url: str = "http://localhost:8080"):
-        self._client = OpenAIEmbeddings(
-            model=model,
-            base_url=f"{base_url}/v1",
-            api_key=SecretStr("sk-no-key"),
-        )
-        self._dim: int | None = None
+        """Создаёт клиент.
 
-    @property
-    def model_name(self) -> str:
-        return self._client.model
-
-    @property
-    def embedding_dim(self) -> int:
-        if self._dim is None:
-            self._dim = len(self.embed_query("test"))
-        return self._dim
-
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        return self._client.embed_documents(texts)
-
-    async def aembed(self, texts: list[str]) -> list[list[float]]:
-        return await self._client.aembed_documents(texts)
-
-    def embed_query(self, text: str) -> list[float]:
-        return self._client.embed_query(text)
+        Args:
+            model: Имя модели эмбеддингов на сервере.
+            base_url: Адрес сервера llama.cpp.
+        """
+        super().__init__(model=model, base_url=base_url)

@@ -207,8 +207,8 @@ domain/
 
 infrastructure/
   config/                       #   settings.py, model_registry.py, composition_root.py
-  llm/                          #   клиенты: openai_compat, ollama, llamacpp
-  embeddings/                   #   эмбеддинги: ollama, llamacpp
+  llm/                          #   клиенты: openai_compat, ollama, llamacpp, vllm
+  embeddings/                   #   эмбеддинги: openai_compat, ollama, llamacpp, vllm
   ingest/                       # офлайн-конвейер построения индекса
     models.py                   #   Atom, ParsedDocument, IngestChunk, идентификаторы точек
     patterns.py                 #   регулярки разбора регламентов (единая точка правды)

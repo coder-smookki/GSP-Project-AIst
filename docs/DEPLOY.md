@@ -350,11 +350,11 @@ docker logs -n 100 deploy-aegra-1 --timestamps  # последние строк�
 
 | Переменная | Режим | Значение по умолчанию | Описание |
 | ------------------------- | ----- | --------------------- | -------------------------------------- |
-| `LLM_PROVIDER` | base | `ollama-local` | Провайдер реестра моделей |
+| `LLM_PROVIDER` | base | `ollama-local` | Провайдер реестра моделей: `ollama-local`, `llamacpp`, `vllm`. Незнакомое значение отвергается сразу, при сборке |
 | `LLM_MODEL` | base | `gpt-oss:20b` | Модель, пишущая ответ (демо-машина 48 ГБ; на слабой — `qwen3:8b`) |
 | `LLM_SUPPORT_MODEL` | base | `gpt-oss:20b` | Служебная: сжатие истории, память, коррекция запроса |
 | `LLM_REASONING` | base | `0` | Размышления модели; включение даёт 16,3 с против 2,5 с при том же ответе |
-| `EMBEDDING_PROVIDER` | base | `ollama-local` | Провайдер эмбеддингов |
+| `EMBEDDING_PROVIDER` | base | `ollama-local` | Провайдер эмбеддингов: те же три значения |
 | `EMBEDDING_MODEL` | base | `bge-m3` | Эмбеддинги, 1024 измерения; смена требует переиндексации |
 | `LLM_NUM_CTX` | base | `16384` | Окно контекста |
 | `RETRIEVAL_PROVIDER` | base | `qdrant` | `qdrant` в бою; `mock` — заглушка на 4 фрагмента, только для тестов интерфейса |
@@ -362,6 +362,7 @@ docker logs -n 100 deploy-aegra-1 --timestamps  # последние строк�
 | `RETRIEVAL_TOP_K` | base | `5` | Фрагментов в контекст; **ниже пяти без переоценки не опускать** |
 | `RETRIEVAL_MIN_RELEVANCE` | base | `0.55` | Порог, ниже которого выдача считается пустой и следует честный отказ |
 | `RERANK_ENABLED` | base | `1` | Переоценка кросс-энкодером; считается вне образа aegra — хост-сервисом на MPS или GPU-контейнером, офлайн |
+| `RERANK_PROVIDER` | base | `auto` | Кто считает переоценку: `auto` (хост-сервис, если задан `RERANK_ENDPOINT`, иначе локально), `local`, `http`, `vllm` |
 | `RERANK_ENDPOINT` | base | `http://host.docker.internal:8899` | Хост-сервис переоценки (`deploy/rerank_server.py`, MPS). Colima не пробрасывает GPU: инференс в контейнере ~16× медленнее нативного macOS-торча. Пусто = считать локально (медленно, но офлайн) |
 | `GRADING_ENABLED` | base | `0` | Отсев фрагментов моделью; на текущем корпусе не окупается |
 | `KB_EMAIL` / `KB_PASSWORD` | base | (пусто) | Доступ к API базы знаний для `--source api` |
@@ -372,6 +373,9 @@ docker logs -n 100 deploy-aegra-1 --timestamps  # последние строк�
 | `AIST_SECTION_ID` / `AIST_LIMIT` | orc | (пусто) | Раздел базы знаний / лимит запросов для деплоймента |
 | `AIST_DRY_RUN` / `AIST_FULL` / `AIST_SWITCH_ALIAS` | orc | `0` / `0` / `1` | Сухой прогон / полная переиндексация / переключить алиас после успеха |
 | `OLLAMA_LOCAL_BASE_URL` | base | `http://host.docker.internal:11434` | URL Ollama из Docker |
+| `VLLM_BASE_URL` | base | `http://localhost:8000` | Адрес vLLM для генерации (нужен при `LLM_PROVIDER=vllm`) |
+| `VLLM_EMBEDDING_BASE_URL` / `VLLM_RERANK_BASE_URL` | base | (пусто) | Адреса vLLM для эмбеддингов и переоценки; пусто = `VLLM_BASE_URL`. Один процесс vLLM обслуживает одну модель, поэтому обычно это разные порты |
+| `VLLM_API_KEY` / `VLLM_TIMEOUT` | base | (пусто) / `300.0` | Ключ сервера, запущенного с `--api-key` (уходит как `Authorization: Bearer`), и предел ожидания ответа |
 | `POSTGRES_USER/PASSWORD/DB/HOST` | base | `postgres/postgres/aegra/postgres` | Подключение к postgres |
 | `GUI_PORT` / `AEGRA_URL` | base | `8000` / `http://aegra:2026` | GUI порт / адрес aegra |
 | `CHAINLIT_AUTH_SECRET` | base | `change-me-to-a-random-secret` | Секрет Chainlit; генерируйте `python -c "import secrets; print(secrets.token_urlsafe(32))"` |

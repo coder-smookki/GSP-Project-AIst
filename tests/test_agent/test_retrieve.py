@@ -189,9 +189,7 @@ class TestHappyPath:
         search = _RecordingSearch()
         app = _app(support_model=support, search=search)
         state: AgentState = {
-            "messages": [
-                {"role": "user", "content": "Нормы и как носить каски"}
-            ]
+            "messages": [{"role": "user", "content": "Нормы и как носить каски"}]
         }
         result = await app.ainvoke(state)
 
@@ -243,9 +241,7 @@ class TestFinalize:
         )
         search = _RecordingSearch()
         app = _app(support_model=support, search=search)
-        state: AgentState = {
-            "messages": [{"role": "user", "content": "вопрос"}]
-        }
+        state: AgentState = {"messages": [{"role": "user", "content": "вопрос"}]}
         result = await app.ainvoke(state)
 
         numbers = [item["n"] for item in result["retrieved"]]
@@ -257,9 +253,7 @@ class TestFinalize:
             plans=[SearchPlan(mode="kb", subqueries=["СОУТ"])],
         )
         app = _app(support_model=support, search=_RecordingSearch(), top_k=3)
-        state: AgentState = {
-            "messages": [{"role": "user", "content": "вопрос"}]
-        }
+        state: AgentState = {"messages": [{"role": "user", "content": "вопрос"}]}
         result = await app.ainvoke(state)
 
         assert len(result["retrieved"]) <= 3
@@ -270,9 +264,7 @@ class TestFinalize:
             plans=[SearchPlan(mode="kb", subqueries=["СОУТ", "СОУТ"])],
         )
         app = _app(support_model=support, search=_RecordingSearch())
-        state: AgentState = {
-            "messages": [{"role": "user", "content": "вопрос"}]
-        }
+        state: AgentState = {"messages": [{"role": "user", "content": "вопрос"}]}
         result = await app.ainvoke(state)
 
         ids = [c["chunk_id"] for c in result["retrieved"]]
@@ -302,9 +294,7 @@ class TestModelFailure:
             model=_FailingModel(httpx.ReadTimeout("время вышло")),
             support_model=_SupportModel(plans=[SearchPlan(mode="chat")]),
         )
-        state: AgentState = {
-            "messages": [{"role": "user", "content": "Привет"}]
-        }
+        state: AgentState = {"messages": [{"role": "user", "content": "Привет"}]}
         result = await app.ainvoke(state)
         answer = result["messages"][-1].content
 
@@ -349,8 +339,7 @@ class TestModelFailure:
         await app.ainvoke(state)
 
         assert any(
-            "ПОИСК ПО БАЗЕ ЗНАНИЙ ВРЕМЕННО НЕДОСТУПЕН" in c
-            for c in seen_contexts
+            "ПОИСК ПО БАЗЕ ЗНАНИЙ ВРЕМЕННО НЕДОСТУПЕН" in c for c in seen_contexts
         )
 
 
@@ -402,3 +391,29 @@ class _FailingModel:
 
     async def ainvoke(self, messages=None, **kwargs):
         raise self._error
+
+    @pytest.mark.asyncio
+    async def test_openai_sdk_error_yields_service_message(self):
+        """Сбой OpenAI-совместимого сервера тоже не роняет запрос.
+
+        Провайдеры vLLM и llama.cpp ходят через OpenAI SDK, а он заворачивает
+        сетевые сбои в собственные классы и httpx наружу не отдаёт. Без этого
+        перехвата отказ такого сервера давал пользователю трассировку.
+        """
+        import httpx
+        from openai import APIConnectionError
+
+        app = create_app_agent(
+            model=_FailingModel(
+                APIConnectionError(request=httpx.Request("POST", "http://vllm/v1"))
+            ),
+            support_model=FakeModel(),
+            store=InMemoryStore(),
+            search=MockSearch(),
+        )
+        state: AgentState = {
+            "messages": [{"role": "human", "content": "Как часто проводится СОУТ?"}]
+        }
+
+        result = await app.ainvoke(state)
+        assert "недоступен" in result["messages"][-1].content

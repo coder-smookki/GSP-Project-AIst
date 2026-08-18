@@ -60,7 +60,8 @@ markers = [
     "embeddings: requires a real embedding model (Ollama) - excluded from fast CI",
     "tools: tests ai agents tool",
     "corpus: runs the ingest pipeline over the real knowledge base dump",
-    "qdrant: requires a live Qdrant server (auto-skipped when unreachable)"
+    "qdrant: requires a live Qdrant server (auto-skipped when unreachable)",
+    "vllm: requires a live vLLM server (auto-skipped when unreachable)"
 ]
 asyncio_mode = "auto"
 

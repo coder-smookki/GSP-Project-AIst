@@ -11,13 +11,28 @@ class ContextManager:
     def keep_last(self) -> int:
         return self._keep_last
 
-    async def condense(self, messages: list, existing_summary: str = "") -> str | None:
+    def should_condense(self, messages: list, existing_summary: str = "") -> bool:
+        """Проверяет, дойдёт ли сворачивание истории до вызова модели.
+
+        Проверка дешёвая и не обращается к модели. Нужна вызывающей стороне,
+        чтобы не показывать пользователю этап сворачивания, когда сворачивать
+        нечего: такой этап мигал бы на каждом сообщении.
+
+        Args:
+            messages: Сообщения диалога.
+            existing_summary: Ранее накопленная выжимка.
+
+        Returns:
+            bool: True, если история вышла за бюджет и есть что сворачивать.
+        """
         total = self._count_tokens(messages)
         summary_tokens = len(existing_summary) // 2
         if total + summary_tokens <= self._budget:
-            return None
+            return False
+        return len(messages) > self._keep_last
 
-        if len(messages) <= self._keep_last:
+    async def condense(self, messages: list, existing_summary: str = "") -> str | None:
+        if not self.should_condense(messages, existing_summary):
             return None
 
         old = messages[: -self._keep_last]
