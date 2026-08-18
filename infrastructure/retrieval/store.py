@@ -79,7 +79,30 @@ class QdrantStore:
         await assert_server_supported(self._client)
 
         if await self._client.collection_exists(name):
-            logger.info("коллекция %s уже существует, создание пропущено", name)
+            # Размерность вектора прошита в схему коллекции и на лету не
+            # меняется. Раньше существующая коллекция принималась как есть, и
+            # смена модели эмбеддингов проходила незамеченной: документы
+            # пропускались как неизменившиеся (модель не входит в их
+            # отпечаток), запись не выполнялась, а падало это позже и в другом
+            # месте - на первом же запросе с «Vector dimension error: expected
+            # dim: 2560, got 1024». Связать такое сообщение с индексацией
+            # трудно, поэтому проверяем сразу и говорим, что делать.
+            existing = await self._client.get_collection(name)
+            vectors = existing.config.params.vectors or {}
+            current = getattr(vectors.get(DENSE_VECTOR), "size", None)
+            if current is not None and current != dim:
+                raise ValueError(
+                    f"коллекция {name} собрана под вектор размерности {current}, "
+                    f"а текущий эмбеддер даёт {dim}. Размерность в схеме "
+                    f"коллекции не меняется: соберите новое поколение "
+                    f"(--generation N) и переключите алиас (--switch-alias), "
+                    f"либо верните прежнюю модель эмбеддингов"
+                )
+            logger.info(
+                "коллекция %s уже существует, размерность %s совпадает",
+                name,
+                current,
+            )
         else:
             await self._client.create_collection(
                 collection_name=name,

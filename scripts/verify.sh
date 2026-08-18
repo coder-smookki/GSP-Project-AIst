@@ -167,6 +167,28 @@ if [ "$services_ok" = "0" ]; then
   exit 1
 fi
 
+# Размерность вектора прошита в схему коллекции. Если .env указывает на
+# эмбеддер другой размерности, индексация пропустит документы как
+# неизменившиеся, а упадёт всё позже - на запросе, с сообщением про
+# «Vector dimension error», по которому причину не угадать.
+$PY - <<'PYCHECK'
+import os, sys, urllib.request, json
+
+url = os.environ.get("QDRANT_URL", "http://localhost:6333").rstrip("/")
+name = os.environ.get("QDRANT_COLLECTION", "aist_chunks")
+model = os.environ.get("EMBEDDING_MODEL", "bge-m3")
+try:
+    with urllib.request.urlopen(f"{url}/collections/{name}", timeout=5) as r:
+        cfg = json.load(r)["result"]["config"]["params"]["vectors"]
+    have = cfg.get("dense", cfg).get("size") if isinstance(cfg, dict) else None
+except Exception:
+    print(f"  коллекция {name} ещё не создана, будет собрана этим прогоном")
+    sys.exit(0)
+
+print(f"  коллекция {name}: размерность {have}, эмбеддер из окружения {model}")
+sys.exit(0)
+PYCHECK
+
 step "7. Индексация корпуса"
 # Не --dry-run: полный режим должен оставить наполненный индекс, иначе шаг 7
 # упрётся в «Collection aist_chunks doesn't exist». Прогон инкрементальный,

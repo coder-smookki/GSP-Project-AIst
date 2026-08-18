@@ -195,7 +195,8 @@ class IngestPipeline:
             outcome.areas = areas
             outcome.title = document.doc_title or outcome.title
 
-            fingerprint = self.repository.fingerprint(document)
+            embedder_id = str(getattr(embedder, "model_name", "") or "")
+            fingerprint = self.repository.fingerprint(document, embedder_id)
 
             if not chunks:
                 outcome.error = "конвейер не дал ни одного чанка"

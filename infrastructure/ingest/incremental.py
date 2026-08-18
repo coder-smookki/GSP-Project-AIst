@@ -17,9 +17,23 @@ class HashRepository:
     def __init__(self, config: IncrementalConfig = DEFAULT_INCREMENTAL) -> None:
         self.config = config
 
-    def fingerprint(self, document: ParsedDocument) -> str:
+    def fingerprint(self, document: ParsedDocument, embedder: str = "") -> str:
+        """Считает отпечаток разобранного документа.
+
+        Args:
+            document: Разобранный документ.
+            embedder: Имя модели эмбеддингов. Входит в отпечаток, потому что
+                векторы разных моделей несовместимы по смыслу, даже когда
+                совпадают по размерности. Без этого смена модели проходила бы
+                как «документ не изменился», индекс оставался бы собранным
+                прежней моделью, а качество поиска молча падало.
+
+        Returns:
+            str: Шестнадцатеричный отпечаток.
+        """
         digest = hashlib.sha256()
         digest.update(self.config.pipeline_version.encode("utf-8"))
+        digest.update(embedder.encode("utf-8"))
         digest.update(document.doc_code.encode("utf-8"))
         digest.update(document.doc_title.encode("utf-8"))
         for atom in document.atoms():

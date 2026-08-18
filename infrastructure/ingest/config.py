@@ -39,7 +39,7 @@ class DeanonymizationConfig:
 @dataclass(frozen=True, slots=True)
 class IncrementalConfig:
     scroll_batch: int = 1024
-    pipeline_version: str = "2026.08.08-1"
+    pipeline_version: str = "2026.08.19-1"
 
 
 @dataclass(frozen=True, slots=True)
