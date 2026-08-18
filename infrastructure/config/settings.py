@@ -159,8 +159,23 @@ class Settings(BaseSettings):
     #: кейса, и нарушить его молча нельзя.
     aist_offline: bool = False
 
+    # Читаются оба файла, причём корневой `.env` перекрывает `deploy/.env`.
+    #
+    # Зачем два. Настройки стенда живут в `deploy/.env`, потому что оттуда их
+    # берёт docker compose. Но пути в pydantic считаются от текущего каталога,
+    # и всё, что запускается с хоста из корня репозитория (замер качества,
+    # индексация, scripts/verify.sh), этот файл просто не видело. Настройки
+    # молча брались из умолчаний ниже, и человек был уверен, что померил свою
+    # конфигурацию, хотя мерил чужую: выставленные в `deploy/.env` prefetch=10,
+    # rrf=40 и min_rel=0.45 не применялись, работали 30, 60 и 0.55.
+    #
+    # Сетевые адреса (QDRANT_URL, OLLAMA_LOCAL_BASE_URL, POSTGRES_HOST) в
+    # `deploy/.env` держать не нужно: внутри стека их подставляет сам compose,
+    # а на хосте верны умолчания ниже. В шаблоне они закомментированы.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=("deploy/.env", ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     @field_validator("retrieval_provider")

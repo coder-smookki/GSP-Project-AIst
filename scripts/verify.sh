@@ -171,21 +171,37 @@ fi
 # эмбеддер другой размерности, индексация пропустит документы как
 # неизменившиеся, а упадёт всё позже - на запросе, с сообщением про
 # «Vector dimension error», по которому причину не угадать.
+# Печатаем конфигурацию, с которой реально пойдёт замер. Раньше её
+# приходилось угадывать: файл deploy/.env запуск с хоста не видел, молча
+# применялись умолчания, и цифры относились не к той настройке, которую
+# человек выставил.
 $PY - <<'PYCHECK'
-import os, sys, urllib.request, json
+import json
+import sys
+import urllib.request
 
-url = os.environ.get("QDRANT_URL", "http://localhost:6333").rstrip("/")
-name = os.environ.get("QDRANT_COLLECTION", "aist_chunks")
-model = os.environ.get("EMBEDDING_MODEL", "bge-m3")
+from infrastructure.config.settings import get_settings
+
+s = get_settings()
+print("  конфигурация замера:")
+print(f"    модель ответа      {s.llm_model}")
+print(f"    эмбеддер           {s.embedding_model}")
+print(f"    коллекция          {s.qdrant_collection}")
+print(f"    фрагментов         {s.retrieval_top_k}")
+print(f"    prefetch / rrf     {s.retrieval_prefetch} / {s.retrieval_rrf_k}")
+print(f"    порог близости     {s.retrieval_min_relevance}")
+print(f"    переоценка         {'вкл' if s.rerank_enabled else 'выкл'}")
+
+url = s.qdrant_url.rstrip("/")
 try:
-    with urllib.request.urlopen(f"{url}/collections/{name}", timeout=5) as r:
-        cfg = json.load(r)["result"]["config"]["params"]["vectors"]
-    have = cfg.get("dense", cfg).get("size") if isinstance(cfg, dict) else None
+    with urllib.request.urlopen(
+        f"{url}/collections/{s.qdrant_collection}", timeout=5
+    ) as response:
+        vectors = json.load(response)["result"]["config"]["params"]["vectors"]
+    size = vectors.get("dense", vectors).get("size") if isinstance(vectors, dict) else None
+    print(f"    размерность в индексе {size}")
 except Exception:
-    print(f"  коллекция {name} ещё не создана, будет собрана этим прогоном")
-    sys.exit(0)
-
-print(f"  коллекция {name}: размерность {have}, эмбеддер из окружения {model}")
+    print(f"    коллекция {s.qdrant_collection} ещё не создана, соберём этим прогоном")
 sys.exit(0)
 PYCHECK
 
