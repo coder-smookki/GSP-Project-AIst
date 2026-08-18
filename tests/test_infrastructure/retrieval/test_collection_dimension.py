@@ -101,12 +101,14 @@ async def test_mismatch_is_reported_with_instructions() -> None:
 async def test_matching_dimension_passes() -> None:
     """Совпадение размерности проходит без создания новой коллекции."""
     client = _Client(1024)
-    await QdrantStore(client, alias="aist_chunks").create_generation("aist_chunks", 1024)
+    store = QdrantStore(client, alias="aist_chunks")
+    await store.create_generation("aist_chunks", 1024)
     assert client.created is False
 
 
 async def test_missing_collection_is_created() -> None:
     """Отсутствующая коллекция создаётся заданной размерностью."""
     client = _Client(None)
-    await QdrantStore(client, alias="aist_chunks").create_generation("aist_chunks", 1024)
+    store = QdrantStore(client, alias="aist_chunks")
+    await store.create_generation("aist_chunks", 1024)
     assert client.created is True
