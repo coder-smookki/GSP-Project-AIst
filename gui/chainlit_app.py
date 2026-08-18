@@ -362,8 +362,17 @@ async def on_message(message: cl.Message):
 
             # --- updates: управляем should_stream по узлам графа ---
             for node_name, data in chunk.data.items():
-                if node_name == "finalize" and data:
-                    # После finalize начинается assistant — включаем стрим
+                if node_name in ("plan", "finalize") and data:
+                    # Включаем стрим после планировщика, а не только после
+                    # finalize. В режиме «chat» (приветствие, вопрос о
+                    # возможностях, вопрос о самом пользователе) граф идёт
+                    # plan -> assistant МИМО finalize, поэтому прежнее условие
+                    # там не срабатывало и ответ не стримился вовсе.
+                    #
+                    # После plan это безопасно в обоих режимах: ветви поиска
+                    # живут в подграфе, а он не стримится (в runs.stream нет
+                    # subgraphs=True), finalize модель не зовёт, а запись
+                    # памяти идёт уже после assistant, когда стрим выключен.
                     should_stream = True
                 elif node_name == "assistant" and data:
                     # assistant завершился — выключаем стрим и забираем финальный ответ
