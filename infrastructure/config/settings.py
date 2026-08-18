@@ -6,8 +6,19 @@
 
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Провайдеры моделей, которые реестр умеет собирать (см. model_registry).
+MODEL_PROVIDERS = ("ollama-local", "llamacpp", "vllm")
+
+#: Способы посчитать переоценку кандидатов.
+#:
+#: ``auto`` - хост-сервис, если задан ``rerank_endpoint``, иначе локальный
+#: расчёт (историческое поведение); ``local`` - только локальный
+#: кросс-энкодер; ``http`` - только хост-сервис ``deploy/rerank_server.py``;
+#: ``vllm`` - эндпоинт ``/v1/rerank`` сервера vLLM.
+RERANK_PROVIDERS = ("auto", "local", "http", "vllm")
 
 
 class Settings(BaseSettings):
@@ -31,6 +42,27 @@ class Settings(BaseSettings):
     ollama_local_base_url: str = "http://localhost:11434"
     llamacpp_base_url: str = "http://localhost:8080"
     vllm_base_url: str = "http://localhost:8000"
+
+    # ------------------------------------------------------------------ vLLM
+    #: Ключ доступа к vLLM (сервер запущен с ``--api-key``).
+    #:
+    #: Уходит заголовком ``Authorization: Bearer <ключ>``. Пусто - сервер
+    #: поднят без ключа; клиент всё равно шлёт заглушку, потому что
+    #: OpenAI-совместимый SDK отказывается работать с пустым ключом.
+    vllm_api_key: str = Field(default="", repr=False)
+
+    #: Предел ожидания ответа vLLM, с. Значение большое по той же причине,
+    #: что и у Ollama: первый запрос может ждать прогрева сервера.
+    vllm_timeout: float = 300.0
+
+    #: Адрес vLLM с эмбеддером. Пусто - берётся ``vllm_base_url``.
+    #:
+    #: Один процесс vLLM обслуживает ровно одну модель, поэтому генерация,
+    #: эмбеддинги и переоценка живут на разных портах.
+    vllm_embedding_base_url: str = ""
+
+    #: Адрес vLLM с моделью переоценки. Пусто - берётся ``vllm_base_url``.
+    vllm_rerank_base_url: str = ""
 
     # ----------------------------------------------------------- эмбеддинги
     embedding_provider: str = "ollama-local"  # ollama-local | llamacpp | vllm
@@ -81,6 +113,12 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------- переоценка
     rerank_enabled: bool = False
+
+    #: Кто считает переоценку: auto | local | http | vllm.
+    #:
+    #: ``auto`` сохраняет прежнее поведение: есть ``rerank_endpoint`` -
+    #: хост-сервис, нет - локальный кросс-энкодер.
+    rerank_provider: str = "auto"
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_device: str = ""
     rerank_half_precision: bool = True
@@ -135,6 +173,51 @@ class Settings(BaseSettings):
             )
         return normalized
 
+    @field_validator("llm_provider", "embedding_provider")
+    @classmethod
+    def _check_model_provider(cls, value: str, info: ValidationInfo) -> str:
+        """Проверяет, что провайдер моделей реализован в реестре.
+
+        Args:
+            value: Значение настройки провайдера.
+            info: Контекст валидации; нужен ради имени поля в сообщении.
+
+        Returns:
+            str: Нормализованное значение провайдера.
+
+        Raises:
+            ValueError: Если провайдер не входит в ``MODEL_PROVIDERS``.
+        """
+        normalized = value.strip().lower()
+        if normalized not in MODEL_PROVIDERS:
+            raise ValueError(
+                f"неизвестный провайдер {info.field_name}={value!r}: "
+                f"поддерживаются {', '.join(MODEL_PROVIDERS)}"
+            )
+        return normalized
+
+    @field_validator("rerank_provider")
+    @classmethod
+    def _check_rerank_provider(cls, value: str) -> str:
+        """Проверяет способ переоценки кандидатов.
+
+        Args:
+            value: Значение настройки ``rerank_provider``.
+
+        Returns:
+            str: Нормализованное значение.
+
+        Raises:
+            ValueError: Если значение не входит в ``RERANK_PROVIDERS``.
+        """
+        normalized = value.strip().lower()
+        if normalized not in RERANK_PROVIDERS:
+            raise ValueError(
+                f"неизвестный способ переоценки {value!r}: "
+                f"поддерживаются {', '.join(RERANK_PROVIDERS)}"
+            )
+        return normalized
+
     @field_validator(
         "retrieval_top_k",
         "retrieval_prefetch",
@@ -149,6 +232,24 @@ class Settings(BaseSettings):
 
     def resolved_retrieval_provider(self) -> str:
         return "mock" if self.use_mock_search else self.retrieval_provider
+
+    def resolved_vllm_embedding_base_url(self) -> str:
+        """Возвращает адрес vLLM для эмбеддингов.
+
+        Returns:
+            str: ``vllm_embedding_base_url``, а при пустом значении -
+            ``vllm_base_url``.
+        """
+        return self.vllm_embedding_base_url or self.vllm_base_url
+
+    def resolved_vllm_rerank_base_url(self) -> str:
+        """Возвращает адрес vLLM для переоценки.
+
+        Returns:
+            str: ``vllm_rerank_base_url``, а при пустом значении -
+            ``vllm_base_url``.
+        """
+        return self.vllm_rerank_base_url or self.vllm_base_url
 
 
 @lru_cache

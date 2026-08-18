@@ -21,12 +21,28 @@ class OpenAICompatClient:
         num_ctx: int | None = None,
         repeat_penalty: float | None = None,
         api_key: str = "sk-no-key",
+        temperature: float | None = None,
     ):
+        """Создаёт клиент поверх OpenAI-совместимого сервера.
+
+        Args:
+            model: Имя модели на сервере.
+            base_url: Адрес сервера без суффикса ``/v1``; суффикс
+                добавляется сам.
+            timeout: Предел ожидания ответа, с.
+            num_ctx: Размер контекста в опциях Ollama; ``None`` - не слать.
+            repeat_penalty: Штраф за повторы в опциях Ollama; ``None`` - не
+                слать.
+            api_key: Ключ доступа. Локальные серверы его не проверяют, но
+                OpenAI-совместимый SDK не работает с пустым значением.
+            temperature: Температура; ``None`` - оставить умолчание сервера.
+        """
         self._client = ChatOpenAI(
             model=model,
             base_url=f"{base_url}/v1",
             api_key=SecretStr(api_key),
             timeout=timeout,
+            temperature=temperature,
         )
         self._num_ctx = num_ctx
         self._repeat_penalty = repeat_penalty
