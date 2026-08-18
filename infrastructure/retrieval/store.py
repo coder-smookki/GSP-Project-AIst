@@ -211,6 +211,22 @@ class QdrantStore:
         return None
 
     async def switch_generation(self, collection: str) -> str | None:
+        # Алиас и коллекция делят одно пространство имён: Qdrant не даст
+        # создать алиас с именем существующей коллекции и ответит сырым
+        # «409 Conflict: Collection ... already exists». По такому сообщению
+        # причину не угадать, а она в настройке: QDRANT_COLLECTION задаёт имя
+        # АЛИАСА, а не поколения. Если туда записать готовое имя коллекции
+        # (скажем, aist_chunks_v2), поколение соберётся как aist_chunks_v2_v1,
+        # а переключение упадёт.
+        if await self._client.collection_exists(self._alias):
+            raise ValueError(
+                f"нельзя создать алиас {self._alias}: коллекция с таким именем "
+                f"уже существует. QDRANT_COLLECTION задаёт имя алиаса, а не "
+                f"поколения; поколения называются <алиас>_v1, <алиас>_v2. "
+                f"Поставьте QDRANT_COLLECTION={self._alias.rsplit('_v', 1)[0]} "
+                f"и выберите поколение флагом --generation"
+            )
+
         previous = await self.current_generation()
         operations: list[models.AliasOperations] = []
         if previous:

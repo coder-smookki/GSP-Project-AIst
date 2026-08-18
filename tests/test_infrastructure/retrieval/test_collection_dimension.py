@@ -112,3 +112,59 @@ async def test_missing_collection_is_created() -> None:
     store = QdrantStore(client, alias="aist_chunks")
     await store.create_generation("aist_chunks", 1024)
     assert client.created is True
+
+
+class TestAliasCollision:
+    """Имя алиаса не должно совпадать с именем существующей коллекции.
+
+    Qdrant держит алиасы и коллекции в одном пространстве имён и отвечает
+    сырым «409 Conflict: Collection ... already exists». По такому
+    сообщению причину не угадать, а она в настройке: `QDRANT_COLLECTION`
+    задаёт имя алиаса, а не поколения.
+    """
+
+    async def test_collision_is_reported_with_instructions(self) -> None:
+        """Совпадение имён вскрывается до запроса к серверу."""
+        store = QdrantStore(_Client(1024), alias="aist_chunks_v2")
+        with pytest.raises(ValueError) as info:
+            await store.switch_generation("aist_chunks_v2_v1")
+
+        message = str(info.value)
+        assert "QDRANT_COLLECTION" in message
+        assert "aist_chunks" in message
+        assert "--generation" in message
+
+    async def test_free_alias_name_passes_the_check(self) -> None:
+        """Свободное имя алиаса проверку проходит."""
+
+        class _NoCollections(_Client):
+            async def collection_exists(self, collection_name: str) -> bool:
+                """Сообщает, что коллекции с таким именем нет.
+
+                Args:
+                    collection_name: Имя коллекции.
+
+                Returns:
+                    bool: Всегда ``False``.
+                """
+                return False
+
+            async def get_aliases(self):
+                """Отдаёт пустой перечень алиасов.
+
+                Returns:
+                    SimpleNamespace: Пустой перечень.
+                """
+                return SimpleNamespace(aliases=[])
+
+            async def update_collection_aliases(self, **kwargs) -> None:
+                """Отмечает переключение алиаса.
+
+                Args:
+                    **kwargs: Операции над алиасами.
+                """
+                self.switched = True
+
+        client = _NoCollections(1024)
+        store = QdrantStore(client, alias="aist_chunks")
+        assert await store.switch_generation("aist_chunks_v1") is None
