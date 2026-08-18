@@ -143,7 +143,31 @@ if [ "$FULL" = "0" ]; then
   exit 0
 fi
 
-step "6. Индексация корпуса"
+step "6. Живые сервисы"
+# Проверяем до долгих шагов: иначе индексация или замер упадут через минуты
+# ожидания, и причина утонет в трассировке.
+qdrant_url="${QDRANT_URL:-http://localhost:6333}"
+ollama_url="${OLLAMA_LOCAL_BASE_URL:-http://localhost:11434}"
+services_ok=1
+if curl -sf --max-time 4 "$qdrant_url/collections" >/dev/null 2>&1; then
+  ok "Qdrant отвечает ($qdrant_url)"
+else
+  bad "Qdrant недоступен ($qdrant_url): cd deploy && docker compose up -d"
+  services_ok=0
+fi
+if curl -sf --max-time 4 "$ollama_url/api/tags" >/dev/null 2>&1; then
+  ok "Ollama отвечает ($ollama_url)"
+else
+  bad "Ollama недоступна ($ollama_url): запустите ollama serve"
+  services_ok=0
+fi
+if [ "$services_ok" = "0" ]; then
+  printf "\n\033[1mИтог:\033[0m успешно %d, замечаний %d\n" "$pass" "$fail"
+  printf "Живые сервисы не подняты, шаги 7-9 пропущены.\n"
+  exit 1
+fi
+
+step "7. Индексация корпуса"
 # Не --dry-run: полный режим должен оставить наполненный индекс, иначе шаг 7
 # упрётся в «Collection aist_chunks doesn't exist». Прогон инкрементальный,
 # на неизменившемся корпусе занимает пару секунд.
@@ -155,15 +179,8 @@ else
   bad "индексация не отработала:"; tail -5 /tmp/aist_ingest.txt | sed 's/^/       /'
 fi
 
-step "7. Качество на золотом наборе"
+step "8. Качество на золотом наборе"
 echo "  (может занять несколько минут)"
-if ! $PY -c "
-import urllib.request, os
-url = os.environ.get('QDRANT_URL', 'http://localhost:6333')
-urllib.request.urlopen(url + '/collections', timeout=3)
-" >/dev/null 2>&1; then
-  bad "Qdrant недоступен: поднимите стек (cd deploy && docker compose up -d)"
-fi
 if $PY -m eval.cli run >/tmp/aist_eval.txt 2>&1; then
   grep -iE "hit@|mrr|отказ|not_found" /tmp/aist_eval.txt | head -8 | sed 's/^/       /'
   ok "замер качества выполнен"
@@ -171,7 +188,7 @@ else
   bad "замер качества не отработал:"; tail -8 /tmp/aist_eval.txt | sed 's/^/       /'
 fi
 
-step "8. Операционный замер"
+step "9. Операционный замер"
 # Замер переехал в пакет eval: scripts/benchmark.py больше не существует.
 if $PY -m eval.cli bench --repeats 3 --concurrency 1 2 4 \
      --output eval/results/bench_verify.json >/tmp/aist_bench.txt 2>&1; then
