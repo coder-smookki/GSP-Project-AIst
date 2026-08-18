@@ -26,5 +26,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --extra orchestration --extra benchmark --frozen
 
+      # Линтер до тестов: он дешевле и ловит то, что тесты пропускают.
+      # Без этого шага в dev уехали задвоенный импорт в eval/cli.py и мёртвые
+      # присваивания в eval/cache.py - CI гонял только pytest и был зелёным.
+      - name: Lint (ruff)
+        # Только `check`: `format --check` сейчас красный на 20 файлах,
+        # приводить их к формату надо отдельным коммитом, чтобы не смешивать
+        # содержательные правки с переформатированием.
+        run: uv run ruff check .
+
       - name: Run tests (unit, corpus & orchestration; no live servers)
         run: uv run pytest -m "not integration"

@@ -326,23 +326,12 @@ async def on_message(message: cl.Message):
                         await msg.stream_token(content[len(prev):])
                 continue
 
-            if chunk.event != "updates":
-                continue
-
-            # --- updates: управляем should_stream по узлам графа ---
-            for node_name, data in chunk.data.items():
-                if node_name == "finalize" and data:
-                    # После finalize начинается assistant — включаем стрим
-                    should_stream = True
-                elif node_name == "assistant" and data:
-                    # assistant завершился — выключаем стрим и забираем финальный ответ
-                    should_stream = False
-                    for m in data.get("messages") or []:
-                        if m.get("type") == "ai" and not m.get("tool_calls"):
-                            content = str(m.get("content") or "")
-                            partials[m.get("id", "")] = content
-                            assistant_final.append(content)
-
+            # --- custom: панель источников и подсказки ---
+            #
+            # Блок обязан стоять ДО отсева не-updates. Раньше он был под
+            # ним, поэтому события custom до него не доходили вовсе:
+            # панель «Источники» и подсказки не рисовались никогда, хотя
+            # агент их исправно слал (agent/graph.py, узел finalize).
             if chunk.event == "custom":
                 env = decode_aist_envelope(chunk.data or {})
                 if env:
@@ -367,6 +356,24 @@ async def on_message(message: cl.Message):
                     elif kind == "followups":
                         followups = payload.get("items") or []
                 continue
+
+            if chunk.event != "updates":
+                continue
+
+            # --- updates: управляем should_stream по узлам графа ---
+            for node_name, data in chunk.data.items():
+                if node_name == "finalize" and data:
+                    # После finalize начинается assistant — включаем стрим
+                    should_stream = True
+                elif node_name == "assistant" and data:
+                    # assistant завершился — выключаем стрим и забираем финальный ответ
+                    should_stream = False
+                    for m in data.get("messages") or []:
+                        if m.get("type") == "ai" and not m.get("tool_calls"):
+                            content = str(m.get("content") or "")
+                            partials[m.get("id", "")] = content
+                            assistant_final.append(content)
+
     except Exception as exc:
         run_error = exc
         logger.exception("run stream failed")

@@ -425,7 +425,10 @@ def _print_ab_list(rows: list[dict[str, Any]]) -> None:
     if not rows:
         print("A/B кэш пуст")
         return
-    header = f"{'ключ':<36}{'base':<16}{'variant':<20}{'окружение':<18}{'вердиктов':>8} создан"
+    header = (
+        f"{'ключ':<36}{'base':<16}{'variant':<20}"
+        f"{'окружение':<18}{'вердиктов':>8} создан"
+    )
     print(header)
     print("-" * len(header))
     for row in rows:
@@ -448,8 +451,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="список сохранённых результатов")
     sub.add_parser("clear", help="удалить все сохранённые результаты")
-    ab_list = sub.add_parser("ab-list", help="список A/B вердиктов")
-    ab_clear = sub.add_parser("ab-clear", help="удалить A/B вердикты")
+    sub.add_parser("ab-list", help="список A/B вердиктов")
+    sub.add_parser("ab-clear", help="удалить A/B вердикты")
     args = parser.parse_args()
 
     cache = ResultCache(args.dir)

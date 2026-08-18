@@ -133,6 +133,51 @@ def _dedup_retrieved(items: list[dict]) -> list[dict]:
     return list(best.values())
 
 
+def _merge_branches(items: list[dict], limit: int) -> list[dict]:
+    """Собирает выдачу ветвей, давая каждому подзапросу свою долю.
+
+    Скоры считаются каждый по своему подзапросу и между собой несопоставимы:
+    у одной формулировки совпадение может быть сильнее просто потому, что она
+    ближе к языку документа. Прежняя общая сортировка по скору из-за этого
+    могла отдать все места фрагментам одного подзапроса, а ответ на вторую
+    часть вопроса выпадал целиком — то есть декомпозиция обнулялась ровно на
+    тех вопросах, ради которых её и делали.
+
+    Поэтому берём по кругу: сначала лучший фрагмент каждой ветви, затем
+    вторые и так далее. Внутри ветви порядок сохраняется — там скоры
+    сопоставимы, потому что запрос один. Если ветвь исчерпалась, её место
+    достаётся остальным, и предел `limit` расходуется полностью.
+
+    Args:
+        items: Фрагменты всех ветвей с полем ``subquery``.
+        limit: Сколько фрагментов оставить.
+
+    Returns:
+        list[dict]: Фрагменты в порядке предъявления модели.
+    """
+    if not items:
+        return []
+
+    branches: dict[str, list[dict]] = {}
+    for item in items:
+        branches.setdefault(str(item.get("subquery") or ""), []).append(item)
+
+    for chunk_list in branches.values():
+        chunk_list.sort(key=lambda c: c.get("score", 0.0), reverse=True)
+
+    merged: list[dict] = []
+    queues = list(branches.values())
+    position = 0
+    while len(merged) < limit and any(len(q) > position for q in queues):
+        for queue in queues:
+            if position < len(queue):
+                merged.append(queue[position])
+                if len(merged) == limit:
+                    return merged
+        position += 1
+    return merged
+
+
 def create_app_agent(
     model,
     support_model,
@@ -233,8 +278,15 @@ def create_app_agent(
             "rounds": 0,
             "branch_messages": [],
         }
-        result = await search_agent_subgraph.ainvoke(branch_input, config={"recursion_limit": 20})
-        retrieved = result.get("retrieved", []) or []
+        result = await search_agent_subgraph.ainvoke(
+            branch_input, config={"recursion_limit": 20}
+        )
+        subquery = state.get("query") or ""
+        # Помечаем каждый фрагмент своим подзапросом: на сборке нужно знать,
+        # какая ветвь его нашла, иначе доли ветвей не выделить.
+        retrieved = [
+            dict(item, subquery=subquery) for item in (result.get("retrieved") or [])
+        ]
         failures = result.get("failures", []) or []
         emit(
             "trace",
@@ -249,7 +301,7 @@ def create_app_agent(
 
     async def finalize(state: AgentState):
         raw = _dedup_retrieved(state.get("branch_retrieved") or [])
-        items = sorted(raw, key=lambda c: c.get("score", 0.0), reverse=True)[:top_k]
+        items = _merge_branches(raw, top_k)
         items = [dict(item, n=n) for n, item in enumerate(items, 1)]
         failures = state.get("failures") or []
         retrieval_failed = bool(failures) and not items

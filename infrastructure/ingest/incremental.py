@@ -45,7 +45,7 @@ class StateManager:
             )
             return {}
 
-        state: dict[str, str] = {}
+        seen: dict[str, set[str]] = {}
         offset = None
         while True:
             points, offset = await client.scroll(
@@ -60,9 +60,36 @@ class StateManager:
                 doc_id = payload.get("doc_id")
                 content_hash = payload.get("content_hash")
                 if isinstance(doc_id, str) and isinstance(content_hash, str):
-                    state.setdefault(doc_id, content_hash)
+                    seen.setdefault(doc_id, set()).add(content_hash)
             if offset is None:
                 break
+
+        # Документ с несколькими отпечатками в индексе записан не полностью:
+        # прошлый прогон оборвался посреди загрузки, и часть точек осталась от
+        # предыдущей версии. Раньше здесь брался первый попавшийся отпечаток
+        # (`setdefault` по первой встреченной точке), и если им оказывался
+        # новый, документ на следующем прогоне считался неизменившимся и
+        # пропускался НАВСЕГДА — недописанные чанки исчезали из поиска молча.
+        # Порядок обхода `scroll` при этом ничем не задан, так что поведение
+        # было ещё и невоспроизводимым.
+        #
+        # Правило простое: неоднозначность — это не «не изменилось». Такой
+        # документ из состояния исключается и переиндексируется целиком.
+        state: dict[str, str] = {}
+        broken: list[str] = []
+        for doc_id, hashes in seen.items():
+            if len(hashes) == 1:
+                state[doc_id] = next(iter(hashes))
+            else:
+                broken.append(doc_id)
+
+        if broken:
+            logger.warning(
+                "коллекция %s: документы с несколькими отпечатками (%s) — "
+                "прошлая загрузка оборвалась, они будут переиндексированы",
+                collection,
+                ", ".join(sorted(broken)),
+            )
 
         logger.info(
             "коллекция %s: состояние прочитано, документов в индексе %d",
