@@ -205,16 +205,52 @@ except Exception:
 sys.exit(0)
 PYCHECK
 
-step "7. Индексация корпуса"
-# Не --dry-run: полный режим должен оставить наполненный индекс, иначе шаг 7
-# упрётся в «Collection aist_chunks doesn't exist». Прогон инкрементальный,
-# на неизменившемся корпусе занимает пару секунд.
-if $PY scripts/ingest.py --source files --switch-alias >/tmp/aist_ingest.txt 2>&1; then
-  grep -E "индексация завершена|Ошибок" /tmp/aist_ingest.txt | sed 's/^/       /'
-  if grep -q "ошибок 0" /tmp/aist_ingest.txt; then ok "разбор корпуса без ошибок"
-  else bad "при разборе корпуса есть ошибки"; fi
+step "7. Индекс"
+# Сценарий проверки не должен перестраивать индекс. Раньше здесь безусловно
+# звался ingest --switch-alias без --generation, то есть всегда в поколение
+# <алиас>_v1. Если это поколение собрано другим эмбеддером, прогон упирался
+# в расхождение размерности, а если имя алиаса совпадало с именем готовой
+# коллекции - в конфликт имён. Проверка обязана смотреть, а не менять.
+index_state=$($PY - <<'PYSTATE'
+import json
+import urllib.request
+
+from infrastructure.config.settings import get_settings
+
+s = get_settings()
+url = s.qdrant_url.rstrip("/")
+try:
+    with urllib.request.urlopen(
+        f"{url}/collections/{s.qdrant_collection}", timeout=5
+    ) as response:
+        result = json.load(response)["result"]
+    vectors = result["config"]["params"]["vectors"]
+    size = vectors.get("dense", vectors).get("size") if isinstance(vectors, dict) else 0
+    print(f"ready {result.get('points_count', 0)} {size}")
+except Exception:
+    print("missing 0 0")
+PYSTATE
+)
+set -- $index_state
+state="$1"; points="$2"; dim="$3"
+
+if [ "$state" = "ready" ] && [ "$points" -gt 0 ]; then
+  ok "индекс на месте: $points фрагментов, размерность $dim"
 else
-  bad "индексация не отработала:"; tail -5 /tmp/aist_ingest.txt | sed 's/^/       /'
+  bad "индекс пуст или недоступен — соберите его командой:"
+  echo "       uv run python scripts/ingest.py --source files --generation N --switch-alias"
+  echo "       (N — номер свободного поколения; существующие видны в Qdrant)"
+fi
+
+# Разбор корпуса проверяем всегда, но без записи: он от индекса не зависит.
+if $PY scripts/ingest.py --source files --dry-run >/tmp/aist_ingest.txt 2>&1; then
+  if grep -q "ошибок 0" /tmp/aist_ingest.txt; then
+    ok "разбор корпуса без ошибок: $(grep -oE 'документов [0-9]+, чанков [0-9]+' /tmp/aist_ingest.txt | tail -1)"
+  else
+    bad "при разборе корпуса есть ошибки"
+  fi
+else
+  bad "разбор корпуса не отработал:"; tail -5 /tmp/aist_ingest.txt | sed 's/^/       /'
 fi
 
 step "8. Качество на золотом наборе"
