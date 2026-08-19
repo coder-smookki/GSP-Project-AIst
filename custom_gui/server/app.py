@@ -19,6 +19,7 @@ from typing import Annotated, Any
 
 import bcrypt
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -124,6 +125,13 @@ def create_app(config: Config | None = None) -> FastAPI:
             await agent.aclose()
 
     app = FastAPI(title="АИст", docs_url=None, redoc_url=None, lifespan=lifespan)
+
+    # Сжатие статики: без него скрипт уходит по сети в три раза тяжелее, чем
+    # нужно (60 КБ против 21). Порог 900 байт - мелкие ответы API сжимать
+    # дороже, чем отдать как есть. Поток ответа сжатию не подлежит: gzip
+    # копил бы события в буфере и рушил бы время до первого символа, поэтому
+    # у него свой media_type и он проходит мимо.
+    app.add_middleware(GZipMiddleware, minimum_size=900)
 
     app.state.session_secret = settings.session_secret
 

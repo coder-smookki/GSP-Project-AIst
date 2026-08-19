@@ -1,0 +1,37 @@
+# Собственный интерфейс вместо Chainlit.
+#
+# Поднимается вместе с базовым стеком и заменяет сервис `gui`:
+#
+#     docker compose -f docker-compose.yml -f docker-compose.custom-gui.yml up -d
+#
+# Chainlit при этом не удаляется из репозитория: пока новый интерфейс не
+# закрыл все сценарии, важно иметь возможность вернуться одной командой.
+# Чтобы поднять оба сразу, задайте GUI_PORT и AIST_GUI_PORT разными.
+
+services:
+  aist-gui:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.custom-gui
+    restart: unless-stopped
+    ports:
+      # По умолчанию только петля: в интерфейсе вся переписка и вход по
+      # паролю, а демонстрация идёт с той же машины. Открыть наружу осознанно -
+      # AIST_GUI_PORT_MAP="0.0.0.0:8100:8000".
+      - "${AIST_GUI_PORT_MAP:-127.0.0.1:${AIST_GUI_PORT:-8100}:8000}"
+    env_file:
+      - .env
+    environment:
+      - AEGRA_URL=${AEGRA_URL:-http://aegra:2026}
+      # Пустое значение это не «выключено», а «закрыто»: без токена агент не
+      # отвечает никому, а без ключа подписи интерфейс не стартует вовсе.
+      - AEGRA_API_TOKEN=${AEGRA_API_TOKEN:?задайте AEGRA_API_TOKEN в deploy/.env}
+      - CHAINLIT_AUTH_SECRET=${CHAINLIT_AUTH_SECRET:?задайте CHAINLIT_AUTH_SECRET в deploy/.env}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?задайте ADMIN_PASSWORD в deploy/.env}
+      - GUI_DATABASE_URL=${GUI_DATABASE_URL:-postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/chainlit}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      aegra:
+        condition: service_started

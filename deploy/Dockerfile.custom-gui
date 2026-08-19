@@ -1,0 +1,53 @@
+# Собственный интерфейс: статика Svelte плюс бэкенд-посредник FastAPI.
+#
+# Две стадии. Node нужен только чтобы собрать статику, в итоговый образ он не
+# попадает: там остаются 60 КБ JS и 15 КБ CSS, а не 300 МБ инструментов.
+
+# --------------------------------------------------------------- сборка
+FROM node:24-slim AS web
+
+WORKDIR /web
+
+# Манифесты отдельным слоем: пока зависимости не менялись, установка берётся
+# из кеша, и правка компонента не тянет за собой повторный npm ci.
+COPY custom_gui/web/package.json custom_gui/web/package-lock.json ./
+RUN npm ci
+
+COPY custom_gui/web/ ./
+RUN npm run build
+
+# -------------------------------------------------------------- рантайм
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY custom_gui/ ./custom_gui/
+COPY gui/ ./gui/
+COPY agent/ ./agent/
+COPY domain/ ./domain/
+COPY infrastructure/ ./infrastructure/
+
+# uvicorn ставится явно: в зависимостях проекта его нет, он приходил
+# транзитивно с aegra-api, которой в этом образе не будет.
+RUN pip install --no-cache-dir . "uvicorn[standard]>=0.30"
+
+COPY --from=web /web/dist ./custom_gui/web/dist
+
+# Не root: если в приложении найдётся дыра с записью файлов, она не должна
+# сразу превращаться в право переписать что угодно в образе.
+RUN useradd --create-home --uid 10001 aist && chown -R aist:aist /app
+USER aist
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1
+EXPOSE 8000
+
+# Проверка ходит на собственный /health: он опрашивает и базу, и агента,
+# поэтому «контейнер жив» и «интерфейс работает» перестают расходиться.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=25s --retries=4 \
+    CMD python -c "import urllib.request,sys,json; \
+r=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)); \
+sys.exit(0 if r.get('ok') else 1)"
+
+CMD ["uvicorn", "custom_gui.server.main:app", "--host", "0.0.0.0", "--port", "8000"]
