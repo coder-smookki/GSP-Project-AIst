@@ -192,6 +192,15 @@ print(f"    prefetch / rrf     {s.retrieval_prefetch} / {s.retrieval_rrf_k}")
 print(f"    порог близости     {s.retrieval_min_relevance}")
 print(f"    переоценка         {'вкл' if s.rerank_enabled else 'выкл'}")
 
+# Семейство qwen3-embedding требует инструкцию к запросу: без неё карточка
+# модели обещает падение качества на 1-5 %. Забыть легко, а заметить нечем -
+# поиск работает, просто хуже.
+if "qwen3-embedding" in s.embedding_model and not s.embedding_query_instruction:
+    print("    ВНИМАНИЕ: инструкция к запросу пуста, а qwen3-embedding её требует")
+    print("      образец значения - в deploy/.env.example")
+elif s.embedding_query_instruction:
+    print(f"    инструкция запроса {len(s.embedding_query_instruction)} симв.")
+
 url = s.qdrant_url.rstrip("/")
 try:
     with urllib.request.urlopen(
