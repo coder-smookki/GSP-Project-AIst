@@ -27,6 +27,8 @@ def _admin_check(monkeypatch, username: str, password: str):
     """
     monkeypatch.setenv("ADMIN_USERNAME", username)
     monkeypatch.setenv("ADMIN_PASSWORD", password)
+    # Модуль не импортируется без пригодного ключа подписи сессий.
+    monkeypatch.setenv("CHAINLIT_AUTH_SECRET", "x" * 40)
     module = importlib.import_module("gui.chainlit_app")
     importlib.reload(module)
     return module._is_admin
@@ -74,3 +76,46 @@ def test_non_ascii_password_does_not_crash_login(monkeypatch) -> None:
     is_admin = _admin_check(monkeypatch, "admin", "пароль")
     assert is_admin("admin", "пароль") is True
     assert is_admin("admin", "другой") is False
+
+
+class TestAuthSecretGuard:
+    """Ключ подписи сессий проверяется на старте, а не при первом входе."""
+
+    @staticmethod
+    def _reload(monkeypatch, secret: str):
+        """Перезагружает модуль интерфейса с заданным ключом подписи.
+
+        Args:
+            monkeypatch: Штатная фикстура подмены окружения.
+            secret: Значение ``CHAINLIT_AUTH_SECRET``.
+
+        Returns:
+            ModuleType: Загруженный модуль.
+        """
+        monkeypatch.setenv("CHAINLIT_AUTH_SECRET", secret)
+        module = importlib.import_module("gui.chainlit_app")
+        return importlib.reload(module)
+
+    def test_valid_secret_starts(self, monkeypatch) -> None:
+        """Собственный длинный ключ пропускает запуск."""
+        assert self._reload(monkeypatch, "x" * 40) is not None
+
+    def test_placeholder_secret_refuses_to_start(self, monkeypatch) -> None:
+        """Ключ из шаблона не запускает интерфейс.
+
+        Он публично известен, и с ним кто угодно подписывает себе cookie
+        администратора. Отказ на старте заметен, а тихая работа с чужим
+        ключом - нет.
+        """
+        with pytest.raises(RuntimeError, match="из шаблона"):
+            self._reload(monkeypatch, "change-me-to-a-random-secret")
+
+    def test_empty_secret_refuses_to_start(self, monkeypatch) -> None:
+        """Пустой ключ не запускает интерфейс."""
+        with pytest.raises(RuntimeError, match="не задан"):
+            self._reload(monkeypatch, "")
+
+    def test_short_secret_refuses_to_start(self, monkeypatch) -> None:
+        """Слишком короткий ключ не запускает интерфейс."""
+        with pytest.raises(RuntimeError, match="короче"):
+            self._reload(monkeypatch, "коротко")

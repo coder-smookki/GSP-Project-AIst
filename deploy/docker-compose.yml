@@ -12,6 +12,14 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Продублировано в самом сервисе: образ инициализирует базу только при
+      # первом запуске на пустом томе, и если пароль не задан, контейнер
+      # выходит с «Database is uninitialized», healthcheck не зеленеет, а
+      # агент и интерфейс не стартуют вовсе - оба ждут healthy.
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в deploy/.env}
+      - POSTGRES_DB=${POSTGRES_DB:-aegra}
     ports:
       # Только на петлевой интерфейс: в базе лежат пароли пользователей
       # интерфейса и вся переписка.
@@ -49,9 +57,9 @@ services:
       - QDRANT_COLLECTION=${QDRANT_COLLECTION:-aist_chunks}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
       - RERANK_ENDPOINT=${RERANK_ENDPOINT:-http://host.docker.internal:8899}
-      # Без токена Aegra отказывает всем: пустое значение это не «выключено»,
-      # а «закрыто». Задаётся в deploy/.env, см. deploy/.env.example.
-      - AEGRA_API_TOKEN=${AEGRA_API_TOKEN:-}
+      # Без токена Aegra отказывает всем (deploy/auth.py). Требуем его прямо
+      # здесь, чтобы это выяснялось при старте стека, а не первым 503.
+      - AEGRA_API_TOKEN=${AEGRA_API_TOKEN:?задайте AEGRA_API_TOKEN в deploy/.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,9 +83,10 @@ services:
     environment:
       - AEGRA_URL=${AEGRA_URL:-http://aegra:2026}
       - GUI_DATABASE_URL=${GUI_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/chainlit}
+      - CHAINLIT_AUTH_SECRET=${CHAINLIT_AUTH_SECRET:?задайте CHAINLIT_AUTH_SECRET в deploy/.env}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?задайте ADMIN_PASSWORD в deploy/.env}
-      - AEGRA_API_TOKEN=${AEGRA_API_TOKEN:-}
+      - AEGRA_API_TOKEN=${AEGRA_API_TOKEN:?задайте AEGRA_API_TOKEN в deploy/.env}
     depends_on:
       postgres:
         condition: service_healthy

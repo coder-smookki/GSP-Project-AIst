@@ -61,6 +61,45 @@ def build_client(user_id: str):
         )
     return get_client(url=AEGRA_URL, headers=headers)
 
+#: Значение из шаблона deploy/.env.example. Его копируют как есть, и тогда
+#: ключ подписи сессий становится публично известной строкой из репозитория.
+_PLACEHOLDER_SECRET = "change-me-to-a-random-secret"
+
+#: Разумный минимум длины ключа подписи.
+_MIN_SECRET_LENGTH = 32
+
+
+def _check_auth_secret() -> None:
+    """Не даёт запуститься с непригодным ключом подписи сессий.
+
+    Chainlit подписывает им cookie сессии. Пустой ключ роняет вход,
+    а ключ из шаблона хуже: интерфейс работает как ни в чём не бывало,
+    но подделать cookie администратора может любой, кто видел репозиторий.
+    Поэтому проверка на старте, а не при первом входе.
+
+    Raises:
+        RuntimeError: Если ключ не задан, слишком короток или взят из шаблона.
+    """
+    secret = (os.getenv("CHAINLIT_AUTH_SECRET") or "").strip()
+    hint = (
+        'сгенерируйте: python -c "import secrets; print(secrets.token_urlsafe(32))" '
+        "и положите в deploy/.env как CHAINLIT_AUTH_SECRET"
+    )
+    if not secret:
+        raise RuntimeError(f"CHAINLIT_AUTH_SECRET не задан - {hint}")
+    if secret == _PLACEHOLDER_SECRET:
+        raise RuntimeError(
+            f"CHAINLIT_AUTH_SECRET взят из шаблона: этим ключом кто угодно "
+            f"подпишет себе сессию администратора - {hint}"
+        )
+    if len(secret) < _MIN_SECRET_LENGTH:
+        raise RuntimeError(
+            f"CHAINLIT_AUTH_SECRET короче {_MIN_SECRET_LENGTH} знаков - {hint}"
+        )
+
+
+_check_auth_secret()
+
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
