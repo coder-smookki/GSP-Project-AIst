@@ -442,7 +442,12 @@ def create_app_agent(
             if shown:
                 emit("trace", {"stage": "condense", "status": "error"})
             return {}
-        if summary is None:
+        # Пустое резюме - тоже отказ. Раньше проверялось только ``None``, и
+        # пустая строка проходила дальше: история сообщений удалялась, а
+        # взамен не оставалось ничего - диалог терял всё, что было сказано.
+        if summary is None or not summary.strip():
+            if summary is not None:
+                logger.warning("история не сжата: модель вернула пустое резюме")
             if shown:
                 emit("trace", {"stage": "condense", "status": "done", "condensed": 0})
             return {}
@@ -495,6 +500,17 @@ def create_app_agent(
 
         memories = _parse_memory_json(result.content)
         if memories is None:
+            return {}
+
+        # Пустой набор не считается решением «забыть всё». Ниже удаляется
+        # каждая запись, которой нет в новом наборе, поэтому один неудачный
+        # ответ модели стирал бы всю долгосрочную память пользователя без
+        # возможности восстановить.
+        if not memories and existing_items:
+            logger.warning(
+                "память не тронута: модель вернула пустой набор при %d записях",
+                len(existing_items),
+            )
             return {}
 
         new_contents = {m["content"] for m in memories}
