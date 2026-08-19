@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 
@@ -158,13 +159,19 @@ class QdrantSearch(Search):
 
         if self._reranker is not None and hits:
             try:
-                hits = self._reranker.rerank(text, hits, effective_limit)
-            except RerankerUnavailable as exc:
-                logger.error(
-                    "переоценка отключена до перезапуска: %s",
-                    exc,
+                # Переоценка синхронная: это либо HTTP к хост-сервису, либо
+                # инференс кросс-энкодера. Прямой вызов из корутины замораживал
+                # весь событийный цикл на всё её время - параллельные ветки
+                # поиска выстраивались в очередь, а стриминг ответа замирал.
+                hits = await asyncio.to_thread(
+                    self._reranker.rerank, text, hits, effective_limit
                 )
-                self._reranker = None
+            except RerankerUnavailable as exc:
+                # Реранкер не выбрасывается: у него своё остывание на 30 с
+                # (REMOTE_COOLDOWN_SECONDS), и обнуление ссылки его обходило -
+                # один сетевой сбой отключал переоценку до перезапуска
+                # процесса, а с ней уходило +17 пунктов hit@1, молча.
+                logger.error("переоценка пропущена для этого запроса: %s", exc)
                 hits = hits[:effective_limit]
         else:
             hits = hits[:effective_limit]
