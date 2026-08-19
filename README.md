@@ -440,7 +440,7 @@ uv run ruff check .                 # линт (E/F/I/UP/B/SIM/ASYNC/RUF)
 
 Дополнительно: CI на PR (`pytest -m "not llm and not embeddings"`), ruff==0.16.1 + pre-commit hook, `uv.lock` закоммичен.
 
-**Issues: закрыто 23 из 25.** Открыты две: #4 и #28 — обе про ветвление и новый
+**Issues: закрыто 31 из 33.** Открыты две: #4 и #28 — обе про ветвление и новый
 дизайн интерфейса, заказчиком не запрошены.
 
 | Issue | Задача | Слой | Итог |
@@ -466,6 +466,14 @@ uv run ruff check .                 # линт (E/F/I/UP/B/SIM/ASYNC/RUF)
 | ~~[#19](https://github.com/coder-smookki/GSP-Project-AIst/issues/19)~~ | Стек не поднимался: healthcheck Qdrant на bash-синтаксисе в dash | deploy | готово |
 | ~~[#20](https://github.com/coder-smookki/GSP-Project-AIst/issues/20)~~ | Золотой набор и замер качества | всё | готово |
 | ~~[#21](https://github.com/coder-smookki/GSP-Project-AIst/issues/21)~~ | Внутренние сервисы смотрели наружу, Aegra без аутентификации | deploy | готово |
+| ~~[#22](https://github.com/coder-smookki/GSP-Project-AIst/issues/22)~~ | Ingest: SOLID-рефакторинг и вынос в сервис с Prefect | ingest | готово, пайплайн отдельным сервисом, Prefect UI на `:4200` для отладки и расписания |
+| ~~[#24](https://github.com/coder-smookki/GSP-Project-AIst/issues/24)~~ | Часть сообщений пропадала при перезагрузке и переключении чатов | gui | готово |
+| ~~[#26](https://github.com/coder-smookki/GSP-Project-AIst/issues/26)~~ | Неявный Corrective RAG, слабый контроль `write_memory` | agent | готово: узлы расщеплены, цикл коррекции задан явно рёбрами, запись в память закрыта воротами `agent/memory_gate.py`, объяснения вынесены в `docs/AGENT.md` |
+| ~~[#29](https://github.com/coder-smookki/GSP-Project-AIst/issues/29)~~ | R&D: таблицы в документах | ingest | закрыт без внешнего конвертера: границы `w:tbl` размечаются на разборе, текст таблиц помечается блоком `td`, номера пунктов внутри таблиц считаются недостоверными. Ограничение осталось и названо в «Резюме» |
+| ~~[#30](https://github.com/coder-smookki/GSP-Project-AIst/issues/30)~~ | R&D: мультиагентность | agent | готово, составной вопрос разбивается на подзапросы и ветки идут параллельно через `Send` |
+| ~~[#31](https://github.com/coder-smookki/GSP-Project-AIst/issues/31)~~ | Бенчмарк отдельным модулем | eval | готово: модуль `eval/`, A/B со статистикой (`binomtest`/`wilcoxon`), кэш прогонов |
+| ~~[#32](https://github.com/coder-smookki/GSP-Project-AIst/issues/32)~~ | Качественная документация | docs | готово: `docs/ARCHITECTURE.md` плюс восемь документов по слоям, README разгружен |
+| ~~[#41](https://github.com/coder-smookki/GSP-Project-AIst/issues/41)~~ | Реранкер работал 15–20 с в контейнере демо-машины | deploy | готово: вынесен хост-сервисом рядом с Ollama, 15 с → 0,194 с |
 | [#28](https://github.com/coder-smookki/GSP-Project-AIst/issues/28) | Кастомный дизайн интерфейса в стиле компании | gui | **открыт**, вне текущего объёма |
 | ~~[#33](https://github.com/coder-smookki/GSP-Project-AIst/issues/33)~~ | Клиенты vLLM для генерации, эмбеддингов и переоценки | infra | готово, три слоя + отдельные адреса портов |
 | ~~[#34](https://github.com/coder-smookki/GSP-Project-AIst/issues/34)~~ | Показ этапов выполнения графа | gui | готово, все пять узлов видны по ходу ответа |
