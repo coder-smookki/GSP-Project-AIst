@@ -60,13 +60,15 @@ class StateManager:
             return {}
 
         seen: dict[str, set[str]] = {}
+        counted: dict[str, int] = {}
+        expected: dict[str, set[int]] = {}
         offset = None
         while True:
             points, offset = await client.scroll(
                 collection_name=collection,
                 limit=self.config.scroll_batch,
                 offset=offset,
-                with_payload=["doc_id", "content_hash"],
+                with_payload=["doc_id", "content_hash", "chunk_total"],
                 with_vectors=False,
             )
             for point in points:
@@ -75,6 +77,10 @@ class StateManager:
                 content_hash = payload.get("content_hash")
                 if isinstance(doc_id, str) and isinstance(content_hash, str):
                     seen.setdefault(doc_id, set()).add(content_hash)
+                    counted[doc_id] = counted.get(doc_id, 0) + 1
+                    expected.setdefault(doc_id, set()).add(
+                        int(payload.get("chunk_total") or 0)
+                    )
             if offset is None:
                 break
 
@@ -91,11 +97,30 @@ class StateManager:
         # документ из состояния исключается и переиндексируется целиком.
         state: dict[str, str] = {}
         broken: list[str] = []
+        partial: list[str] = []
         for doc_id, hashes in seen.items():
-            if len(hashes) == 1:
-                state[doc_id] = next(iter(hashes))
-            else:
+            if len(hashes) != 1:
                 broken.append(doc_id)
+                continue
+            # Отпечатков один, но это ещё не значит, что документ дописан.
+            # При ПЕРВОЙ загрузке все точки несут один и тот же отпечаток, и
+            # обрыв посреди неё оставлял в индексе половину документа, которая
+            # выглядела завершённой и потому не переиндексировалась никогда.
+            # Поэтому сверяется и число точек.
+            totals = expected.get(doc_id) or {0}
+            total = max(totals)
+            if len(totals) != 1 or total <= 0 or counted.get(doc_id, 0) != total:
+                partial.append(doc_id)
+                continue
+            state[doc_id] = next(iter(hashes))
+
+        if partial:
+            logger.warning(
+                "коллекция %s: документы записаны не полностью (%s) — "
+                "загрузка обрывалась, они будут переиндексированы",
+                collection,
+                ", ".join(sorted(partial)),
+            )
 
         if broken:
             logger.warning(

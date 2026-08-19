@@ -16,8 +16,19 @@ from infrastructure.ingest.incremental import StateManager
 class _Point:
     """Точка Qdrant с payload."""
 
-    def __init__(self, doc_id: str, content_hash: str):
-        self.payload = {"doc_id": doc_id, "content_hash": content_hash}
+    def __init__(self, doc_id: str, content_hash: str, chunk_total: int = 1):
+        """Готовит точку.
+
+        Args:
+            doc_id: Идентификатор документа.
+            content_hash: Отпечаток содержимого документа.
+            chunk_total: Сколько точек всего должно быть у документа.
+        """
+        self.payload = {
+            "doc_id": doc_id,
+            "content_hash": content_hash,
+            "chunk_total": chunk_total,
+        }
 
 
 class _Client:
@@ -52,7 +63,9 @@ class _Client:
 
 async def test_consistent_document_lands_in_state() -> None:
     """Документ с одним отпечатком попадает в состояние и будет пропущен."""
-    client = _Client([_Point("88499", "aaa"), _Point("88499", "aaa")])
+    client = _Client(
+        [_Point("88499", "aaa", chunk_total=2), _Point("88499", "aaa", chunk_total=2)]
+    )
     state = await StateManager().load(client, "c")
     assert state == {"88499": "aaa"}
 
@@ -67,9 +80,9 @@ async def test_mixed_hashes_force_reindex() -> None:
     """
     client = _Client(
         [
-            _Point("88499", "новый"),
-            _Point("88499", "старый"),
-            _Point("88551", "целый"),
+            _Point("88499", "новый", chunk_total=2),
+            _Point("88499", "старый", chunk_total=2),
+            _Point("88551", "целый", chunk_total=1),
         ]
     )
     state = await StateManager().load(client, "c")
@@ -109,3 +122,34 @@ async def test_broken_payload_is_ignored(payload: dict) -> None:
             self.payload = payload
 
     assert await StateManager().load(_Client([_Bad()]), "c") == {}
+
+
+async def test_interrupted_first_load_is_not_mistaken_for_a_whole_document() -> None:
+    """Оборванная ПЕРВАЯ загрузка не считается завершённой.
+
+    При первой загрузке все записанные точки несут один и тот же отпечаток,
+    поэтому по отпечаткам половина документа неотличима от целого: документ
+    попадал в состояние, следующий прогон считал его неизменившимся, и
+    недописанные фрагменты не появлялись в поиске никогда. Сверяется число
+    точек с тем, сколько их должно быть.
+    """
+    client = _Client(
+        [
+            _Point("88551", "один-и-тот-же", chunk_total=5),
+            _Point("88551", "один-и-тот-же", chunk_total=5),
+        ]
+    )
+    state = await StateManager().load(client, "c")
+    assert "88551" not in state
+
+
+async def test_points_without_the_expected_count_are_reindexed() -> None:
+    """Точки из старого индекса без счётчика переиндексируются.
+
+    Поле появилось позже, и у прежних точек его нет. Считать такой документ
+    целым нельзя - иначе дефект пережил бы обновление на уже собранном
+    индексе.
+    """
+    client = _Client([_Point("88499", "aaa", chunk_total=0)])
+    state = await StateManager().load(client, "c")
+    assert state == {}

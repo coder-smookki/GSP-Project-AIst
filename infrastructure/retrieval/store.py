@@ -34,8 +34,25 @@ def chunk_payload(
     areas: list[str],
     sync_tag: str,
     content_hash: str = "",
+    chunk_total: int = 0,
 ) -> dict[str, Any]:
+    """Собирает полезную нагрузку точки индекса.
+
+    Args:
+        chunk: Фрагмент документа.
+        areas: Области знаний документа.
+        sync_tag: Метка прогона индексации.
+        content_hash: Отпечаток содержимого документа.
+        chunk_total: Сколько точек всего должно быть у документа. Нужен, чтобы
+            отличить оборвавшуюся загрузку от завершённой: при первой загрузке
+            все записанные точки несут ОДИН отпечаток, поэтому по отпечаткам
+            недописанный документ неотличим от целого.
+
+    Returns:
+        dict[str, Any]: Полезная нагрузка точки.
+    """
     return {
+        "chunk_total": chunk_total,
         "chunk_id": chunk.chunk_id,
         "doc_id": chunk.doc_id,
         "doc_code": chunk.doc_code,
@@ -161,7 +178,9 @@ class QdrantStore:
                         DENSE_VECTOR: vector,
                         SPARSE_VECTOR: bm25_document(chunk.text),
                     },
-                    payload=chunk_payload(chunk, areas, sync_tag, content_hash),
+                    payload=chunk_payload(
+                        chunk, areas, sync_tag, content_hash, len(chunks)
+                    ),
                 )
                 for chunk, vector in zip(batch, batch_vectors, strict=True)
             ]
