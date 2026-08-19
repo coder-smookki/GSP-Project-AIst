@@ -53,6 +53,21 @@
       : "вся база",
   );
 
+  /** Короткая сводка ленты этапов для узкого экрана.
+   *
+   * Пять строк на телефоне вытесняют ответ за пределы экрана, а нужны они
+   * там редко: человек смотрит, что система работает, а не разбирает ход.
+   */
+  const stagesSummary = $derived.by(() => {
+    const total = chat.stages.length;
+    const branches = chat.stages.filter((s) => s.key.startsWith("search_agent:")).length;
+    const parts = [`${total} ${plural(total, "этап", "этапа", "этапов")}`];
+    if (branches) {
+      parts.push(`${branches} ${plural(branches, "подзапрос", "подзапроса", "подзапросов")}`);
+    }
+    return parts.join(" · ");
+  });
+
   const talkMode = $derived(
     !chat.streaming &&
       chat.messages.length > 0 &&
@@ -176,6 +191,23 @@
     if (catalog.selectedAreas.includes(area.area) && !picked) return "all";
     if (!picked) return "none";
     return picked === codes.length ? "all" : "some";
+  }
+
+  /** Склоняет существительное при числительном.
+   *
+   * Args:
+   *   count: Число.
+   *   one: Форма для «один».
+   *   few: Форма для «два-четыре».
+   *   many: Форма для «пять и больше».
+   */
+  function plural(count: number, one: string, few: string, many: string): string {
+    const mod100 = count % 100;
+    if (mod100 >= 11 && mod100 <= 14) return many;
+    const mod10 = count % 10;
+    if (mod10 === 1) return one;
+    if (mod10 >= 2 && mod10 <= 4) return few;
+    return many;
   }
 
   function initials(name: string): string {
@@ -324,6 +356,7 @@
         {#if chat.stages.length}
           <section class="stages" aria-label="Этапы выполнения" aria-live="polite">
             <p class="stages-head mono">Этапы выполнения</p>
+            <p class="stages-summary mono">{stagesSummary}</p>
             {#each chat.stages as stage (stage.key)}
               <div class="stage" class:run={stage.running} class:fail={stage.failed}>
                 <span class="tick" aria-hidden="true"></span>
@@ -873,6 +906,13 @@
     }
   }
 
+  .stages-summary {
+    display: none;
+    margin: 0;
+    font-size: 11px;
+    color: var(--text3);
+  }
+
   .stage-detail {
     margin-left: auto;
     font-size: 10.5px;
@@ -1073,6 +1113,23 @@
        место, иначе она накрывает кнопку отправки. */
     .composer {
       padding-bottom: 68px;
+    }
+  }
+
+  @media (max-width: 780px) {
+    /* Пять строк этапов вытесняют ответ за пределы экрана. Оставляем одну
+       сводку: она отвечает на единственный вопрос, который здесь задают, -
+       работает ли система. */
+    .stages .stage {
+      display: none;
+    }
+
+    .stages-summary {
+      display: block;
+    }
+
+    .stages-head {
+      margin-bottom: 4px;
     }
   }
 
