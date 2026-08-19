@@ -97,6 +97,7 @@ class MockSearch(Search):
         sections: list[str] | None = None,
         limit: int | None = None,
         areas: list[str] | None = None,
+        docs: list[str] | None = None,
     ) -> list[tuple[Chunk, float]]:
         wanted = self._tokens(query)
         if not wanted:
@@ -105,6 +106,8 @@ class MockSearch(Search):
         scored: list[tuple[Chunk, float]] = []
         for chunk in self._CORPUS:
             if sections and chunk.section_type not in sections:
+                continue
+            if docs and chunk.doc_code not in docs:
                 continue
             overlap = wanted & self._tokens(chunk.text)
             if overlap:

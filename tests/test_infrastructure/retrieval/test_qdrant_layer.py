@@ -160,6 +160,31 @@ def test_empty_selection_means_whole_base() -> None:
     """Пустой выбор означает поиск по всей базе, а не по пустому множеству."""
     assert QdrantSearch._build_filter(None, None) is None
     assert QdrantSearch._build_filter([], []) is None
+    assert QdrantSearch._build_filter([], [], []) is None
+
+
+def test_document_level_narrows_filter() -> None:
+    """Третий уровень дерева областей знаний - конкретный документ.
+
+    Поле ``doc_code`` проиндексировано как KEYWORD наравне с ``area`` и
+    ``section_type``, поэтому отбор по документу идёт по индексу.
+    """
+    built = QdrantSearch._build_filter(None, None, ["Р-У2-59"])
+    assert isinstance(built, models.Filter)
+    assert {condition.key for condition in built.must} == {"doc_code"}
+
+
+def test_three_levels_combine_as_conjunction() -> None:
+    """Область, документ и тип раздела сужают выдачу одновременно."""
+    built = QdrantSearch._build_filter(
+        ["ohrana_truda"], ["procedura"], ["Р-У2-59", "Р-У2-23"]
+    )
+    assert isinstance(built, models.Filter)
+    assert {condition.key for condition in built.must} == {
+        "area",
+        "section_type",
+        "doc_code",
+    }
 
 
 # ----------------------------------------------------------------- поведение

@@ -277,6 +277,7 @@ def create_app_agent(
                     "query": q,
                     "sections": state.get("sections"),
                     "areas": state.get("areas"),
+                    "docs": state.get("docs"),
                 },
             )
             for q in search_plan.subqueries
@@ -293,6 +294,7 @@ def create_app_agent(
             "query": state.get("query") or "",
             "sections": state.get("sections") or [],
             "areas": state.get("areas") or [],
+            "docs": state.get("docs") or [],
             "rounds": 0,
             "branch_messages": [],
         }

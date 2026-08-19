@@ -60,6 +60,7 @@ def build_search_agent(support_model, search: Search, *, max_rounds: int = 2):
                 query,
                 sections=state.get("sections"),
                 areas=state.get("areas"),
+                docs=state.get("docs"),
             )
         except SearchUnavailable as exc:
             logger.error("веточный поиск недоступен: %s", exc)

@@ -21,6 +21,10 @@ dependencies = [
     "qdrant-client==1.19.0",
     "langchain-ollama>=1.0.0",
     "sqlalchemy[asyncio]>=2.0.0",
+    # Маршруты каталога встраиваются в Aegra (deploy/content_app.py).
+    # Пакет и так приходит с chainlit и aegra-api, но первой стороне
+    # нельзя зависеть от чужой транзитивной зависимости.
+    "fastapi>=0.115.0",
 ]
 
 [project.optional-dependencies]

@@ -117,14 +117,14 @@ class _RecordingSearch(MockSearch):
         self._corpus = corpus
         self._error = error
 
-    async def query(self, query, sections=None, limit=None, areas=None):
+    async def query(self, query, sections=None, limit=None, areas=None, docs=None):
         self.queries.append(query)
         if self._error:
             raise SearchUnavailable("недоступен")
         if self._corpus is not None:
             return self._corpus
         return await MockSearch().query(
-            query, sections=sections, limit=limit, areas=areas
+            query, sections=sections, limit=limit, areas=areas, docs=docs
         )
 
 

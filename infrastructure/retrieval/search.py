@@ -65,5 +65,18 @@ class Search:
         sections: list[str] | None = None,
         limit: int | None = None,
         areas: list[str] | None = None,
+        docs: list[str] | None = None,
     ) -> list[tuple[Chunk, float]]:
+        """Ищет фрагменты базы знаний под запрос.
+
+        Args:
+            query: Текст поискового запроса.
+            sections: Типы разделов (``section_type``); пусто - все.
+            limit: Сколько фрагментов вернуть; пусто - настройка по умолчанию.
+            areas: Области знаний (``area``); пусто - все.
+            docs: Коды документов (``doc_code``); пусто - все.
+
+        Returns:
+            list[tuple[Chunk, float]]: Пары «фрагмент, оценка» по убыванию.
+        """
         raise NotImplementedError
