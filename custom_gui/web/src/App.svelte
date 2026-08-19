@@ -1055,6 +1055,12 @@
     .shell {
       grid-template-columns: 232px minmax(0, 1fr);
     }
+
+    /* Снизу появляется полоса источников высотой 52 px - освобождаем под неё
+       место, иначе она накрывает кнопку отправки. */
+    .composer {
+      padding-bottom: 68px;
+    }
   }
 
   @media (max-width: 780px) {
