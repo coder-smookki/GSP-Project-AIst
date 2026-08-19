@@ -35,6 +35,10 @@
   let treeOpen = $state(false);
   let treeQuery = $state("");
   let feed: HTMLDivElement | null = $state(null);
+  // Следовать за ответом, только пока человек внизу. Иначе он не сможет
+  // перечитать начало длинного регламента: лента дёргала бы его обратно
+  // на каждом токене.
+  let stickToBottom = $state(true);
 
   const areaChip = $derived(
     catalog.selectedAreas.length
@@ -78,8 +82,22 @@
   $effect(() => {
     void chat.draftAnswer;
     void chat.messages.length;
-    if (feed) feed.scrollTop = feed.scrollHeight;
+    if (feed && stickToBottom) feed.scrollTop = feed.scrollHeight;
   });
+
+  function onFeedScroll() {
+    if (!feed) return;
+    // 24 px запаса: точное равенство не срабатывает из-за дробных высот.
+    stickToBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 24;
+  }
+
+  // Esc закрывает панель областей откуда угодно, а не только из поля ввода.
+  function onWindowKey(event: KeyboardEvent) {
+    if (event.key === "Escape" && treeOpen) {
+      treeOpen = false;
+      event.stopPropagation();
+    }
+  }
 
   function send() {
     const text = draft;
@@ -116,6 +134,8 @@
   }
 </script>
 
+<svelte:window onkeydown={onWindowKey} />
+
 {#if !session.ready}
   <div class="boot" aria-busy="true">Загружаем…</div>
 {:else if !session.username}
@@ -146,6 +166,7 @@
               class="row"
               class:active={item.id === chat.currentId}
               onclick={() => void openConversation(item.id)}
+              title={item.title || "Новый диалог"}
             >
               <span class="row-title">{item.title || "Новый диалог"}</span>
             </button>
@@ -167,7 +188,7 @@
     </nav>
 
     <main class="main">
-      <div class="feed" bind:this={feed}>
+      <div class="feed" bind:this={feed} onscroll={onFeedScroll}>
         {#if !chat.messages.length && !chat.streaming}
           <div class="empty-state">
             <h1>Спросите живым языком — отвечу с пунктом регламента.</h1>
@@ -199,7 +220,7 @@
         {/each}
 
         {#if chat.stages.length}
-          <section class="stages" aria-label="Этапы выполнения">
+          <section class="stages" aria-label="Этапы выполнения" aria-live="polite">
             <p class="stages-head mono">Этапы выполнения</p>
             {#each chat.stages as stage (stage.key)}
               <div class="stage" class:run={stage.running} class:fail={stage.failed}>
@@ -212,7 +233,9 @@
         {/if}
 
         {#if chat.draftAnswer}
-          <div class="answer" data-answer="1">{chat.draftAnswer}</div>
+          <div class="answer" data-answer="1" aria-live="polite" aria-atomic="false">
+            {chat.draftAnswer}
+          </div>
         {/if}
 
         {#if chat.error}
@@ -244,6 +267,9 @@
               {:else if !catalog.loaded}
                 <p class="empty">Загружаем состав базы…</p>
               {:else}
+                {#if !visibleAreas.length}
+                  <p class="empty">Ничего не нашлось. Уточните запрос или сбросьте поиск.</p>
+                {/if}
                 {#each visibleAreas as area (area.area)}
                   <div class="tree-area">
                     <label class="tree-row">
@@ -282,7 +308,11 @@
             aria-label="Вопрос"
           ></textarea>
           <div class="controls">
-            <button class="areas" onclick={() => { treeOpen = !treeOpen; void loadCatalog(); }}>
+            <button
+              class="areas"
+              aria-expanded={treeOpen}
+              onclick={() => { treeOpen = !treeOpen; void loadCatalog(); }}
+            >
               Области: {areaChip}
             </button>
             <label class="switch">
@@ -308,14 +338,14 @@
   .boot {
     display: grid;
     place-items: center;
-    min-height: 100vh;
+    min-height: 100dvh;
     color: var(--text3);
   }
 
   .shell {
     display: grid;
     grid-template-columns: 260px minmax(0, 1fr) 340px;
-    height: 100vh;
+    height: 100dvh;
     background: var(--bg);
   }
 
