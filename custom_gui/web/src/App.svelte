@@ -1,6 +1,7 @@
 <script lang="ts">
   /** Оболочка приложения: три колонки, лента этапов и поле ввода. */
   import Login from "./lib/Login.svelte";
+  import Help from "./lib/Help.svelte";
   import Sources from "./lib/Sources.svelte";
   import {
     appearance,
@@ -44,6 +45,7 @@
   let renamingId = $state("");
   let renameDraft = $state("");
   let confirmingId = $state("");
+  let helpOpen = $state(false);
 
   const areaChip = $derived(
     catalog.selectedAreas.length
@@ -275,12 +277,20 @@
             >{label}</button>
           {/each}
         </div>
+        <button
+          class="exit"
+          onclick={() => (helpOpen = !helpOpen)}
+          aria-pressed={helpOpen}
+        >{helpOpen ? "К диалогу" : "Помощь"}</button>
         <button class="exit" onclick={() => void logout()}>Выйти</button>
       </div>
     </nav>
 
     <main class="main">
       <div class="feed" bind:this={feed} onscroll={onFeedScroll}>
+        {#if helpOpen}
+          <Help />
+        {:else}
         {#if !chat.messages.length && !chat.streaming}
           <div class="empty-state">
             <h1>Спросите живым языком — отвечу с пунктом регламента.</h1>
@@ -333,8 +343,10 @@
         {#if chat.error}
           <p class="error" role="alert">{chat.error}</p>
         {/if}
+        {/if}
       </div>
 
+      {#if !helpOpen}
       <div class="composer">
         {#if treeOpen}
           <div class="tree" role="group" aria-label="Области знаний">
@@ -422,6 +434,7 @@
           </div>
         </div>
       </div>
+      {/if}
     </main>
 
     <Sources sources={chat.liveSources} searching={chat.streaming} {talkMode} />
