@@ -4,6 +4,7 @@
   import Sources from "./lib/Sources.svelte";
   import {
     appearance,
+    applyAnswerSize,
     applyTheme,
     catalog,
     chat,
@@ -14,6 +15,7 @@
     logout,
     newConversation,
     openConversation,
+    renameConversation,
     restoreAppearance,
     sendQuestion,
     session,
@@ -39,6 +41,9 @@
   // перечитать начало длинного регламента: лента дёргала бы его обратно
   // на каждом токене.
   let stickToBottom = $state(true);
+  let renamingId = $state("");
+  let renameDraft = $state("");
+  let confirmingId = $state("");
 
   const areaChip = $derived(
     catalog.selectedAreas.length
@@ -129,6 +134,48 @@
     catalog.selectedDocs = [];
   }
 
+  /** Ставит курсор в поле сразу после появления.
+   *
+   * Действием, а не атрибутом ``autofocus``: атрибут срабатывает и при
+   * загрузке страницы, уводя фокус у людей с экранным диктором. Здесь поле
+   * появляется по осознанному действию человека, и фокус в нём уместен.
+   */
+  function focusOnMount(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
+  function startRename(id: string, title: string) {
+    confirmingId = "";
+    renamingId = id;
+    renameDraft = title;
+  }
+
+  function commitRename() {
+    const value = renameDraft.trim();
+    if (renamingId && value) void renameConversation(renamingId, value);
+    renamingId = "";
+  }
+
+  function onRenameKey(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitRename();
+    } else if (event.key === "Escape") {
+      event.stopPropagation();
+      renamingId = "";
+    }
+  }
+
+  /** Отмечен ли документ области хотя бы частично. */
+  function areaMark(area: (typeof catalog.areas)[number]): "none" | "some" | "all" {
+    const codes = area.documents.map((d) => d.doc_code);
+    const picked = codes.filter((c) => catalog.selectedDocs.includes(c)).length;
+    if (catalog.selectedAreas.includes(area.area) && !picked) return "all";
+    if (!picked) return "none";
+    return picked === codes.length ? "all" : "some";
+  }
+
   function initials(name: string): string {
     return name.slice(0, 2).toUpperCase();
   }
@@ -160,29 +207,74 @@
       <p class="section mono">Диалоги · {chat.conversations.length}</p>
 
       <ul class="list">
+        {#if !chat.conversations.length}
+          <li class="list-empty">Диалогов пока нет</li>
+        {/if}
         {#each chat.conversations as item (item.id)}
           <li>
-            <button
-              class="row"
-              class:active={item.id === chat.currentId}
-              onclick={() => void openConversation(item.id)}
-              title={item.title || "Новый диалог"}
-            >
-              <span class="row-title">{item.title || "Новый диалог"}</span>
-            </button>
-            <button
-              class="drop"
-              onclick={() => void deleteConversation(item.id)}
-              aria-label="Удалить диалог"
-              title="Удалить диалог"
-            >×</button>
+            {#if renamingId === item.id}
+              <input
+                class="rename"
+                bind:value={renameDraft}
+                onkeydown={onRenameKey}
+                onblur={commitRename}
+                aria-label="Название диалога"
+                use:focusOnMount
+              />
+              <span class="rename-hint mono">ENTER</span>
+            {:else}
+              <button
+                class="row"
+                class:active={item.id === chat.currentId}
+                onclick={() => void openConversation(item.id)}
+                ondblclick={() => startRename(item.id, item.title)}
+                title={item.title || "Новый диалог"}
+              >
+                <span class="row-title">{item.title || "Новый диалог"}</span>
+              </button>
+              <button
+                class="drop"
+                onclick={() => startRename(item.id, item.title)}
+                aria-label="Переименовать диалог"
+                title="Переименовать"
+              >✎</button>
+              <button
+                class="drop"
+                onclick={() => (confirmingId = confirmingId === item.id ? "" : item.id)}
+                aria-label="Удалить диалог"
+                title="Удалить"
+              >×</button>
+            {/if}
           </li>
+          {#if confirmingId === item.id}
+            <li class="confirm">
+              <p>Удалить «{item.title || "Новый диалог"}»? Отменить нельзя.</p>
+              <div class="confirm-row">
+                <button class="confirm-no" onclick={() => (confirmingId = "")}>Оставить</button>
+                <button
+                  class="confirm-yes"
+                  onclick={() => { confirmingId = ""; void deleteConversation(item.id); }}
+                >Удалить</button>
+              </div>
+            </li>
+          {/if}
         {/each}
       </ul>
 
       <div class="side-foot">
         <span class="avatar" aria-hidden="true">{initials(session.username)}</span>
         <span class="who">{session.username}</span>
+        <div class="sizes" role="group" aria-label="Размер текста ответа">
+          {#each [["s", "А"], ["m", "А"], ["l", "А"]] as [key, label] (key)}
+            <button
+              class="size size-{key}"
+              class:on={appearance.answerSize === key}
+              onclick={() => applyAnswerSize(key as "s" | "m" | "l")}
+              aria-pressed={appearance.answerSize === key}
+              aria-label={key === "s" ? "Мелкий" : key === "m" ? "Обычный" : "Крупный"}
+            >{label}</button>
+          {/each}
+        </div>
         <button class="exit" onclick={() => void logout()}>Выйти</button>
       </div>
     </nav>
@@ -275,7 +367,9 @@
                     <label class="tree-row">
                       <input
                         type="checkbox"
-                        checked={catalog.selectedAreas.includes(area.area)}
+                        checked={areaMark(area) === "all"}
+                        indeterminate={areaMark(area) === "some"}
+                        aria-checked={areaMark(area) === "some" ? "mixed" : undefined}
                         onchange={() => toggleArea(area.area)}
                       />
                       <span>{area.title}</span>
@@ -470,6 +564,112 @@
   .drop:hover {
     background: var(--hover);
     color: var(--acc);
+  }
+
+  .list-empty {
+    margin: 4px 6px;
+    padding: 14px 10px;
+    text-align: center;
+    font-size: 12px;
+    color: var(--text3);
+    border: 1px dashed var(--line);
+    border-radius: 10px;
+  }
+
+  .rename {
+    flex: 1;
+    min-width: 0;
+    height: 30px;
+    padding: 0 8px;
+    background: var(--surface);
+    border: none;
+    border-radius: 8px;
+    box-shadow: inset 0 0 0 2px var(--pri);
+  }
+
+  .rename-hint {
+    padding: 0 5px;
+    font-size: 9.5px;
+    letter-spacing: 0.06em;
+    color: var(--text3);
+  }
+
+  .confirm {
+    margin: 4px 6px 8px;
+    padding: 10px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--sh1);
+  }
+
+  .confirm p {
+    margin: 0 0 8px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text2);
+  }
+
+  .confirm-row {
+    display: flex;
+    gap: 6px;
+  }
+
+  .confirm-no,
+  .confirm-yes {
+    flex: 1;
+    height: 32px;
+    font-size: 12px;
+    border-radius: 8px;
+  }
+
+  .confirm-no {
+    background: transparent;
+    border: 1px solid var(--line);
+    color: var(--text2);
+  }
+
+  .confirm-yes {
+    background: var(--acc);
+    border: none;
+    color: #ffffff;
+  }
+
+  .sizes {
+    display: flex;
+    gap: 1px;
+    padding: 2px;
+    background: var(--line2);
+    border-radius: 7px;
+  }
+
+  .size {
+    width: 22px;
+    height: 20px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    color: var(--text3);
+    line-height: 1;
+  }
+
+  .size-s {
+    font-size: 9px;
+  }
+
+  .size-m {
+    font-size: 11px;
+  }
+
+  .size-l {
+    font-size: 13px;
+  }
+
+  .size.on {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--sh1);
   }
 
   .side-foot {
