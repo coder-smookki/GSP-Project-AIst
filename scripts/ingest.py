@@ -188,7 +188,23 @@ async def run(args: argparse.Namespace) -> int:
             and not report.failed
             and store is not None
         ):
-            report.switched_from = await store.switch_generation(collection)
+            # Отсутствие ошибок ещё не значит, что поколение годное. Прогон
+            # по пустому источнику или с --limit заканчивается без единой
+            # ошибки, и переключение алиаса на такое поколение уводило всю
+            # базу знаний в офлайн: поиск начинал честно отвечать «в базе
+            # знаний информации нет» вообще на всё.
+            if report.total_chunks <= 0:
+                console.print(
+                    "[yellow]Алиас не переключён:[/yellow] поколение пустое, "
+                    "загружено 0 фрагментов"
+                )
+            elif args.limit:
+                console.print(
+                    "[yellow]Алиас не переключён:[/yellow] прогон был "
+                    f"ограничен --limit {args.limit}, поколение неполное"
+                )
+            else:
+                report.switched_from = await store.switch_generation(collection)
         elif args.switch_alias and report.failed:
             console.print(
                 "[yellow]Алиас не переключён:[/yellow] в прогоне были ошибки, "

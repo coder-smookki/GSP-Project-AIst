@@ -110,13 +110,19 @@ def build_embedding_client(
         from infrastructure.embeddings.ollama_client import OllamaEmbeddingClient
 
         return OllamaEmbeddingClient(
-            model=name, base_url=settings.ollama_local_base_url
+            model=name,
+            base_url=settings.ollama_local_base_url,
+            timeout=settings.embedding_timeout,
         )
 
     if kind == "llamacpp":
         from infrastructure.embeddings.llamacpp_client import LlamaCppEmbeddingClient
 
-        return LlamaCppEmbeddingClient(model=name, base_url=settings.llamacpp_base_url)
+        return LlamaCppEmbeddingClient(
+            model=name,
+            base_url=settings.llamacpp_base_url,
+            timeout=settings.embedding_timeout,
+        )
 
     if kind == "vllm":
         from infrastructure.embeddings.vllm_client import VLLMEmbeddingClient
