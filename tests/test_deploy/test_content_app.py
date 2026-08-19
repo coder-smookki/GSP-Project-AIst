@@ -177,7 +177,8 @@ async def test_overlong_document_code_is_refused(module, monkeypatch) -> None:
     monkeypatch.setattr(module, "_catalog", lambda: _StubCatalog())
 
     async with _client(module) as client:
-        response = await client.get("/knowledge/documents/" + "x" * 400, headers=HEADERS)
+        long_code = "/knowledge/documents/" + "x" * 400
+        response = await client.get(long_code, headers=HEADERS)
 
     assert response.status_code == 422
 
