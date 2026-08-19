@@ -188,7 +188,14 @@ async def ingest_document_step(
         outcome.title = document.doc_title or outcome.title
 
         chunks = await chunk_step(pipeline, document, ref)
-        fingerprint = pipeline.repository.fingerprint(document)
+        # Имя модели входит в отпечаток: векторы разных моделей несовместимы
+        # по смыслу даже при равной размерности. Без него смена эмбеддера
+        # проходила как «документ не изменился», индекс оставался собранным
+        # прежней моделью, и качество поиска молча падало. Основной путь
+        # индексации это учитывает, поток Prefect - нет, и расхождение
+        # проявлялось только при запуске через оркестратор.
+        embedder_id = str(getattr(embedder, "model_name", "") or "")
+        fingerprint = pipeline.repository.fingerprint(document, embedder_id)
 
         if not chunks:
             outcome.error = "конвейер не дал ни одного чанка"
