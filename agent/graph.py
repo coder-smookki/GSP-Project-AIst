@@ -24,7 +24,7 @@ from .numbers import annotate as annotate_numbers
 from .planner import plan_search
 from .prompts import MEMORY_EXTRACT_PROMPT, MODEL_SYSTEM_MESSAGE
 from .search_agent import SearchAgentState, build_search_agent
-from .state import AgentState
+from .state import RESET_CHANNEL, AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -232,11 +232,22 @@ def create_app_agent(
     graph = StateGraph(AgentState)
 
     async def reset_turn(state: AgentState):
+        """Готовит состояние к новому вопросу в том же диалоге.
+
+        Каналы ``branch_retrieved`` и ``failures`` сбрасываются сигналом, а не
+        пустым списком: у них reducer-сумматор, и пустой список он применил бы
+        как ``current + []``, то есть не сбросил бы ничего. Из-за этого
+        фрагменты копились от вопроса к вопросу, и со второго вопроса в одном
+        диалоге ответ собирался в основном по выдержкам к предыдущим.
+
+        Returns:
+            dict: Обновление состояния для нового хода.
+        """
         return {
             "plan": None,
             "retrieved": [],
-            "branch_retrieved": [],
-            "failures": [],
+            "branch_retrieved": RESET_CHANNEL,
+            "failures": RESET_CHANNEL,
             "followups": [],
             "retrieval_failed": False,
         }
