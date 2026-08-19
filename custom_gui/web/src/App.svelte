@@ -3,6 +3,7 @@
   import Login from "./lib/Login.svelte";
   import Help from "./lib/Help.svelte";
   import Sources from "./lib/Sources.svelte";
+  import { renderMarkdown } from "./lib/markdown";
   import {
     appearance,
     applyAnswerSize,
@@ -348,7 +349,9 @@
           {#if message.role === "user"}
             <div class="bubble user">{message.content}</div>
           {:else}
-            <div class="answer" data-answer="1">{message.content}</div>
+            <!-- Разметка разбирается своим кодом, HTML из текста
+                 экранируется до вывода: см. lib/markdown.ts -->
+            <div class="answer" data-answer="1">{@html renderMarkdown(message.content)}</div>
             {#if message.followups?.length}
               <div class="followups">
                 {#each message.followups as tip (tip)}
@@ -375,7 +378,7 @@
 
         {#if chat.draftAnswer}
           <div class="answer" data-answer="1" aria-live="polite" aria-atomic="false">
-            {chat.draftAnswer}
+            {@html renderMarkdown(chat.draftAnswer)}
           </div>
         {/if}
 
@@ -834,7 +837,67 @@
     font-size: 15px;
     line-height: 1.65;
     text-wrap: pretty;
-    white-space: pre-wrap;
+  }
+
+  .answer :global(p) {
+    margin: 0 0 10px;
+  }
+
+  .answer :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .answer :global(h3),
+  .answer :global(h4),
+  .answer :global(h5) {
+    margin: 16px 0 8px;
+    font-size: 1.03em;
+    font-weight: 620;
+    letter-spacing: -0.01em;
+  }
+
+  .answer :global(ul),
+  .answer :global(ol) {
+    margin: 0 0 10px;
+    padding-left: 22px;
+    display: grid;
+    gap: 6px;
+  }
+
+  .answer :global(li) {
+    padding-left: 2px;
+  }
+
+  .answer :global(blockquote) {
+    margin: 10px 0;
+    padding: 8px 12px;
+    border-left: 3px solid var(--pri-line);
+    background: var(--surface2);
+    color: var(--text2);
+  }
+
+  .answer :global(code) {
+    padding: 1px 5px;
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--surface2);
+    border: 1px solid var(--line2);
+    border-radius: 5px;
+  }
+
+  /* Маркер источника: тот же номер, что на карточке справа. */
+  .answer :global(sup.cite) {
+    display: inline-block;
+    min-width: 15px;
+    margin: 0 1px;
+    padding: 0 3px;
+    text-align: center;
+    font-size: 0.68em;
+    line-height: 1.5;
+    vertical-align: super;
+    background: var(--pri-soft);
+    color: var(--pri);
+    border-radius: 4px;
   }
 
   :global([data-atext="s"]) .answer {
