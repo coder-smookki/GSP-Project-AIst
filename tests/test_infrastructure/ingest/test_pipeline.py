@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,8 @@ from infrastructure.ingest.patterns import (
     is_false_clause,
     restore_clause,
 )
+from infrastructure.ingest.pipeline import IngestPipeline
+from infrastructure.retrieval.source import RawDocument
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "kb_articles.json"
 
@@ -250,3 +253,73 @@ def test_chunker_rejects_inconsistent_limits(articles: dict[str, dict]) -> None:
     document = deanonymize(parse_article(articles["1002"]))
     with pytest.raises(ValueError, match="не может превышать"):
         chunk_document(document, target_chars=2000, max_chars=1000)
+
+
+class TestDocxThroughPipeline:
+    """Формат .docx проходит конвейер тем же путём, что и html."""
+
+    @staticmethod
+    def _docx(tmp_path) -> str:
+        """Собирает минимальный .docx с двумя разделами.
+
+        Args:
+            tmp_path: Каталог под временный файл.
+
+        Returns:
+            str: Путь к созданному файлу.
+        """
+        xml = (
+            '<?xml version="1.0"?><w:document xmlns:w="http://schemas.'
+            'openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+            "<w:p><w:r><w:t>Р-У2-59 Идентификация опасностей</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>1. Назначение и область применения</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>1.1. Регламент устанавливает порядок работ."
+            "</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>4. Порядок проведения</w:t></w:r></w:p>"
+            "<w:p><w:r><w:t>4.1. Проводится не реже одного раза в год."
+            "</w:t></w:r></w:p>"
+            "</w:body></w:document>"
+        )
+        target = tmp_path / "reglament.docx"
+        with zipfile.ZipFile(target, "w") as archive:
+            archive.writestr("word/document.xml", xml)
+        return str(target)
+
+    def test_docx_document_is_parsed(self, tmp_path) -> None:
+        """Документ .docx разбирается, а не падает на выборе парсера.
+
+        Конвейер зовёт у парсера метод ``parse`` протокола ``DocumentParser``,
+        а у разбора .docx его не было. Каждый файл из папки регламентов
+        получал ошибку, и корпус индексировался в ноль фрагментов.
+        """
+        raw = RawDocument(
+            doc_id="44030/7788",
+            title="Регламент",
+            kind="docx",
+            content=self._docx(tmp_path),
+            section_id="44030",
+            updated_at="1700000000",
+        )
+        document = IngestPipeline().parse_raw(raw)
+
+        assert document.doc_code == "Р-У2-59"
+        assert len(document.sections) >= 2
+
+    def test_document_keeps_the_identifier_from_its_source(self, tmp_path) -> None:
+        """Идентификатор берётся из источника, а не из имени файла.
+
+        По имени файла документ «переезжал» бы при переименовании, и
+        добавочная индексация сочла бы его новым.
+        """
+        raw = RawDocument(
+            doc_id="44030/7788",
+            title="Регламент",
+            kind="docx",
+            content=self._docx(tmp_path),
+            section_id="44030",
+            updated_at="1700000000",
+        )
+        document = IngestPipeline().parse_raw(raw)
+
+        assert document.doc_id == "44030/7788"
+        assert document.updated_at == "1700000000"
