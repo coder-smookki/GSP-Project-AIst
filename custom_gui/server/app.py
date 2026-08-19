@@ -65,6 +65,36 @@ class RenameRequest(BaseModel):
     title: str = Field(min_length=1, max_length=120)
 
 
+def _current_user(request: Request) -> session_module.Session:
+    """Достаёт сессию из cookie запроса.
+
+    Объявлена на уровне модуля намеренно: из-за ``from __future__ import
+    annotations`` все аннотации строковые, и FastAPI разрешает их в
+    пространстве МОДУЛЯ. Зависимость, объявленная внутри фабрики, оттуда не
+    видна, и параметр молча превращался в query-параметр - все защищённые
+    маршруты отвечали 422 «поле user обязательно» вместо работы.
+
+    Args:
+        request: Входящий запрос.
+
+    Returns:
+        session_module.Session: Сессия вошедшего пользователя.
+
+    Raises:
+        HTTPException: 401, если сессии нет или она непригодна.
+    """
+    secret = request.app.state.session_secret
+    cookie = request.cookies.get(session_module.COOKIE_NAME)
+    try:
+        return session_module.verify(cookie, secret)
+    except session_module.InvalidSession as exc:
+        raise HTTPException(status_code=401, detail="требуется вход") from exc
+
+
+#: Вошедший пользователь как зависимость маршрута.
+CurrentUser = Annotated[session_module.Session, Depends(_current_user)]
+
+
 def create_app(config: Config | None = None) -> FastAPI:
     """Собирает приложение интерфейса.
 
@@ -95,28 +125,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     app = FastAPI(title="АИст", docs_url=None, redoc_url=None, lifespan=lifespan)
 
-    # ------------------------------------------------------------- сессия
-
-    def current(request: Request) -> session_module.Session:
-        """Достаёт сессию из cookie.
-
-        Args:
-            request: Входящий запрос.
-
-        Returns:
-            session_module.Session: Сессия вошедшего пользователя.
-
-        Raises:
-            HTTPException: 401, если сессии нет или она непригодна.
-        """
-        cookie = request.cookies.get(session_module.COOKIE_NAME)
-        try:
-            return session_module.verify(cookie, settings.session_secret)
-        except session_module.InvalidSession as exc:
-            raise HTTPException(status_code=401, detail="требуется вход") from exc
-
-    #: Вошедший пользователь как зависимость маршрута.
-    CurrentUser = Annotated[session_module.Session, Depends(current)]
+    app.state.session_secret = settings.session_secret
 
     async def owned(conversation_id: str, user: session_module.Session) -> str:
         """Убеждается, что диалог принадлежит пользователю.
