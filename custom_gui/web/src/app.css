@@ -1,0 +1,134 @@
+/* Дизайн-токены АИст.
+   Значения перенесены из прототипа дословно: одна точка правды на обе темы.
+   Тема переключается атрибутом data-theme на корне, без медиазапроса -
+   выбор человека важнее системного, и он должен переживать перезагрузку. */
+
+:root[data-aist] {
+  --bg: #f4f4f3;
+  --panel: #ebebe9;
+  --surface: #ffffff;
+  --surface2: #fafaf9;
+  --line: #dcdad6;
+  --line2: #ebe9e5;
+  --hover: #e4e4e1;
+  --text: #15171a;
+  --text2: #4e5257;
+  --text3: #767b81;
+  --pri: #1b2a5e;
+  --pri-ink: #ffffff;
+  --pri-soft: #e7eaf3;
+  --pri-line: #c9d0e3;
+  --proc: #0e7c92;
+  --proc-soft: #e0f0f3;
+  --acc: #b85c1c;
+  --ok: #3a7f4c;
+  --ok-soft: #e7eee6;
+  --warn: #8f6210;
+  --warn-soft: #f5efdc;
+  --focus: rgba(27, 42, 94, 0.2);
+  --sh1: 0 1px 2px rgba(20, 26, 38, 0.07);
+  --sh2: 0 14px 40px -22px rgba(20, 26, 38, 0.45);
+
+  --sans: -apple-system, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Consolas, monospace;
+}
+
+:root[data-aist][data-theme="dark"] {
+  --bg: #0f1216;
+  --panel: #13171c;
+  --surface: #191e24;
+  --surface2: #1e242b;
+  --line: #262d35;
+  --line2: #212831;
+  --hover: #1e242b;
+  --text: #e9ecef;
+  --text2: #a7aeb6;
+  --text3: #7b838c;
+  --pri: #7ba2e8;
+  --pri-ink: #0f1216;
+  --pri-soft: #1b2740;
+  --pri-line: #32456e;
+  --proc: #4ec8dc;
+  --proc-soft: #14262c;
+  --acc: #e0813f;
+  --ok: #5aa877;
+  --ok-soft: #15251b;
+  --warn: #d3a343;
+  --warn-soft: #2a2113;
+  --focus: rgba(123, 162, 232, 0.3);
+  --sh1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --sh2: 0 16px 44px -22px rgba(0, 0, 0, 0.8);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  /* Через токен, а не хардкодом: иначе тёмная тема просвечивала бы светлым
+     фоном за пределами приложения при отскоке прокрутки. */
+  background: var(--bg);
+}
+
+body {
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* Видимый фокус только с клавиатуры: мышью он выглядит как дефект,
+   а без него интерфейсом нельзя пользоваться без мыши вовсе. */
+:focus-visible {
+  outline: 2px solid var(--pri);
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Уважаем системную настройку: анимации в интерфейсе служебные,
+   и без них он остаётся полностью работоспособным. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.mono {
+  font-family: var(--mono);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

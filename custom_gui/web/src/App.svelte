@@ -1,0 +1,839 @@
+<script lang="ts">
+  /** Оболочка приложения: три колонки, лента этапов и поле ввода. */
+  import Login from "./lib/Login.svelte";
+  import Sources from "./lib/Sources.svelte";
+  import {
+    appearance,
+    applyTheme,
+    catalog,
+    chat,
+    deleteConversation,
+    loadCatalog,
+    loadConversations,
+    loadSession,
+    logout,
+    newConversation,
+    openConversation,
+    restoreAppearance,
+    sendQuestion,
+    session,
+    stopStreaming,
+  } from "./lib/state.svelte";
+
+  /** Стартовые подсказки. Области взяты из реального состава корпуса. */
+  const STARTERS = [
+    { area: "Охрана труда", q: "Сколько дней дополнительного отпуска положено за вредность?" },
+    { area: "Работы повышенной опасности", q: "Какой порядок допуска к газоопасным работам?" },
+    { area: "Пожарная безопасность", q: "Как часто проверяют огнетушители в цеху?" },
+    { area: "Промышленная безопасность", q: "Кто проводит техническое освидетельствование оборудования?" },
+    { area: "ГО и ЧС", q: "Что делать при сигнале «Внимание всем»?" },
+    { area: "Производственная безопасность", q: "Какие требования к средствам индивидуальной защиты?" },
+  ];
+
+  let draft = $state("");
+  let alwaysSearch = $state(false);
+  let treeOpen = $state(false);
+  let treeQuery = $state("");
+  let feed: HTMLDivElement | null = $state(null);
+
+  const areaChip = $derived(
+    catalog.selectedAreas.length
+      ? `${catalog.selectedAreas.length} из ${catalog.areas.length || "…"}`
+      : "вся база",
+  );
+
+  const talkMode = $derived(
+    !chat.streaming &&
+      chat.messages.length > 0 &&
+      chat.stages.every((s) => s.key !== "finalize") &&
+      chat.liveSources.length === 0,
+  );
+
+  const visibleAreas = $derived(
+    treeQuery.trim()
+      ? catalog.areas
+          .map((area) => ({
+            ...area,
+            documents: area.documents.filter((d) =>
+              `${d.doc_code} ${d.doc_title}`
+                .toLowerCase()
+                .includes(treeQuery.trim().toLowerCase()),
+            ),
+          }))
+          .filter((a) => a.documents.length || a.title.toLowerCase().includes(treeQuery.trim().toLowerCase()))
+      : catalog.areas,
+  );
+
+  $effect(() => {
+    restoreAppearance();
+    void loadSession().then(async () => {
+      if (session.username) {
+        await loadConversations();
+        await loadCatalog();
+      }
+    });
+  });
+
+  // Лента прокручивается к последнему сообщению по мере печати ответа.
+  $effect(() => {
+    void chat.draftAnswer;
+    void chat.messages.length;
+    if (feed) feed.scrollTop = feed.scrollHeight;
+  });
+
+  function send() {
+    const text = draft;
+    draft = "";
+    void sendQuestion(text, alwaysSearch);
+  }
+
+  function onKey(event: KeyboardEvent) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      send();
+    }
+  }
+
+  function toggleArea(area: string) {
+    catalog.selectedAreas = catalog.selectedAreas.includes(area)
+      ? catalog.selectedAreas.filter((a) => a !== area)
+      : [...catalog.selectedAreas, area];
+  }
+
+  function toggleDoc(code: string) {
+    catalog.selectedDocs = catalog.selectedDocs.includes(code)
+      ? catalog.selectedDocs.filter((c) => c !== code)
+      : [...catalog.selectedDocs, code];
+  }
+
+  function resetTree() {
+    catalog.selectedAreas = [];
+    catalog.selectedDocs = [];
+  }
+
+  function initials(name: string): string {
+    return name.slice(0, 2).toUpperCase();
+  }
+</script>
+
+{#if !session.ready}
+  <div class="boot" aria-busy="true">Загружаем…</div>
+{:else if !session.username}
+  <Login />
+{:else}
+  <div class="shell">
+    <nav class="side" aria-label="Диалоги">
+      <div class="side-head">
+        <div class="mark" aria-hidden="true"></div>
+        <span class="brand">АИст</span>
+        <button
+          class="theme"
+          onclick={() => applyTheme(appearance.theme === "light" ? "dark" : "light")}
+          aria-label="Переключить тему"
+        >
+          {appearance.theme === "light" ? "Светлая" : "Тёмная"}
+        </button>
+      </div>
+
+      <button class="new" onclick={() => void newConversation()}>+ Новый диалог</button>
+
+      <p class="section mono">Диалоги · {chat.conversations.length}</p>
+
+      <ul class="list">
+        {#each chat.conversations as item (item.id)}
+          <li>
+            <button
+              class="row"
+              class:active={item.id === chat.currentId}
+              onclick={() => void openConversation(item.id)}
+            >
+              <span class="row-title">{item.title || "Новый диалог"}</span>
+            </button>
+            <button
+              class="drop"
+              onclick={() => void deleteConversation(item.id)}
+              aria-label="Удалить диалог"
+              title="Удалить диалог"
+            >×</button>
+          </li>
+        {/each}
+      </ul>
+
+      <div class="side-foot">
+        <span class="avatar" aria-hidden="true">{initials(session.username)}</span>
+        <span class="who">{session.username}</span>
+        <button class="exit" onclick={() => void logout()}>Выйти</button>
+      </div>
+    </nav>
+
+    <main class="main">
+      <div class="feed" bind:this={feed}>
+        {#if !chat.messages.length && !chat.streaming}
+          <div class="empty-state">
+            <h1>Спросите живым языком — отвечу с пунктом регламента.</h1>
+            <p class="sub">Готовые вопросы по темам базы. Клик — отправляет вопрос.</p>
+            <div class="cards">
+              {#each STARTERS as card (card.q)}
+                <button class="starter" onclick={() => void sendQuestion(card.q, alwaysSearch)}>
+                  <span class="starter-area mono">{card.area}</span>
+                  <span class="starter-q">{card.q}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#each chat.messages as message, index (index)}
+          {#if message.role === "user"}
+            <div class="bubble user">{message.content}</div>
+          {:else}
+            <div class="answer" data-answer="1">{message.content}</div>
+            {#if message.followups?.length}
+              <div class="followups">
+                {#each message.followups as tip (tip)}
+                  <button class="tip" onclick={() => void sendQuestion(tip, alwaysSearch)}>{tip}</button>
+                {/each}
+              </div>
+            {/if}
+          {/if}
+        {/each}
+
+        {#if chat.stages.length}
+          <section class="stages" aria-label="Этапы выполнения">
+            <p class="stages-head mono">Этапы выполнения</p>
+            {#each chat.stages as stage (stage.key)}
+              <div class="stage" class:run={stage.running} class:fail={stage.failed}>
+                <span class="tick" aria-hidden="true"></span>
+                <span class="stage-title">{stage.title}</span>
+                <span class="stage-detail mono">{stage.detail}</span>
+              </div>
+            {/each}
+          </section>
+        {/if}
+
+        {#if chat.draftAnswer}
+          <div class="answer" data-answer="1">{chat.draftAnswer}</div>
+        {/if}
+
+        {#if chat.error}
+          <p class="error" role="alert">{chat.error}</p>
+        {/if}
+      </div>
+
+      <div class="composer">
+        {#if treeOpen}
+          <div class="tree" role="group" aria-label="Области знаний">
+            <div class="tree-head">
+              <strong>Области знаний</strong>
+              <span class="tree-count mono">
+                {catalog.selectedAreas.length || catalog.selectedDocs.length
+                  ? `выбрано областей: ${catalog.selectedAreas.length} из ${catalog.areas.length}`
+                  : "ничего не выбрано — искать по всей базе"}
+              </span>
+              <button class="tree-reset" onclick={resetTree}>Сбросить</button>
+              <button class="tree-close" onclick={() => (treeOpen = false)} aria-label="Закрыть">×</button>
+            </div>
+            <input
+              class="tree-search"
+              bind:value={treeQuery}
+              placeholder="Поиск по областям и документам"
+            />
+            <div class="tree-body">
+              {#if catalog.error}
+                <p class="empty">{catalog.error}</p>
+              {:else if !catalog.loaded}
+                <p class="empty">Загружаем состав базы…</p>
+              {:else}
+                {#each visibleAreas as area (area.area)}
+                  <div class="tree-area">
+                    <label class="tree-row">
+                      <input
+                        type="checkbox"
+                        checked={catalog.selectedAreas.includes(area.area)}
+                        onchange={() => toggleArea(area.area)}
+                      />
+                      <span>{area.title}</span>
+                      <span class="tree-num mono">{area.documents.length}</span>
+                    </label>
+                    {#each area.documents as doc (doc.doc_code + area.area)}
+                      <label class="tree-row nested">
+                        <input
+                          type="checkbox"
+                          checked={catalog.selectedDocs.includes(doc.doc_code)}
+                          onchange={() => toggleDoc(doc.doc_code)}
+                        />
+                        <span class="mono doc-code">{doc.doc_code}</span>
+                        <span class="doc-title">{doc.doc_title}</span>
+                      </label>
+                    {/each}
+                  </div>
+                {/each}
+              {/if}
+            </div>
+          </div>
+        {/if}
+
+        <div class="input-box">
+          <textarea
+            bind:value={draft}
+            onkeydown={onKey}
+            rows="2"
+            placeholder="Спросите о регламенте, инструкции, порядке допуска…"
+            aria-label="Вопрос"
+          ></textarea>
+          <div class="controls">
+            <button class="areas" onclick={() => { treeOpen = !treeOpen; void loadCatalog(); }}>
+              Области: {areaChip}
+            </button>
+            <label class="switch">
+              <input type="checkbox" bind:checked={alwaysSearch} />
+              <span>Всегда искать в базе</span>
+            </label>
+            <span class="hint mono">ENTER — отправить</span>
+            {#if chat.streaming}
+              <button class="stop" onclick={stopStreaming}>Остановить</button>
+            {:else}
+              <button class="send" onclick={send} disabled={!draft.trim()} aria-label="Отправить">↑</button>
+            {/if}
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <Sources sources={chat.liveSources} searching={chat.streaming} {talkMode} />
+  </div>
+{/if}
+
+<style>
+  .boot {
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+    color: var(--text3);
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 260px minmax(0, 1fr) 340px;
+    height: 100vh;
+    background: var(--bg);
+  }
+
+  .side {
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    min-width: 0;
+  }
+
+  .side-head {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 14px 14px 10px;
+  }
+
+  .mark {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: linear-gradient(140deg, var(--proc), var(--pri));
+  }
+
+  .brand {
+    font-size: 15px;
+    font-weight: 640;
+    letter-spacing: -0.015em;
+  }
+
+  .theme {
+    margin-left: auto;
+    padding: 3px 8px;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--text2);
+  }
+
+  .new {
+    margin: 0 12px 10px;
+    padding: 9px 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    font-weight: 580;
+    box-shadow: var(--sh1);
+  }
+
+  .new:hover {
+    background: var(--hover);
+  }
+
+  .section {
+    margin: 0 14px 6px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text3);
+  }
+
+  .list {
+    flex: 1;
+    overflow-y: auto;
+    margin: 0;
+    padding: 0 8px;
+    list-style: none;
+  }
+
+  .list li {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .row {
+    flex: 1;
+    min-width: 0;
+    padding: 8px 8px;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    color: var(--text2);
+  }
+
+  .row:hover {
+    background: var(--hover);
+  }
+
+  .row.active {
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: var(--sh1);
+  }
+
+  .row-title {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drop {
+    padding: 2px 7px;
+    font-size: 15px;
+    line-height: 1;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text3);
+    opacity: 0;
+  }
+
+  .list li:hover .drop,
+  .drop:focus-visible {
+    opacity: 1;
+  }
+
+  .drop:hover {
+    background: var(--hover);
+    color: var(--acc);
+  }
+
+  .side-foot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    border-top: 1px solid var(--line);
+  }
+
+  .avatar {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    font-size: 11px;
+    background: var(--pri-soft);
+    color: var(--pri);
+    border-radius: 7px;
+  }
+
+  .who {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text2);
+  }
+
+  .exit {
+    padding: 3px 8px;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--text2);
+  }
+
+  .main {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto;
+    min-width: 0;
+  }
+
+  .feed {
+    overflow-y: auto;
+    padding: 22px clamp(16px, 4vw, 44px) 8px;
+    display: grid;
+    gap: 14px;
+    align-content: start;
+  }
+
+  .empty-state h1 {
+    margin: 8px 0 4px;
+    font-size: clamp(21px, 2.2vw, 27px);
+    font-weight: 640;
+    line-height: 1.2;
+    letter-spacing: -0.025em;
+  }
+
+  .sub {
+    margin: 0 0 16px;
+    color: var(--text3);
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px;
+  }
+
+  .starter {
+    display: grid;
+    gap: 6px;
+    padding: 12px;
+    text-align: left;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    box-shadow: var(--sh1);
+  }
+
+  .starter:hover {
+    border-color: var(--pri-line);
+  }
+
+  .starter-area {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--proc);
+  }
+
+  .starter-q {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .bubble.user {
+    justify-self: end;
+    max-width: 72%;
+    padding: 10px 13px;
+    background: var(--pri);
+    color: var(--pri-ink);
+    border-radius: 12px 12px 4px 12px;
+  }
+
+  .answer {
+    font-size: 15px;
+    line-height: 1.65;
+    text-wrap: pretty;
+    white-space: pre-wrap;
+  }
+
+  :global([data-atext="s"]) .answer {
+    font-size: 13.5px;
+  }
+
+  :global([data-atext="l"]) .answer {
+    font-size: 17.5px;
+  }
+
+  .followups {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .tip {
+    padding: 6px 11px;
+    font-size: 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text2);
+  }
+
+  .tip:hover {
+    border-color: var(--pri-line);
+    color: var(--pri);
+  }
+
+  .stages {
+    padding: 10px 12px;
+    background: var(--surface2);
+    border: 1px solid var(--line2);
+    border-radius: 10px;
+  }
+
+  .stages-head {
+    margin: 0 0 8px;
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text3);
+  }
+
+  .stage {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  .tick {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+    flex: none;
+  }
+
+  .stage.run .tick {
+    background: var(--proc);
+    animation: pulse 1s ease-in-out infinite;
+  }
+
+  .stage.fail .tick {
+    background: var(--warn);
+  }
+
+  @keyframes pulse {
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  .stage-detail {
+    margin-left: auto;
+    font-size: 10.5px;
+    color: var(--text3);
+  }
+
+  .error {
+    margin: 0;
+    padding: 9px 12px;
+    font-size: 12.5px;
+    color: var(--warn);
+    background: var(--warn-soft);
+    border-radius: 9px;
+  }
+
+  .composer {
+    position: relative;
+    padding: 10px clamp(16px, 4vw, 44px) 16px;
+  }
+
+  .input-box {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    box-shadow: var(--sh2);
+    overflow: hidden;
+  }
+
+  textarea {
+    width: 100%;
+    padding: 12px 14px 4px;
+    background: transparent;
+    border: none;
+    resize: none;
+    outline: none;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px 10px 12px;
+  }
+
+  .areas {
+    padding: 4px 10px;
+    font-size: 11.5px;
+    background: var(--pri-soft);
+    color: var(--pri);
+    border: 1px solid var(--pri-line);
+    border-radius: 999px;
+  }
+
+  .switch {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text2);
+    cursor: pointer;
+  }
+
+  .hint {
+    margin-left: auto;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text3);
+  }
+
+  .send {
+    width: 30px;
+    height: 30px;
+    font-size: 15px;
+    background: var(--acc);
+    color: #ffffff;
+    border: none;
+    border-radius: 9px;
+  }
+
+  .send:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .stop {
+    padding: 5px 10px;
+    font-size: 11.5px;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text2);
+  }
+
+  .tree {
+    position: absolute;
+    left: clamp(16px, 4vw, 44px);
+    right: clamp(16px, 4vw, 44px);
+    bottom: calc(100% - 6px);
+    max-height: 52vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    box-shadow: var(--sh2);
+    z-index: 10;
+  }
+
+  .tree-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line2);
+  }
+
+  .tree-count {
+    font-size: 10.5px;
+    color: var(--text3);
+  }
+
+  .tree-reset,
+  .tree-close {
+    padding: 3px 8px;
+    font-size: 11px;
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    color: var(--text2);
+  }
+
+  .tree-reset {
+    margin-left: auto;
+  }
+
+  .tree-search {
+    margin: 10px 14px;
+    padding: 7px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  .tree-body {
+    overflow-y: auto;
+    padding: 0 10px 12px;
+  }
+
+  .tree-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+
+  .tree-row:hover {
+    background: var(--hover);
+  }
+
+  .tree-row.nested {
+    padding-left: 26px;
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  .tree-num {
+    margin-left: auto;
+    font-size: 10.5px;
+    color: var(--text3);
+  }
+
+  .doc-code {
+    font-size: 11px;
+    color: var(--text3);
+  }
+
+  .doc-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .empty {
+    margin: 8px 6px;
+    font-size: 12px;
+    color: var(--text3);
+  }
+
+  @media (max-width: 1100px) {
+    .shell {
+      grid-template-columns: 232px minmax(0, 1fr);
+    }
+  }
+
+  @media (max-width: 780px) {
+    .shell {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .side {
+      display: none;
+    }
+  }
+</style>
