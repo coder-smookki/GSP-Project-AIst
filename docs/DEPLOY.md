@@ -377,9 +377,10 @@ docker logs -n 100 deploy-aegra-1 --timestamps  # последние строк�
 | `VLLM_EMBEDDING_BASE_URL` / `VLLM_RERANK_BASE_URL` | base | (пусто) | Адреса vLLM для эмбеддингов и переоценки; пусто = `VLLM_BASE_URL`. Один процесс vLLM обслуживает одну модель, поэтому обычно это разные порты |
 | `VLLM_API_KEY` / `VLLM_TIMEOUT` | base | (пусто) / `300.0` | Ключ сервера, запущенного с `--api-key` (уходит как `Authorization: Bearer`), и предел ожидания ответа |
 | `POSTGRES_USER/PASSWORD/DB/HOST` | base | `postgres/postgres/aegra/postgres` | Подключение к postgres |
-| `GUI_PORT` / `AEGRA_URL` | base | `8000` / `http://aegra:2026` | GUI порт / адрес aegra |
+| `GUI_PORT` / `GUI_PORT_MAP` / `AEGRA_URL` | base | `8000` / `127.0.0.1:8000:8000` / `http://aegra:2026` | Порт интерфейса, привязка порта и адрес агента. По умолчанию интерфейс слушает только петлю: в нём вся переписка и вход по паролю. Чтобы открыть наружу осознанно, задайте `GUI_PORT_MAP="0.0.0.0:8000:8000"` |
+| `AEGRA_API_TOKEN` | base | (пусто) | **Обязателен.** Токен доверенного посредника между интерфейсом и агентом. Пустое значение это не «выключено», а «закрыто»: Aegra отказывает всем (см. `deploy/auth.py`). Генерируйте `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
 | `CHAINLIT_AUTH_SECRET` | base | `change-me-to-a-random-secret` | Секрет Chainlit; генерируйте `python -c "import secrets; print(secrets.token_urlsafe(32))"` |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | base | `admin` / `admin` | Логин админ-обхода GUI |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | base | `admin` / (пусто) | Учётная запись администратора интерфейса. **Пароль обязателен**: стек не поднимется с пустым значением, а пустой пароль не открывает вход |
 | `OTLP_ENDPOINT` | obs | (пусто) | Endpoint трасс; **пусто = трассировка выключена** |
 | `OPENLIT_UI_PORT` / `OPENLIT_DB_USER` | obs | `3000` / `default` | UI-порт, пользователь ClickHouse |
 | `OPENLIT_DB_PASSWORD` | obs | `OPENLIT` | пароль ClickHouse |

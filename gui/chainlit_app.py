@@ -1,3 +1,4 @@
+import hmac
 import logging
 import os
 import time
@@ -32,6 +33,33 @@ from gui.stages import StageView
 logger = logging.getLogger(__name__)
 
 AEGRA_URL = os.getenv("AEGRA_URL", "http://aegra:2026")
+
+#: Токен доверенного посредника. Aegra без него не отвечает вовсе
+#: (см. deploy/auth.py): браузер к ней не ходит, ходит только этот сервис.
+AEGRA_API_TOKEN = os.getenv("AEGRA_API_TOKEN", "")
+
+
+def build_client(user_id: str):
+    """Создаёт клиента Aegra от имени вошедшего пользователя.
+
+    Личность передаётся заголовком, а не полем запроса: Aegra подставляет
+    её в ``configurable.user_id`` сама, и подменить её клиент уже не может.
+
+    Args:
+        user_id: Имя вошедшего пользователя (``cl.User.identifier``).
+
+    Returns:
+        LangGraphClient: Клиент с заголовками доступа.
+    """
+    headers = {"X-Aist-User": user_id or "anonymous"}
+    if AEGRA_API_TOKEN:
+        headers["Authorization"] = f"Bearer {AEGRA_API_TOKEN}"
+    else:
+        logger.error(
+            "AEGRA_API_TOKEN не задан: агент откажет в доступе. "
+            "Задайте токен в deploy/.env и перезапустите стек."
+        )
+    return get_client(url=AEGRA_URL, headers=headers)
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
@@ -71,9 +99,33 @@ async def _ensure_persisted(user: cl.User) -> cl.User:
     return user
 
 
+def _is_admin(username: str, password: str) -> bool:
+    """Проверяет учётную запись администратора из окружения.
+
+    Пустой ``ADMIN_PASSWORD`` не открывает вход: раньше при заданном имени и
+    незаданном пароле пустая строка совпадала сама с собой и пускала внутрь.
+    Сравнение постоянного времени - чтобы по времени ответа нельзя было
+    подбирать пароль посимвольно.
+
+    Args:
+        username: Введённое имя пользователя.
+        password: Введённый пароль.
+
+    Returns:
+        bool: ``True``, если это администратор из окружения.
+    """
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+        return False
+    # Сравниваются байты: ``compare_digest`` на строках не принимает не-ASCII,
+    # и кириллица в пароле уронила бы вход с ошибкой вместо отказа.
+    return hmac.compare_digest(
+        username.encode("utf-8"), ADMIN_USERNAME.encode("utf-8")
+    ) and hmac.compare_digest(password.encode("utf-8"), ADMIN_PASSWORD.encode("utf-8"))
+
+
 @cl.password_auth_callback
 async def auth_callback(username: str, password: str) -> cl.User | None:
-    if ADMIN_USERNAME and username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+    if _is_admin(username, password):
         return await _ensure_persisted(
             cl.User(
                 identifier=username,
@@ -170,7 +222,7 @@ async def on_chat_start():
         return
     user_id = app_user.identifier
 
-    client = get_client(url=AEGRA_URL)
+    client = build_client(user_id)
     assistants = await client.assistants.search()
     if not assistants:
         await cl.Message(
@@ -227,7 +279,7 @@ async def on_chat_resume(thread: ThreadDict) -> None:
         await cl.Message(content="Требуется вход в систему.").send()
         return
 
-    client = get_client(url=AEGRA_URL)
+    client = build_client(app_user.identifier)
     assistants = await client.assistants.search()
     if not assistants:
         await cl.Message(
@@ -268,7 +320,6 @@ async def on_message(message: cl.Message):
     client = cl.user_session.get("client")
     assistant_id: str | None = cl.user_session.get("assistant_id")
     thread_id: str | None = cl.user_session.get("thread_id")
-    user_id: str | None = cl.user_session.get("user_id")
 
     if client is None or assistant_id is None or thread_id is None:
         await cl.Message(
@@ -324,7 +375,6 @@ async def on_message(message: cl.Message):
             input=build_input(
                 message.content, areas=areas, always_answer_with_db=always_db
             ),
-            config={"configurable": {"user_id": user_id or "anonymous"}},
             stream_mode=["messages", "updates", "custom"],
             version="v1",
         ):

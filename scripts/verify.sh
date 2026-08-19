@@ -161,6 +161,23 @@ else
   bad "Ollama недоступна ($ollama_url): запустите ollama serve"
   services_ok=0
 fi
+# Аутентификация агента. Проверяется отдельно, потому что отказ здесь молчалив:
+# если контейнер не пересобран после включения auth в deploy/aegra.json, Aegra
+# просто вернётся к общей личности anonymous, и память снова станет общей.
+aegra_url="${AEGRA_URL_HOST:-http://localhost:2026}"
+if curl -sf --max-time 4 "$aegra_url/info" >/dev/null 2>&1; then
+  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 6 \
+    -X POST "$aegra_url/threads/search" -H "Content-Type: application/json" \
+    -d '{"limit":1}' 2>/dev/null)
+  if [ "$code" = "401" ] || [ "$code" = "403" ] || [ "$code" = "503" ]; then
+    ok "агент не отвечает без токена (HTTP $code)"
+  else
+    bad "агент отвечает БЕЗ токена (HTTP $code): пересоберите образ - cd deploy && docker compose up -d --build aegra"
+  fi
+else
+  printf "  Aegra не отвечает на %s, проверка доступа пропущена\n" "$aegra_url"
+fi
+
 if [ "$services_ok" = "0" ]; then
   printf "\n\033[1mИтог:\033[0m успешно %d, замечаний %d\n" "$pass" "$fail"
   printf "Живые сервисы не подняты, шаги 7-9 пропущены.\n"
