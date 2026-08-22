@@ -66,7 +66,7 @@ class Settings(BaseSettings):
 
     # ----------------------------------------------------------- эмбеддинги
     embedding_provider: str = "ollama-local"  # ollama-local | llamacpp | vllm
-    embedding_model: str = "bge-m3"
+    embedding_model: str = "bge-m3:567m"
 
     #: Инструкция, добавляемая к тексту ЗАПРОСА перед кодированием.
     #:
