@@ -126,7 +126,7 @@ def _page(message: str = "", ok: bool = False) -> str:
     <input id="c" name="code" autocomplete="off" required>
     <button type="submit">Создать учётную запись</button>
     {note}
-    <p class="foot">Уже есть доступ? <a href="/login">Войти</a></p>
+    <p class="foot">Уже есть доступ? <a href="/">Войти</a></p>
   </form>
 </body></html>"""
 
@@ -214,4 +214,20 @@ def register_routes(app) -> None:
             )
 
         logger.info("зарегистрирован пользователь %s", name)
-        return RedirectResponse("/login", status_code=303)
+        return RedirectResponse("/", status_code=303)
+
+    # Chainlit ставит catch-all `/{full_path:path}` (chainlit/server.py:1840) до
+    # нашего импорта, поэтому `/register` без перестановки уходит в SPA.
+    # Переставляем оба метода в начало очереди маршрутизации.
+    try:
+        register_routes_list = [
+            r for r in app.router.routes if getattr(r, "path", None) == "/register"
+        ]
+        for route in register_routes_list:
+            app.router.routes.remove(route)
+        # GET должен быть перед POST, оба перед catch-all
+        for route in reversed(register_routes_list):
+            app.router.routes.insert(0, route)
+    except Exception:
+        # Не критично для тестов с TestClient без catch-all
+        pass
