@@ -237,7 +237,14 @@ class QdrantStore:
         # АЛИАСА, а не поколения. Если туда записать готовое имя коллекции
         # (скажем, aist_chunks_v2), поколение соберётся как aist_chunks_v2_v1,
         # а переключение упадёт.
-        if await self._client.collection_exists(self._alias):
+        # Проверяется СПИСОК настоящих коллекций, а не collection_exists:
+        # тот разрешает алиасы и отвечает True на имя алиаса. Из-за этого
+        # проверка срабатывала ложно на каждом переключении после первого
+        # поколения - то есть блокировала ровно тот сценарий, ради которого
+        # алиасы и заведены.
+        listing = await self._client.get_collections()
+        existing = {item.name for item in listing.collections}
+        if self._alias in existing:
             raise ValueError(
                 f"нельзя создать алиас {self._alias}: коллекция с таким именем "
                 f"уже существует. QDRANT_COLLECTION задаёт имя алиаса, а не "

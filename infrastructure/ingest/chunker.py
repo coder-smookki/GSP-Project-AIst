@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from infrastructure.ingest.config import DEFAULT_CHUNK, ChunkingConfig
 from infrastructure.ingest.deanon import restore_text
@@ -12,6 +13,25 @@ from infrastructure.ingest.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Атом начинается с продолжения фразы, а не с её начала.
+#:
+#: Такой фрагмент, оторванный от начала предложения, описывает не то, о чём
+#: документ: у самоспасателя из ДОК-8 в отдельный фрагмент уехал хвост
+#: «различного назначения (жилых, промышленных...)», а начало - для чего
+#: средство и когда применяется - осталось в соседнем. Вектор такого хвоста
+#: не отвечает ни на один осмысленный вопрос.
+_CONTINUATION = re.compile(r"^[а-яё(,;]")
+
+#: Строка оглавления: отточия перед номером страницы.
+#:
+#: Оглавление исключается по типу раздела (``NOT_INDEXED``), но распознаётся
+#: тип не всегда: в части документов оглавление попадает в ``prochee`` и
+#: занимает места в выдаче, не неся ответа.
+_LEADER = re.compile(r"\.{6,}")
+
+#: Доля отточий, при которой текст считается оглавлением, а не прозой.
+_LEADER_SHARE = 0.12
 
 TARGET_CHARS = DEFAULT_CHUNK.target_chars
 MAX_CHARS = DEFAULT_CHUNK.max_chars
@@ -26,6 +46,23 @@ def _breadcrumb(document: ParsedDocument, atom: Atom) -> str:
     if atom.clause and not atom.is_table_region:
         parts.append(f"п. {atom.clause}")
     return " > ".join(p for p in parts if p)
+
+
+def _looks_like_contents(text: str) -> bool:
+    """Определяет строку оглавления по отточиям.
+
+    Args:
+        text: Текст атома.
+
+    Returns:
+        bool: ``True``, если отточия занимают заметную долю строки. По
+        заголовку раздела оглавление ловится не всегда: в части документов
+        оно попадает в ``prochee`` и уходит в индекс.
+    """
+    if not text:
+        return False
+    dots = sum(len(m.group(0)) for m in _LEADER.finditer(text))
+    return dots / len(text) >= _LEADER_SHARE
 
 
 def _mergeable(left: Atom, right: Atom) -> bool:
@@ -51,14 +88,37 @@ class Chunker:
             )
 
         groups: list[list[Atom]] = []
+        glued = 0
+        skipped_contents = 0
         for section in document.sections:
             if section.type in NOT_INDEXED:
                 continue
             for atom in section.atoms:
-                if groups and _mergeable(groups[-1][-1], atom):
+                if _looks_like_contents(atom.text):
+                    skipped_contents += 1
+                    continue
+                if groups:
                     current_len = sum(len(a.text) + 1 for a in groups[-1])
-                    if current_len + len(atom.text) <= target_chars:
+                    if (
+                        _mergeable(groups[-1][-1], atom)
+                        and current_len + len(atom.text) <= target_chars
+                    ):
                         groups[-1].append(atom)
+                        continue
+                    # Продолжение прирастает к предыдущей группе даже сверх
+                    # целевого объёма и ДАЖЕ через границу раздела.
+                    #
+                    # Через границу - потому что текст со строчной буквы это
+                    # продолжение предыдущего предложения по определению, а
+                    # классификатор типов разделов иногда разрывает сплошной
+                    # абзац надвое и приписывает половинам разные типы. Верить
+                    # тут надо тексту, а не разметке. Настоящий раздел так не
+                    # начинается: у него заголовок с прописной или с номера.
+                    if _CONTINUATION.match(atom.text) and (
+                        current_len + len(atom.text) <= max_chars
+                    ):
+                        groups[-1].append(atom)
+                        glued += 1
                         continue
                 groups.append([atom])
 
@@ -107,11 +167,14 @@ class Chunker:
 
         logger.info(
             "документ %s (%s): чанков %d, отброшено коротких %d, "
+            "строк оглавления %d, приклеено продолжений %d, "
             "с восстановленными терминами %d",
             document.doc_id,
             document.doc_code,
             len(chunks),
             dropped,
+            skipped_contents,
+            glued,
             sum(1 for c in chunks if c.restored),
         )
         return chunks
