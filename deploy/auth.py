@@ -135,20 +135,32 @@ async def authenticate(headers: dict[str, str]) -> Auth.types.MinimalUserDict:
 
 
 @auth.on
-async def scope_to_owner(ctx: Auth.types.AuthContext, value: dict) -> dict:
+async def scope_to_owner(ctx: Auth.types.AuthContext, value: dict) -> dict | None:
     """Привязывает создаваемые ресурсы к владельцу и фильтрует чужие.
 
     Помечает создаваемый ресурс владельцем и тем же условием ограничивает
     выборку, поэтому чужие треды не видны в списке и недоступны по прямому
     идентификатору.
 
+    Ассистенты — глобальный ресурс (создаются системой с ``user_id="system"``,
+    см. ``aegra_api.services.langgraph_service._ensure_default_assistants``).
+    Для них фильтр владельца не применяется: иначе системный ассистент
+    ``agent`` с ``metadata={"created_by": "system"}`` не проходит проверку
+    ``metadata @> {"owner": "<user>"}`` и ``/assistants/search`` возвращает
+    пустой список — интерфейс показывает «не найден ни один ассистент».
+
     Args:
         ctx: Контекст запроса; из него берётся личность пользователя.
         value: Тело операции; в него дописываются метаданные владельца.
 
     Returns:
-        dict: Фильтр по владельцу для выборок Aegra.
+        dict | None: Фильтр по владельцу для выборок Aegra или ``None``,
+            если ресурс не требует изоляции по владельцу.
     """
+    # Системные ассистенты должны быть видны всем аутентифицированным
+    # пользователям. Фильтр по владельцу здесь ломает их видимость.
+    if ctx.resource == "assistants":
+        return None
     owner = ctx.user.identity
     if isinstance(value, dict):
         metadata = value.setdefault("metadata", {})
