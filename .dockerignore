@@ -6,4 +6,6 @@ __pycache__
 deploy/.env
 .chainlit/*
 !.chainlit/config.toml
+!.chainlit/translations
+!.chainlit/translations/*
 chainlit.md
