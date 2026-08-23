@@ -75,6 +75,20 @@ class _StubCatalog:
         return self._document
 
 
+TOKEN = "t" * 32
+HEADERS = {"Authorization": f"Bearer {TOKEN}", "X-Aist-User": "ivanov"}
+
+
+@pytest.fixture(autouse=True)
+def _token(monkeypatch):
+    """Даёт маршрутам настроенный токен доступа.
+
+    Args:
+        monkeypatch: Штатная фикстура подмены окружения.
+    """
+    monkeypatch.setenv("AEGRA_API_TOKEN", TOKEN)
+
+
 @pytest.fixture
 def module():
     """Отдаёт свежезагруженный модуль маршрутов.
@@ -105,7 +119,7 @@ async def test_tree_is_served(module, monkeypatch) -> None:
     monkeypatch.setattr(module, "_catalog", lambda: _StubCatalog(tree=tree))
 
     async with _client(module) as client:
-        response = await client.get("/knowledge/tree")
+        response = await client.get("/knowledge/tree", headers=HEADERS)
 
     assert response.status_code == 200
     assert response.json() == {"areas": tree}
@@ -121,7 +135,7 @@ async def test_document_is_served(module, monkeypatch) -> None:
     monkeypatch.setattr(module, "_catalog", lambda: _StubCatalog(document=document))
 
     async with _client(module) as client:
-        response = await client.get("/knowledge/documents/Р-У2-59")
+        response = await client.get("/knowledge/documents/Р-У2-59", headers=HEADERS)
 
     assert response.status_code == 200
     assert response.json()["doc_code"] == "Р-У2-59"
@@ -135,7 +149,7 @@ async def test_unknown_document_is_404_not_empty_body(module, monkeypatch) -> No
     monkeypatch.setattr(module, "_catalog", lambda: _StubCatalog())
 
     async with _client(module) as client:
-        response = await client.get("/knowledge/documents/Р-У2-99")
+        response = await client.get("/knowledge/documents/Р-У2-99", headers=HEADERS)
 
     assert response.status_code == 404
 
@@ -153,7 +167,7 @@ async def test_unavailable_index_is_503_not_empty_tree(module, monkeypatch) -> N
     )
 
     async with _client(module) as client:
-        response = await client.get("/knowledge/tree")
+        response = await client.get("/knowledge/tree", headers=HEADERS)
 
     assert response.status_code == 503
 
@@ -163,6 +177,24 @@ async def test_overlong_document_code_is_refused(module, monkeypatch) -> None:
     monkeypatch.setattr(module, "_catalog", lambda: _StubCatalog())
 
     async with _client(module) as client:
-        response = await client.get("/knowledge/documents/" + "x" * 400)
+        long_code = "/knowledge/documents/" + "x" * 400
+        response = await client.get(long_code, headers=HEADERS)
 
     assert response.status_code == 422
+
+
+async def test_catalog_is_closed_without_a_token(module, monkeypatch) -> None:
+    """Без токена каталог не отдаёт состав базы знаний.
+
+    Флаг Aegra ``enable_custom_route_auth`` пишет в лог, что защиту применил,
+    а маршрут при этом отвечал: весь перечень документов читался кем угодно,
+    кто дотянулся до порта. Поэтому проверка своя.
+    """
+    monkeypatch.setattr(module, "_catalog", lambda: _StubCatalog(tree=[]))
+
+    async with _client(module) as client:
+        assert (await client.get("/knowledge/tree")).status_code == 401
+        bad = {"Authorization": "Bearer wrong", "X-Aist-User": "ivanov"}
+        assert (await client.get("/knowledge/tree", headers=bad)).status_code == 401
+        no_user = {"Authorization": f"Bearer {TOKEN}"}
+        assert (await client.get("/knowledge/tree", headers=no_user)).status_code == 401
