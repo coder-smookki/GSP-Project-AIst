@@ -153,3 +153,17 @@ async def test_resources_are_scoped_to_their_owner(auth_module) -> None:
 
     assert filters == {"owner": "ivanov"}
     assert value["metadata"]["owner"] == "ivanov"
+
+
+def test_ownership_filter_covers_threads_only(auth_module) -> None:
+    """Фильтр владельца висит на тредах, а не на всех ресурсах разом.
+
+    Общий обработчик (``@auth.on``) захватывал и ассистента. Ассистент
+    заводится автоматически и принадлежит ``system``, поэтому для любого
+    живого пользователя список ассистентов оказывался пустым, интерфейс
+    писал «Сервис агента недоступен», и ни один вопрос не доходил до графа.
+    """
+    resources = {resource for resource, _action in auth_module.auth._handlers}
+
+    assert resources == {"threads"}
+    assert not auth_module.auth._global_handlers
