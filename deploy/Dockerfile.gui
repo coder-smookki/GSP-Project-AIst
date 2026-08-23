@@ -20,6 +20,17 @@ RUN pip install --no-cache-dir \
 
 COPY gui/ ./gui/
 COPY chainlit.toml ./
+# Фирменный стиль: палитра, таблица стилей, логотипы и значок.
+# Chainlit ищет их в каталоге public рядом с приложением, а настройки
+# темы - в .chainlit/config.toml.
+COPY public/ ./public/
+COPY .chainlit/ ./.chainlit/
+
+# Без этого пакет gui не импортируется: chainlit кладёт в sys.path каталог
+# самого скрипта (/app/gui), а не корень приложения, и запуск падает на
+# `No module named 'gui'`. У сервиса агента переменная задана в compose,
+# у интерфейса её не было - контейнер уходил в цикл перезапуска.
+ENV PYTHONPATH=/app
 
 EXPOSE 8000
 
