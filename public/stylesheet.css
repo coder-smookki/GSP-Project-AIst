@@ -1,0 +1,112 @@
+/* Фирменный стиль АИст поверх темы Chainlit.
+ *
+ * Палитра взята из шаблона презентации Газстройпрома - это первоисточник,
+ * а не подбор на глаз. Основные цвета заданы переменными в theme.json;
+ * здесь только то, что переменными не выражается.
+ *
+ * Никаких внешних адресов: шрифты системные, изображений со стороны нет.
+ * Обращение в сеть нарушило бы блокирующее требование замкнутого контура.
+ */
+
+:root {
+  --gsp-navy: #081830;
+  --gsp-deep: #18365e;
+  --gsp-blue: #086eb6;
+  --gsp-sky: #4aafe4;
+  --gsp-pale: #b3def7;
+  --gsp-lime: #a1d71e;
+}
+
+/* Фирменная полоса под шапкой: узнаваемая деталь, не мешающая чтению. */
+#header,
+header {
+  border-bottom: 2px solid var(--gsp-blue);
+}
+
+/* Пузырь вопроса пользователя - фирменным синим. */
+.user-message,
+[data-step-type="user_message"] .message-content {
+  background: var(--gsp-blue);
+  color: #ffffff;
+}
+
+/* Маркеры источников и номера пунктов - той же семьёй цветов. */
+a {
+  color: var(--gsp-blue);
+}
+
+a:hover {
+  color: var(--gsp-deep);
+}
+
+/* Шаги выполнения: процесс обозначается голубым, а не серым, чтобы было
+   видно, что система работает, а не задумалась. */
+.step[data-running="true"],
+[data-step-type="tool"] {
+  border-left: 3px solid var(--gsp-sky);
+}
+
+/* Стартовые подсказки: карточка с фирменной рамкой вместо плоского блока. */
+#starter-button,
+.starter-button {
+  border: 1px solid var(--gsp-pale);
+  border-radius: 10px;
+}
+
+#starter-button:hover,
+.starter-button:hover {
+  border-color: var(--gsp-blue);
+  background: rgba(8, 110, 182, 0.06);
+}
+
+/* Кнопка отправки - основной фирменный синий. */
+#chat-submit,
+button[type="submit"] {
+  background: var(--gsp-blue);
+  color: #ffffff;
+}
+
+#chat-submit:hover,
+button[type="submit"]:hover {
+  background: var(--gsp-deep);
+}
+
+/* Боковая панель тёмно-синяя: так шапка и список диалогов читаются как
+   единый фирменный блок, а поле чтения остаётся светлым. */
+[data-sidebar],
+.sidebar {
+  background: var(--gsp-navy);
+  color: var(--gsp-pale);
+}
+
+/* Акцент на активном диалоге - лаймовая метка из фирменной палитры. */
+[data-sidebar] [data-active="true"] {
+  box-shadow: inset 3px 0 0 var(--gsp-lime);
+}
+
+/* Экранный диктор и клавиатура: видимый фокус обязателен, тема его гасит. */
+:focus-visible {
+  outline: 2px solid var(--gsp-blue);
+  outline-offset: 2px;
+}
+
+/* Уважаем системную настройку: анимации здесь служебные. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Заставка страницы входа.
+ *
+ * Chainlit вешает на неё `brightness(0.2) grayscale(1)`: он рассчитывает,
+ * что туда положат фотографию, и гасит её, чтобы не мешала форме. У нас там
+ * фирменный знак, и обесцвечивать его незачем - от корпоративных цветов
+ * не остаётся ничего. Приглушаем мягко и цвет сохраняем.
+ */
+img.object-cover[src*="favicon"] {
+  filter: brightness(0.82) saturate(1) !important;
+}

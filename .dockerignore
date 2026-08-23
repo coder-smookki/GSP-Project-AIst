@@ -4,5 +4,6 @@ __pycache__
 .DS_Store
 .git
 deploy/.env
-.chainlit
+.chainlit/*
+!.chainlit/config.toml
 chainlit.md

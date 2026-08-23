@@ -82,7 +82,10 @@ services:
       - .env
     environment:
       - AEGRA_URL=${AEGRA_URL:-http://aegra:2026}
-      - GUI_DATABASE_URL=${GUI_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/chainlit}
+      # Пароль подставляется из POSTGRES_PASSWORD, а не зашит строкой:
+      # с захардкоженным «postgres» интерфейс переставал подключаться,
+      # как только у базы задавали настоящий пароль.
+      - GUI_DATABASE_URL=${GUI_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/chainlit}
       - CHAINLIT_AUTH_SECRET=${CHAINLIT_AUTH_SECRET:?задайте CHAINLIT_AUTH_SECRET в deploy/.env}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?задайте ADMIN_PASSWORD в deploy/.env}
