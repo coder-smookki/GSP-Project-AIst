@@ -9,6 +9,10 @@ import chainlit as cl
 from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 from chainlit.input_widget import InputWidget, MultiSelect
 from chainlit.server import app as _chainlit_app
+
+# Своя страница регистрации: Chainlit собран на FastAPI, поэтому маршрут
+# добавляется в то же приложение (см. gui/register.py).
+from chainlit.server import app as chainlit_server_app
 from chainlit.types import ThreadDict
 from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
@@ -28,7 +32,10 @@ from gui.db import (
     seed_admin,
     update_password,
 )
+from gui.register import register_routes
 from gui.stages import StageView
+
+register_routes(chainlit_server_app)
 
 logger = logging.getLogger(__name__)
 
