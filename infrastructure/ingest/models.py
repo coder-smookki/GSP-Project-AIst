@@ -73,6 +73,12 @@ class IngestChunk:
     breadcrumb: str
     text: str
     text_raw: str
+    #: Текст, который уходит в вектор. Пусто - кодируется ``text``.
+    #:
+    #: Отдельное поле нужно для QA-индексации: к фрагменту приписываются
+    #: вопросы, на которые он отвечает, но показывать их человеку нельзя -
+    #: в регламенте таких строк нет. Показ берёт ``text``, вектор - это.
+    text_indexed: str = ""
     aliases: tuple[str, ...] = ()
     placeholders: tuple[str, ...] = ()
     restored: bool = False

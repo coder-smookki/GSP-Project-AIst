@@ -176,7 +176,11 @@ class QdrantStore:
                     id=chunk.point_id(),
                     vector={
                         DENSE_VECTOR: vector,
-                        SPARSE_VECTOR: bm25_document(chunk.text),
+                        # BM25 строится по тому же тексту, что и плотный
+                        # вектор: иначе каналы гибрида смотрят на разное.
+                        SPARSE_VECTOR: bm25_document(
+                            chunk.text_indexed or chunk.text
+                        ),
                     },
                     payload=chunk_payload(
                         chunk, areas, sync_tag, content_hash, len(chunks)
