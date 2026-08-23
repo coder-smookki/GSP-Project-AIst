@@ -124,7 +124,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         finally:
             await agent.aclose()
 
-    app = FastAPI(title="АИст", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app = FastAPI(title="AIst", docs_url=None, redoc_url=None, lifespan=lifespan)
 
     # Сжатие статики: без него скрипт уходит по сети в три раза тяжелее, чем
     # нужно (60 КБ против 21). Порог 900 байт - мелкие ответы API сжимать

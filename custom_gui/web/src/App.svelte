@@ -1,6 +1,7 @@
 <script lang="ts">
   /** Оболочка приложения: три колонки, лента этапов и поле ввода. */
   import Login from "./lib/Login.svelte";
+  import logo from "./assets/logo-bird.png";
   import Help from "./lib/Help.svelte";
   import Sources from "./lib/Sources.svelte";
   import { renderMarkdown } from "./lib/markdown";
@@ -232,8 +233,8 @@
   <div class="shell">
     <nav class="side" aria-label="Диалоги">
       <div class="side-head">
-        <div class="mark" aria-hidden="true"></div>
-        <span class="brand">АИст</span>
+        <img class="mark" src={logo} alt="" width="41" height="34" />
+        <span class="brand">AIst</span>
         <button
           class="theme"
           onclick={() => applyTheme(appearance.theme === "light" ? "dark" : "light")}
@@ -332,8 +333,8 @@
         {:else}
         {#if !chat.messages.length && !chat.streaming}
           <div class="empty-state">
-            <h1>Спросите живым языком — отвечу с пунктом регламента.</h1>
-            <p class="sub">Готовые вопросы по темам базы. Клик — отправляет вопрос.</p>
+            <h1>Спросите живым языком - отвечу с пунктом регламента.</h1>
+            <p class="sub">Готовые вопросы по темам базы. Клик - отправляет вопрос.</p>
             <div class="cards">
               {#each STARTERS as card (card.q)}
                 <button class="starter" onclick={() => void sendQuestion(card.q, alwaysSearch)}>
@@ -397,7 +398,7 @@
               <span class="tree-count mono">
                 {catalog.selectedAreas.length || catalog.selectedDocs.length
                   ? `выбрано областей: ${catalog.selectedAreas.length} из ${catalog.areas.length}`
-                  : "ничего не выбрано — искать по всей базе"}
+                  : "ничего не выбрано - искать по всей базе"}
               </span>
               <button class="tree-reset" onclick={resetTree}>Сбросить</button>
               <button class="tree-close" onclick={() => (treeOpen = false)} aria-label="Закрыть">×</button>
@@ -467,7 +468,7 @@
               <input type="checkbox" bind:checked={alwaysSearch} />
               <span>Всегда искать в базе</span>
             </label>
-            <span class="hint mono">ENTER — отправить</span>
+            <span class="hint mono">ENTER - отправить</span>
             {#if chat.streaming}
               <button class="stop" onclick={stopStreaming}>Остановить</button>
             {:else}
@@ -514,10 +515,10 @@
   }
 
   .mark {
-    width: 26px;
-    height: 26px;
-    border-radius: 8px;
-    background: linear-gradient(140deg, var(--proc), var(--pri));
+    /* Высота ниже 34px съедает тонкие рёбра сети, и птица мажется. */
+    width: auto;
+    height: 34px;
+    flex: none;
   }
 
   .brand {

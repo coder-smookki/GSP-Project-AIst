@@ -1,6 +1,7 @@
 <script lang="ts">
   /** Экран входа. Учётные записи заводит администратор, регистрации нет. */
   import { login } from "./state.svelte";
+  import logo from "../assets/logo-bird.png";
 
   let username = $state("");
   let password = $state("");
@@ -25,17 +26,17 @@
 <div class="screen">
   <section class="promo">
     <div class="brand">
-      <div class="mark" aria-hidden="true"></div>
+      <img class="mark" src={logo} alt="" width="53" height="44" />
       <div>
-        <div class="name">АИст</div>
+        <div class="name">AIst</div>
         <div class="tagline">поиск по нормативной базе предприятия</div>
       </div>
     </div>
-    <h1>Ответ на рабочий вопрос — со ссылкой на пункт регламента.</h1>
+    <h1>Ответ на рабочий вопрос - со ссылкой на пункт регламента.</h1>
     <ul>
       <li>Регламенты, охрана труда, пожарная и промышленная безопасность, ГО и ЧС.</li>
       <li>Работает на одном ноутбуке, полностью без интернета.</li>
-      <li>Если сведений в базе нет — так и скажет.</li>
+      <li>Если сведений в базе нет - так и скажет.</li>
     </ul>
   </section>
 
@@ -101,11 +102,9 @@
   }
 
   .mark {
-    width: 38px;
-    height: 38px;
-    border-radius: 10px;
-    background: linear-gradient(140deg, var(--proc), var(--pri));
-    box-shadow: var(--sh1);
+    width: auto;
+    height: 44px;
+    flex: none;
   }
 
   .name {
