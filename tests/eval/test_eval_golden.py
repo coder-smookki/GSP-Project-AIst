@@ -46,11 +46,17 @@ class TestLoad:
     """Загрузка корректных наборов."""
 
     def test_loads_real_fixture(self) -> None:
-        """Боевой набор загружается и имеет ожидаемый состав."""
+        """Боевой набор загружается и не мельчает.
+
+        Проверяется нижняя граница, а не точное число: набор пополняется, и
+        жёсткое равенство пришлось бы править при каждом добавлении вопроса.
+        А вот уменьшение набора - всегда повод остановиться: значит вопросы
+        пропали, а не добавились.
+        """
         golden = GoldenSet.load(FIXTURE)
-        assert len(golden.answerable) == 41
-        assert len(golden.unanswerable) == 10
-        assert golden.total == 51
+        assert len(golden.answerable) >= 121
+        assert len(golden.unanswerable) >= 10
+        assert golden.total == len(golden.answerable) + len(golden.unanswerable)
 
     def test_load_minimal(self, tmp_path) -> None:
         """Минимальный валидный набор загружается."""
