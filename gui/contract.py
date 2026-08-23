@@ -161,9 +161,17 @@ def build_input(
     sections: list[str] | None = None,
     areas: list[str] | None = None,
     always_answer_with_db: bool = False,
+    history: list[dict] | None = None,
 ) -> dict:
-    """Собирает полезную нагрузку `client.runs.stream` (см. docs/GUI.md)."""
-    payload: dict = {"messages": [{"type": "human", "content": content}]}
+    """Собирает полезную нагрузку `client.runs.stream` (см. docs/GUI.md).
+
+    ``history`` уходит перед вопросом и нужен только первому вопросу новой
+    ветки: тред у неё пустой, и историю до развилки в состояние складывает
+    редьюсер ``add_messages`` (см. gui/branching.py).
+    """
+    payload: dict = {
+        "messages": [*(history or []), {"type": "human", "content": content}]
+    }
     if sections:
         payload["sections"] = sections
     if areas:
