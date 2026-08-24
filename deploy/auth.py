@@ -134,35 +134,26 @@ async def authenticate(headers: dict[str, str]) -> Auth.types.MinimalUserDict:
     return {"identity": user, "display_name": user, "is_authenticated": True}
 
 
-@auth.on
-async def scope_to_owner(ctx: Auth.types.AuthContext, value: dict) -> dict | None:
-    """Привязывает создаваемые ресурсы к владельцу и фильтрует чужие.
+@auth.on.threads
+async def scope_to_owner(ctx: Auth.types.AuthContext, value: dict) -> dict:
+    """Привязывает создаваемые ТРЕДЫ к владельцу и фильтрует чужие.
 
-    Помечает создаваемый ресурс владельцем и тем же условием ограничивает
-    выборку, поэтому чужие треды не видны в списке и недоступны по прямому
+    Помечает создаваемый тред владельцем и тем же условием ограничивает
+    выборку, поэтому чужие диалоги не видны в списке и недоступны по прямому
     идентификатору.
 
-    Ассистенты — глобальный ресурс (создаются системой с ``user_id="system"``,
-    см. ``aegra_api.services.langgraph_service._ensure_default_assistants``).
-    Для них фильтр владельца не применяется: иначе системный ассистент
-    ``agent`` с ``metadata={"created_by": "system"}`` не проходит проверку
-    ``metadata @> {"owner": "<user>"}`` и ``/assistants/search`` возвращает
-    пустой список — интерфейс показывает «не найден ни один ассистент».
+    Только треды. Общий обработчик отфильтровывал и ассистента: он заводится
+    автоматически и принадлежит ``system``, поэтому для любого живого
+    пользователя список ассистентов оказывался пустым и ни один вопрос не
+    доходил до графа.
 
     Args:
         ctx: Контекст запроса; из него берётся личность пользователя.
         value: Тело операции; в него дописываются метаданные владельца.
 
     Returns:
-        dict | None: Фильтр по владельцу для выборок Aegra или ``None``,
-            если ресурс не требует изоляции по владельцу.
+        dict: Фильтр по владельцу для выборок Aegra.
     """
-    # Системные ассистенты должны быть видны всем аутентифицированным
-    # пользователям. Фильтр по владельцу здесь ломает их видимость.
-    # ``getattr`` — тест ``test_resources_are_scoped_to_their_owner`` передаёт
-    # мок ``_Ctx`` без поля ``resource``, реальный ``AuthContext`` его имеет.
-    if getattr(ctx, "resource", None) == "assistants":
-        return None
     owner = ctx.user.identity
     if isinstance(value, dict):
         metadata = value.setdefault("metadata", {})
