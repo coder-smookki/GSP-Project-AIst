@@ -87,20 +87,23 @@ def _bearer(headers: dict[str, str]) -> str:
     return value.strip()
 
 
-@auth.authenticate
-async def authenticate(headers: dict[str, str]) -> Auth.types.MinimalUserDict:
-    """Проверяет доверенного посредника и определяет пользователя.
+def check_headers(headers: dict[str, str]) -> str:
+    """Проверяет токен посредника и возвращает имя пользователя.
+
+    Вынесено отдельно, потому что этой же проверкой закрываются собственные
+    маршруты каталога (``deploy/content_app.py``): полагаться на то, что Aegra
+    сама навесит защиту на чужие маршруты, нельзя - она пишет в лог, что
+    применила её, а маршрут при этом отвечает без токена.
 
     Args:
-        headers: Заголовки запроса в виде словаря.
+        headers: Заголовки запроса; имена в нижнем регистре.
 
     Returns:
-        Auth.types.MinimalUserDict: Личность пользователя для Aegra.
+        str: Имя пользователя из ``X-Aist-User``.
 
     Raises:
         Auth.exceptions.HTTPException: 503, если токен не настроен на сервере;
-            401, если токен не совпал или имя пользователя не передано либо
-            не прошло проверку.
+            401 при неверном токене или недопустимом имени.
     """
     expected = _expected_token()
     if not expected:
@@ -130,6 +133,25 @@ async def authenticate(headers: dict[str, str]) -> Auth.types.MinimalUserDict:
         raise Auth.exceptions.HTTPException(
             status_code=401, detail="недопустимое имя пользователя"
         )
+    return user
+
+
+@auth.authenticate
+async def authenticate(headers: dict[str, str]) -> Auth.types.MinimalUserDict:
+    """Проверяет доверенного посредника и определяет пользователя.
+
+    Args:
+        headers: Заголовки запроса в виде словаря.
+
+    Returns:
+        Auth.types.MinimalUserDict: Личность пользователя для Aegra.
+
+    Raises:
+        Auth.exceptions.HTTPException: 503, если токен не настроен на сервере;
+            401, если токен не совпал или имя пользователя не передано либо
+            не прошло проверку.
+    """
+    user = check_headers(headers)
 
     return {"identity": user, "display_name": user, "is_authenticated": True}
 
