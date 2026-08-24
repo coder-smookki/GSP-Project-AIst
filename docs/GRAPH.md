@@ -34,7 +34,7 @@ flowchart TD
 | Map (Send) | `continue_to_jokes` / `initiate_all_interviews` | `initiate_search_agents` — `[Send("search_agent", {"query": q, "sections": ..., "areas": ...})]` |
 | Состояние ветки | `InterviewState` в research-assistant | `SearchAgentState` в `agent/search_agent.py` — ReAct-петля с `retrieve_kb` |
 | Узел ветки | `conduct_interview` (сабграф) | `search_agent` (обёртка над скомпилированным сабграфом) |
-| Канал накопления | `sections: Annotated[list, operator.add]` | `branch_retrieved: Annotated[list[dict], operator.add]` |
+| Канал накопления | `sections: Annotated[list, operator.add]` | `branch_retrieved: Annotated[list[dict], merge_or_reset]` (сумма + сигнал сброса `RESET_CHANNEL`) |
 | Reduce | `write_report` / `best_joke` | `finalize` (дедуп, sort, cap, renumber, единый `sources`/`followups`) |
 
 ## Состояния
@@ -51,17 +51,15 @@ class AgentState(TypedDict):
     summary: NotRequired[str]
     sections: NotRequired[list[str]]
     areas: NotRequired[list[str]]
+    docs: NotRequired[list[str]]
     query: NotRequired[str]
     plan: NotRequired[SearchPlan]
     always_answer_with_db: NotRequired[bool]
     retrieved: NotRequired[list[dict]]                    # финальные (после finalize)
-    branch_retrieved: NotRequired[Annotated[list[dict], operator.add]]  # сырой аккумулятор
-    failures: NotRequired[Annotated[list[str], operator.add]]           # сбои веток
+    branch_retrieved: NotRequired[Annotated[list[dict], merge_or_reset]]  # сырой аккумулятор
+    failures: NotRequired[Annotated[list[str], merge_or_reset]]           # сбои веток
     followups: NotRequired[list[str]]
     retrieval_failed: NotRequired[bool]
-    # устаревшие (удалены с графа):
-    rewrite_attempts: NotRequired[int]
-    needs_rewrite: NotRequired[bool]
 ```
 
 ### Веточное — `SearchAgentState` (`agent/search_agent.py`)
@@ -72,6 +70,7 @@ class SearchAgentState(TypedDict):
     rounds: NotRequired[int]
     sections: NotRequired[list[str]]
     areas: NotRequired[list[str]]
+    docs: NotRequired[list[str]]
     retrieved: NotRequired[Annotated[list[dict], operator.add]]
     failures: NotRequired[Annotated[list[str], operator.add]]
     retrieval_failed: NotRequired[bool]

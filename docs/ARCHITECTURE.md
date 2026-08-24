@@ -33,7 +33,7 @@ flowchart LR
 
     subgraph Ingest [Уровень загрузки]
         SRC[Источник корпуса<br/>API базы знаний / локальный каталог]
-        P[Конвейер ingest<br/>разбор → деанон → чанки → области → эмбеддинги]
+        P[Конвейер ingest<br/>разбор → деанон → чанки → области → QA-обогащение → эмбеддинги]
     end
 
     SRC --> P
@@ -69,7 +69,7 @@ flowchart LR
 
 ## 2. Уровень агента (agent/)
 
-Агент — граф LangGraph, собираемый `create_app_agent` (`agent/graph.py:128`).
+Агент — граф LangGraph, собираемый `create_app_agent` (`agent/graph.py:193`).
 Точка входа в рантайме — REST-канал LangGraph-сервера aegra
 (`/threads/{id}/runs/stream`), а сама сборка и связывание с поиском, моделями и
 памятью — в `infrastructure/config/composition_root.py:12`
@@ -85,36 +85,38 @@ flowchart LR
 ```mermaid
 flowchart TD
     S([START])
-    S --> R[reset_turn<br/>graph.py:144]
-    R --> CC[condense_context<br/>graph.py:284]
-    CC --> RV[retrieve<br/>graph.py:214]
+    S --> R[reset_turn<br/>graph.py:234]
+    R --> CC[condense_context<br/>graph.py:425]
+    CC --> PL[plan<br/>graph.py:255]
 
-    subgraph Loop [Цикл по чанкам: пустая выдача → переписать]
-        RV -- "needs_rewrite" --> RQ[rewrite_query<br/>graph.py:273]
-        RQ --> RV
-    end
+    PL -- "chat" --> AS[assistant<br/>graph.py:362]
+    PL -- "kb: Send x N" --> SA[search_agent<br/>graph.py:297]
+    SA --> FZ[finalize<br/>graph.py:334]
+    FZ --> AS
 
-    RV --> AS[assistant<br/>graph.py:152]
-    AS --> WM{should_extract_memory<br/>graph.py:109}
-    WM -- есть маркеры первого лица --> WR[write_memory<br/>graph.py:303]
+    AS --> WM{should_extract_memory<br/>graph.py:122}
+    WM -- есть маркеры первого лица --> WR[write_memory<br/>graph.py:462]
     WM -- нет --> E([END])
     WR --> E([END])
 ```
 
 Роли узлов и ссылки на строки — в `docs/AGENT.md`; здесь — схема потока:
-`reset_turn` → `condense_context` → `retrieve` ⇄ `rewrite_query` (при пустой выдаче)
-→ `assistant` → `write_memory` (только по маркерам первого лица).
+`reset_turn` → `condense_context` → `plan` → параллельные ветки-поиска →
+`finalize` → `assistant` → `write_memory` (только по маркерам первого лица).
+Ветка — ReAct-сабграф (`agent/search_agent.py`) с инструментом поиска; при
+пустой выдаче она сама переформулирует запрос и повторяет его.
 
-Состояние — `AgentState` (`agent/state.py:7`): `messages` (редьюсер
-`add_messages`) + `summary`, `retrieved`, `followups`, `areas`, `query` и
-служебные флаги.
+Состояние — `AgentState` (`agent/state.py:44`): `messages` (редьюсер
+`add_messages`), накопительные каналы `branch_retrieved`/`failures`
+(редьюсер `merge_or_reset` с сигналом сброса) + `summary`, `plan`, `retrieved`,
+`followups`, `areas`, `query` и служебные флаги.
 
-### Как retrieve встраивается в агента
+### Как поиск встраивается в агента
 
-Узел `retrieve` (graph.py:214) не знает, что стоит за протоколом `Search` —
-Qdrant или заглушка; фабрика `get_search` (`factory.py:13`) подставляет
-реализацию по `RETRIEVAL_PROVIDER`. Три исхода поиска («найдено / пусто /
-`SearchUnavailable`») и цикл коррекции пустой выдачи описаны в `docs/RETRIEVE.md`
+Граф не знает, что стоит за протоколом `Search` — Qdrant или заглушка; фабрика
+`get_search` (`factory.py:13`) подставляет реализацию по `RETRIEVAL_PROVIDER`.
+Готовый `Search` передаётся в ReAct-сабграфы веток; три исхода поиска
+(«найдено / пусто / `SearchUnavailable`») описаны в `docs/RETRIEVE.md`
 (разделы 2–3).
 
 ### Что делает грейдер (и почему он выключен)
@@ -129,8 +131,8 @@ Qdrant или заглушка; фабрика `get_search` (`factory.py:13`) п
 
 ### Как работает реранкер (включён)
 
-Реранкер — кросс-энкодер `BAAI/bge-reranker-v2-m3` (`rerank.py:105`), **не узел
-графа**, а часть `QdrantSearch`: retrieve берёт `RERANK_CANDIDATES=10`, реранкер
+Реранкер — кросс-энкодер `BAAI/bge-reranker-v2-m3` (`rerank.py:417`), **не узел
+графа**, а часть `QdrantSearch`: поиск берёт `RERANK_CANDIDATES=10`, реранкер
 переранжирует, после чего — порог релевантности. Подробности, замеры и
 офлайн-обёртка весов в образ — в `docs/RETRIEVE.md` (раздел 8).
 
@@ -142,16 +144,16 @@ Qdrant или заглушка; фабрика `get_search` (`factory.py:13`) п
 
 ```mermaid
 flowchart TB
-    RV[retrieve · agent/graph.py:214]
-    RV -->|search.query query, areas, sections| P{Протокол Search}
+    SA[search_agent · agent/graph.py:297]
+    SA -->|search.query query, areas, sections| P{Протокол Search}
 
-    P -->|qdrant| QS[QdrantSearch · qdrant_search.py:20]
+    P -->|qdrant| QS[QdrantSearch · qdrant_search.py:21]
     P -->|mock| MS[MockSearch · заглушка для тестов]
 
-    subgraph Hybrid [Гибридный запрос · qdrant_search.py:102]
-        E[Эмбеддер bge-m3] -->|dense-вектор| P1[Prefetch dense<br/>filter · limit prefetch]
+    subgraph Hybrid [Гибридный запрос · qdrant_search.py:99]
+        E[Эмбеддер] -->|dense-вектор| P1[Prefetch dense<br/>filter · limit prefetch]
         BM[BM25-документ, серверный] -->|sparse| P2[Prefetch bm25<br/>filter · limit prefetch]
-        P1 --> RRF[RrfQuery · RRF k=60]
+        P1 --> RRF[RrfQuery · RRF k=rrf_k]
         P2 --> RRF --> TOP[fetch limit кандидатов]
     end
 
@@ -162,14 +164,14 @@ flowchart TB
     RK --> K[top_k фрагментов]
     RR -- нет --> K
 
-    K --> TH{Порог релевантности<br/>лучший dense-счёт < 0.55}
+    K --> TH{Порог релевантности<br/>лучший dense-счёт < min_relevance}
     TH -- да --> EMPTY[Выдача = пустая → честный отказ]
     TH -- нет --> HITS[list Chunk + score]
     HITS --> CIT[to_citation n, doc_code, clause,<br/>chunk_id, score, snippet]
     CIT --> EV[sources / followups события]
 ```
 
-Диаграмма выше — путь чанка от `retrieve` до выдачи. Ключевые решения слоя
+Диаграмма выше — путь чанка от ветки поиска до выдачи. Ключевые решения слоя
 (фильтр в каждый `Prefetch`, порог через отдельный dense-запрос, два поля
 `snippet`/`text`, payload-ключ `area`) — в `docs/RETRIEVE.md` (разделы 4–7).
 
@@ -203,7 +205,7 @@ flowchart LR
 `_v2`…) через `switch_generation`; `upsert_chunks` пишет dense + sparse вместе,
 `sweep_document` «подметает» устаревшие точки. BM25 считает сервер Qdrant
 (`BM25_OPTIONS = {"language": "russian"}`, `bm25.py:16`); готовность индекса —
-`preflight` (`qdrant_search.py:188`). Подробности схемы коллекции, payload и
+`preflight` (`qdrant_search.py:217`). Подробности схемы коллекции, payload и
 лингвистики — в `docs/RETRIEVE.md` (раздел 6).
 
 Хранение: Postgres/pgvector (чекпоинтеры графа, история GUI), SQLite в
@@ -233,23 +235,27 @@ flowchart LR
     DP --> DEAN
     DEAN --> CH[Chunker<br/>chunker.py · атомы → чанки, breadcrumb]
     CH --> CL[AreaClassifier<br/>areas.py · предметные области]
-    CL --> EMB[Эмбеддер bge-m3 · vectors]
+    CL --> QA[QA-обогащение<br/>qa_index.py · вопросы к чанку, опционально]
+    QA --> EMB[Эмбеддер · vectors]
     EMB --> UP[QdrantStore.upsert_chunks<br/>dense + bm25 + payload]
     UP --> SW[sweep_document]
 ```
 
-Фазы конвейера (`IngestPipeline.process_document`, pipeline.py:175) — на схеме:
-источник → разбор/деанон → чанкинг по атомам → классификация областей → эмбеддинги →
+Фазы конвейера (`IngestPipeline.process_document`, pipeline.py:181) — на схеме:
+источник → разбор/деанон → чанкинг по атомам → классификация областей →
+QA-обогащение (опционально, `--qa-index` / `AIST_QA_INDEX=1`: чанк кодируется
+вместе с вопросами, на которые он отвечает) → эмбеддинги →
 запись + `sweep_document`. Инкремент — хеш документа с версией конвейера
 (`incremental.py`); повторный прогон без изменений — 1,76 с на 20 документах.
-Коды выхода (`0`/`1`/`2`) и алиас-переключение только при успехе — в `docs/INGEST.md`.
+Коды выхода (0/1/2) и алиас-переключение только при успехе — в `docs/INGEST.md`
+(раздел «QA-индексация» — там же).
 
 ---
 
 ## 6. Оркестрация: Prefect-обёртка
 
 Один и тот же конвейер используется и CLI (`scripts/ingest.py`), и Prefect — без
-расхождения поведения (`ingest_flow.py:279`, параметр `step` в `pipeline.py:122`):
+расхождения поведения (`ingest_flow.py:342`, параметр `step` в `pipeline.py:128`):
 
 ```mermaid
 flowchart TB
@@ -272,15 +278,16 @@ flowchart TB
     T --> P1[загрузка и разбор]
     T --> P2[разбиение на чанки]
     T --> P3[классификация областей]
-    T --> P4[эмбеддинги]
-    T --> P5[запись в Qdrant]
+    T --> P4[QA-обогащение<br/>опционально, AIST_QA_INDEX=1]
+    T --> P5[эмбеддинги]
+    T --> P6[запись в Qdrant]
     F --> A[Артефакт ingest-report · Markdown-сводка]
 
     P2 -- dry_run: обрыв графа здесь --> F
-    P5 --> F
+    P6 --> F
 ```
 
-Структура задач Prefect (пять фаз как подзадачи, `cache_policy=NO_CACHE` из-за
+Структура задач Prefect (шесть фаз как подзадачи, `cache_policy=NO_CACHE` из-за
 несериализуемого эмбеддера, артефакт `ingest-report`) и запуск через CLI/server
 описаны в `docs/INGEST.md`; параметры `AIST_*`, расписание, отладка и таблица
 типовых проблем — в `docs/DEPLOY.md`.

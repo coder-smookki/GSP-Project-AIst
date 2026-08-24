@@ -16,7 +16,8 @@ Chainlit (gui/chainlit_app.py, порт 8000)
    │  хранение истории: SQLAlchemyDataLayer → Postgres (схема Chainlit)
    │
    ├──► aegra (langgraph-sdk, AEGRA_URL=http://aegra:2026)
-   │        └──► поток графа: retrieve → assistant (sources, followups, токены)
+   │        └──► поток графа: plan → search_agent×N → finalize → assistant
+   │            (sources, followups, trace, токены)
    │
    └──► /change-password (доп. роутер FastAPI поверх приложения Chainlit)
 ```
@@ -44,16 +45,16 @@ Chainlit (gui/chainlit_app.py, порт 8000)
 
 ## Поток работы
 
-### Старт диалога (`on_chat_start`, chainlit_app.py:162)
+### Старт диалога (`on_chat_start`, chainlit_app.py:280)
 
-1. `init_db()` вызывает и хук `on_app_startup` (chainlit_app.py:157): он
+1. `init_db()` вызывает и хук `on_app_startup` (chainlit_app.py:275): он
    создаёт схему до первого запроса, потому что Chainlit обращается к слою
    данных уже при аутентификации, раньше `on_chat_start`.; `seed_admin()` —
    заводит администратора из окружения.
 2. Проверяется авторизация; без неё — сообщение «Требуется вход в систему».
 3. Клиент `langgraph-sdk` к `AEGRA_URL`; ищется первый ассистент.
 4. **Идентификатор треда aegra = идентификатор диалога Chainlit**
-   (`thread_id = cl.context.session.thread_id`, chainlit_app.py:183):
+   (`thread_id = cl.context.session.thread_id`, chainlit_app.py:301):
    восстановление после перезагрузки не требует отдельных сопоставлений
    «диалог → тред» — соответствие по построению. `if_exists="do_nothing"`
    делает вызов идемпотентным: повторный вход в тот же чат не создаёт второй
@@ -61,19 +62,19 @@ Chainlit (gui/chainlit_app.py, порт 8000)
 5. В сессию кладутся `client`, `assistant_id`, `thread_id`, `user_id`, `areas`.
 6. Отправляется панель настроек (MultiSelect «Области знаний») и приветствие.
 
-### Восстановление диалога (`on_chat_resume`, chainlit_app.py:215)
+### Восстановление диалога (`on_chat_resume`, chainlit_app.py:362)
 
 Chainlit сам рисует историю из слоя данных; хэндлер лишь поднимает клиент к
 `aegra` и возвращает в сессию прежний `thread_id` (совпадает с идентификатором
 диалога). Новых сообщений обработчик не создаёт — диалог отрисовывается.
 
-### Смена областей (`on_settings_update`, chainlit_app.py:241)
+### Смена областей (`on_settings_update`, chainlit_app.py:390)
 
 `MultiSelect` приходит строкой или списком; нормализуется в список и кладётся
 в сессию. Используется как фильтр `areas` при каждом запросе; **пустой список —
 поиск по всей базе**, а не «ничего не искать».
 
-### Сообщение (`on_message`, chainlit_app.py:253)
+### Сообщение (`on_message`, chainlit_app.py:420)
 
 Поток `client.runs.stream` с `stream_mode=["messages", "updates", "custom"]`:
 
@@ -83,7 +84,7 @@ Chainlit сам рисует историю из слоя данных; хэнд
 - **`updates`** — текст последнего завершённого AI-сообщения узла `assistant`.
 
 **Ключ панели источников создаётся до цикла стрима** (`sidebar_key`,
-chainlit_app.py:271): поток заканчивается только после узла `write_memory`
+chainlit_app.py:458): поток заканчивается только после узла `write_memory`
 — это ещё один полный вызов модели, значительно позже события `sources`.
 Если бы панель строилась после цикла, источники появлялись бы на несколько
 секунд позже ответа.
@@ -91,7 +92,7 @@ chainlit_app.py:271): поток заканчивается только пос�
 Если источников не было вовсе — панель очищается, иначе она показывала бы
 источники предыдущего вопроса.
 
-Финальный текст выбирается `pick_final_text` (contract.py:42): ошибка →
+Финальный текст выбирается `pick_final_text` (contract.py:203): ошибка →
 последний завершённый AI-текст → самый длинный partial — fallback на обрывок
 при разрыве потока.
 
@@ -133,7 +134,7 @@ chainlit_app.py:271): поток заканчивается только пос�
   (`ContextManager.should_condense`): история почти всегда укладывается в
   бюджет, и иначе шаг мигал бы на каждом сообщении.
 
-### Подсказки следующего вопроса (`on_followup`, chainlit_app.py:363)
+### Подсказки следующего вопроса (`on_followup`, chainlit_app.py:595)
 
 Клик по подсказке **отправляет вопрос как обычное user-сообщение**, а не просто
 пробрасывает текст в обработчик: иначе в переписке появляется ответ без
@@ -141,23 +142,23 @@ chainlit_app.py:271): поток заканчивается только пос�
 
 ## Аутентификация
 
-Схема входа — `@cl.password_auth_callback` (chainlit_app.py:74):
+Схема входа — `@cl.password_auth_callback` (chainlit_app.py:191):
 
 1. **Администратор из окружения.** Если `ADMIN_USERNAME`/`ADMIN_PASSWORD`
    заданы и совпадают — вход без записи в БД.
 2. **Пользователь из `gui_users`.** Хеш пароля сверяется через `bcrypt`.
 3. **Саморегистрация** (`ALLOW_SELF_REGISTRATION`, по умолчанию выключена,
-   chainlit_app.py:53). Включать только для локальной отладки: при включённой
+   chainlit_app.py:147). Включать только для локальной отладки: при включённой
    любой незнакомый логин получал бы доступ к базе знаний, задав пароль
    первой попыткой входа.
 
 Возврат из коллбэка `cl.User` обязательно предваряется `_ensure_persisted`
-(chainlit_app.py:61): без записи пользователя в слое данных первый вход
+(chainlit_app.py:155): без записи пользователя в слое данных первый вход
 показывал бы «Error fetching threads: Not Found: User not found» — интерфейс
 запрашивает список диалогов раньше, чем слой данных успевает создать запись.
 Вызов идемпотентен (см. `create_user` ниже).
 
-### Смена пароля (`/change-password`, chainlit_app.py:401)
+### Смена пароля (`/change-password`, chainlit_app.py:632)
 
 Дополнительный роутер FastAPI поверх приложения Chainlit. Требует текущий
 пароль. Ограничивает попытки (`_MAX_ATTEMPTS = 5` за `_ATTEMPT_WINDOW = 300`
@@ -214,27 +215,29 @@ ALTER TABLE "steps" ADD COLUMN IF NOT EXISTS "autoCollapse" BOOLEAN
 - `create_user` (db.py:190) — bcrypt-hash и INSERT; на
   `UniqueViolationError` возвращает `False` (это делает функцию идемпотентной
   для `_ensure_persisted`).
-- `update_password` (db.py:210) — сверка текущего пароля, длина нового ≥ 4,
+- `update_password` (db.py:219) — сверка текущего пароля, длина нового ≥ 4,
   обновление хеша.
-- `seed_admin` (db.py:235) — заводит администратора (`ADMIN_USERNAME`/
+- `seed_admin` (db.py:244) — заводит администратора (`ADMIN_USERNAME`/
   `ADMIN_PASSWORD`, роль `admin`).
 
 ## Функции-контракт — `contract.py`
 
-- `build_input` (contract.py:1) — полезная нагрузка запуска графа: сообщение
-  пользователя + опциональные `sections`/`areas`. `sections` — служебная ось,
+- `build_input` (contract.py:159) — полезная нагрузка запуска графа: сообщение
+  пользователя + опциональные `sections`/`areas` и флаг
+  `always_answer_with_db` (принудительный поиск в базе, обходя роутер
+  планировщика). `sections` — служебная ось,
   из интерфейса не задаётся (оставлена для отладки и тестов); пустые списки
   не попадают в запрос.
-- `decode_aist_envelope` (contract.py:15) — достаёт конверт `{"aist": {...}}`
+- `decode_aist_envelope` (contract.py:176) — достаёт конверт `{"aist": {...}}`
   из события: из верхнего уровня или из `chunk["params"]["data"]` (новый
   формат Chainlit).
-- `format_sources` (contract.py:23) — рендер панели «Источники»: номер `[n]`,
+- `format_sources` (contract.py:184) — рендер панели «Источники»: номер `[n]`,
   код документа, «· п. <clause>», заголовок и фрагмент. Если пункта нет —
   ссылка без пункта (табличная зона).
 - `parse_stage` — разбор события `trace` в `StageEvent`: ключ этапа, заголовок
   шага, признаки «выполняется»/«сбой» и короткий итог. Незнакомый этап даёт
   `None`: интерфейс молча пропускает такое событие, а не выдумывает заголовок.
-- `pick_final_text` (contract.py:42) — порядок выбора текста ответа (см. выше).
+- `pick_final_text` (contract.py:203) — порядок выбора текста ответа (см. выше).
 
 ## Области знаний (`AREA_CHOICES`, `DEFAULT_AREAS`)
 

@@ -8,10 +8,11 @@
 ```text
 agent/
   graph.py                     # сборка графа, узлы, рёбра, обработка ошибок модели
-  state.py                     # AgentState (схема состояния)
+  state.py                     # AgentState / SearchAgentState (схемы состояния)
+  planner.py                   # планировщик: режим chat/kb и подзапросы
+  search_agent.py              # ветка-поиск: ReAct-сабграф с инструментом retrieve_kb
   prompts.py                   # все большие промпты одним модулем
   events.py                    # кастомные события в конверте {"aist": ...}
-  correction.py                # переписывание запроса при пустой выдаче
   grading.py                   # грейдер фрагментов (выключен по замеру)
   numbers.py                   # сверка чисел ответа с контекстом
   memory_gate.py               # «есть ли что запомнить из этого сообщения»
@@ -24,20 +25,21 @@ agent/
 
 ## Общая схема графа
 
-Граф собирается функцией `create_app_agent` (`graph.py:128`) из шести узлов:
+Граф собирается функцией `create_app_agent` (`graph.py:193`) из семи узлов:
 
 ```mermaid
 flowchart TD
-    S([START]) --> R[reset_turn<br/>graph.py:144]
-    R --> CC[condense_context<br/>graph.py:284]
-    CC --> RV[retrieve<br/>graph.py:214]
+    S([START]) --> R[reset_turn<br/>graph.py:234]
+    R --> CC[condense_context<br/>graph.py:425]
+    CC --> PL[plan<br/>graph.py:255]
 
-    RV -- "пустая выдача -> переписать" --> RQ[rewrite_query<br/>graph.py:273]
-    RQ --> RV
-    RV --> AS[assistant<br/>graph.py:152]
+    PL -- "chat" --> AS[assistant<br/>graph.py:362]
+    PL -- "kb: Send x N" --> SA[search_agent<br/>graph.py:297]
+    SA --> FZ[finalize<br/>graph.py:334]
+    FZ --> AS
 
-    AS --> WM{should_extract_memory<br/>graph.py:109}
-    WM -- "есть что запомнить" --> WR[write_memory<br/>graph.py:303]
+    AS --> WM{should_extract_memory<br/>graph.py:122}
+    WM -- "есть что запомнить" --> WR[write_memory<br/>graph.py:462]
     WM -- нет --> E([END])
     WR --> E([END])
 ```
@@ -46,32 +48,38 @@ flowchart TD
 
 | Узел | Строка | Что делает |
 | --- | --- | --- |
-| `reset_turn` | graph.py:144 | Сброс одноразовых полей одного запроса (`query`, `rewrite_attempts`, `needs_rewrite`, `retrieval_failed`) |
-| `condense_context` | graph.py:284 | Сжатие истории диалога в `summary` + удаление старых сообщений |
-| `retrieve` | graph.py:214 | Гибридный поиск по базе знаний, публикация событий `sources`/`followups` |
-| `rewrite_query` | graph.py:273 | Переписывание запроса при пустой выдаче (максимум `max_rewrites` раз) |
-| `assistant` | graph.py:152 | Формирование контекста и вызов модели, проверка чисел, публикация ответа |
-| `write_memory` | graph.py:303 | Обновление долгосрочной памяти о пользователе |
+| `reset_turn` | graph.py:234 | Сброс одноразовых полей одного запроса (`plan`, `retrieved`, `branch_retrieved`, `failures`, `followups`, `retrieval_failed`) |
+| `condense_context` | graph.py:425 | Сжатие истории диалога в `summary` + удаление старых сообщений |
+| `plan` | graph.py:255 | Планировщик (`planner.plan_search`): режим `chat`/`kb` + декомпозиция на подзапросы |
+| `search_agent` | graph.py:297 | Ветка-поиск: вызов ReAct-сабграфа по своему подзапросу, вклад в `branch_retrieved`/`failures` |
+| `finalize` | graph.py:334 | Fan-in: дедуп, слияние ветвей, cap `top_k`, нумерация `[n]`, события `sources`/`followups` |
+| `assistant` | graph.py:362 | Формирование контекста и вызов модели, проверка чисел, публикация ответа |
+| `write_memory` | graph.py:462 | Обновление долгосрочной памяти о пользователе |
 
-Состояние — `AgentState` (`state.py:7`): поле `messages` с редьюсером
-`add_messages` плюс необязательные поля `summary`, `sections`, `retrieved`,
-`followups`, `areas`, `retrieval_failed`, `query`, `rewrite_attempts`,
-`needs_rewrite`.
+Состояние — `AgentState` (`state.py:44`): поле `messages` с редьюсером
+`add_messages`; накопительные каналы `branch_retrieved`/`failures` с редьюсером
+`merge_or_reset` (понимает сигнал `RESET_CHANNEL`); плюс необязательные поля
+`summary`, `sections`, `areas`, `docs`, `query`, `plan`, `retrieved`,
+`followups`, `retrieval_failed`. Состояние ветки — `SearchAgentState`
+(`state.py:61`).
 
 `checkpointer` и `store` (память) передаются как опции `compile()`
-(`graph.py:381-387`); контейнер создаёт их в
+(`graph.py:553-558`); контейнер создаёт их в
 `infrastructure/config/composition_root.py`, вне процессов соединений.
 
-## reset_turn (graph.py:144)
+## reset_turn (graph.py:234)
 
-Первый узел каждого входа: обнуляет одноразовые поля — `query=''`,
-`rewrite_attempts=0`, `needs_rewrite=False`, `retrieval_failed=False`. Без этого
-служебные поля «склеивали» бы разные запросы.
+Первый узел каждого входа: обнуляет одноразовые поля — `plan=None`,
+`retrieved=[]`, `followups=[]`, `retrieval_failed=False`, а накопительным
+каналам `branch_retrieved`/`failures` ставит сигнал `RESET_CHANNEL`.
+Без этого служебные поля «склеивали» бы разные запросы: у каналов
+редьюсер-сумматор, и пустой список он применил бы как `current + []`,
+то есть не сбросил бы ничего.
 
-## condense_context (graph.py:284)
+## condense_context (graph.py:425)
 
 Если узел не получил `context_manager`, он возвращает `{}` (выход без
-изменений). В составе (`composition_root.py:18`) передаётся
+изменений). В составе (`composition_root.py:31`) передаётся
 `ContextManager(llm=support_model, budget=16000)` (домен: `domain/context/manager.py`).
 
 Логика `ContextManager.condense` (`domain/context/manager.py:14`):
@@ -82,78 +90,81 @@ flowchart TD
 - иначе старые сообщения (до последних `keep_last`) сжимаются буллетпойнтами
   через промпт «Extract key facts... / Update this structured fact list»;
 - полученная сводка кладётся в `summary`; старые сообщения удаляются через
-  `RemoveMessage` (`graph.py:297-300`), чтобы не дублировать текст;
+  `RemoveMessage` (`graph.py:456-459`), чтобы не дублировать текст;
 - если модель не ответила (ошибка семейства `MODEL_ERRORS`) — `logwarning`,
-  сжатие пропускается (граф не падает, диалог просто становится длиннее).
+  сжатие пропускается (граф не падает, диалог просто становится длиннее);
+- пустое резюме — тоже отказ: история не удаляется (graph.py:448-453).
 
-Сводка передаётся модели внутри блока `<internal_context>` (graph.py:188), в
+Сводка передаётся модели внутри блока `<internal_context>` (graph.py:397-406), в
 GUI она не выводится.
 
-## retrieve (agent/graph.py:214)
+## plan (agent/planner.py, graph.py:255)
 
-Что происходит в узле поиска:
+Планировщик решает, искать ли в базе вообще и как разбить вопрос:
 
-- `query` берётся из состояния или выводится из последнего пользовательского
-  сообщения (`query_from_state`, graph.py:121);
-- вызов `search.query(query, sections=..., areas=...)` — протокол `Search`,
-  реализация `QdrantSearch` и мок описаны в `docs/RETRIEVE.md`;
-- результат превращается в список `Citation.to_dict()` (n, doc_code, clause,
-  chunk_id, score, snippet) — graph.py:237-241; именно их видит панель
-  «Источники»;
-- грейдер (опционально, `grading=...`): отсев фрагментов, если отсев возможен
-  (подробно в `docs/RETRIEVE.md`); по умолчанию выключен;
-- если фрагменты не найдены и задана `support_model` — планируется
-  переписывание запроса (`needs_rewrite=True`);
-- публикуются события `sources` (graph.py:261) и `followups` (graph.py:265);
-- при `SearchUnavailable` — `retrieval_failed=True`, `query` сохраняется,
-  переписывание отменяется; отправляется событие `trace` со `status: unavailable`.
+- `plan_search` (`planner.py:112`) вызывает `support_model.raw.with_structured_output(SearchPlan)`
+  с промптом `PLAN_PROMPT`; при сбое структурированного вывода план
+  запрашивается обычным сообщением, JSON вырезается из текста
+  (`parse_plan_json`, planner.py:45) — этот запасной путь спасает модели,
+  которые возвращают пустоту на структурированный вывод (gpt-oss);
+- предел подзапросов считается от бюджета поиска:
+  `max_subqueries = retrieval_max_requests // (branch_retries + 1)` (planner.py:16);
+- режим `chat` («Привет!», «спасибо») завершает граф поиском — ветки не
+  запускаются; полный сбой планировщика даёт безопасный фолбэк
+  `kb [исходный вопрос]`;
+- флаг `always_answer_with_db` (из GUI) принудительно включает kb-режим без
+  обращения к модели.
 
-Пустой `query` — вернуть `{"needs_rewrite": False}` без поиска.
+Проверка планировщика отдельным прогоном: `uv run python scripts/check_planner.py`.
 
-## rewrite_query (graph.py:273) / correction.py
+## search_agent → finalize (graph.py:297, 334)
 
-Запускается из `retrieve`. Функция `rewrite_query` (`agent/correction.py:12`)
-вызывает `support_model` с `REWRITE_PROMPT` (`prompts.py:49`) и возвращает
-переписанный запрос. Правила фильтрации (`correction.py`):
+Каждый подзапрос исполняется **параллельной веткой** (`Send` в
+`initiate_search_agents`, graph.py:276): скомпилированный ReAct-сабграф из
+`search_agent.build_search_agent` (`search_agent.py:29`) с единственным
+инструментом `retrieve_kb`. Модель сама решает, когда поиска достаточно;
+при пустой выдаче инструменту предлагается переформулировать запрос
+официальными терминами регламента и повторить поиск — до `max_rounds =
+branch_retries + 1` обращений. Это и есть коррекция запроса: она живёт внутри
+ветки, а не отдельным узлом.
 
-- результат не пуст, одна строка, длина ≤ `MAX_REWRITE_CHARS` (300);
-- не совпадает с исходным запросом с точностью до регистра;
-- модель пытается максимум `max_rewrites` раз (в контейнере — 1, graph.py:257-261).
+Ветка возвращает только накопительные каналы (`branch_retriebed`, `failures`),
+каждый фрагмент помечен своим подзапросом (`subquery`). Узел `finalize`
+(graph.py:334) делает fan-in: дедуп по `chunk_id`, слияние ветвей по кругу —
+каждому подзапросу своя доля мест (`_merge_branches`), cap `top_k`,
+перенумерация `[n]`, единые события `sources`/`followups`,
+`retrieval_failed = bool(failures) and not retrieved`.
 
-Если переписывание отвергнуто — `query` остаётся прежним, а `needs_rewrite`
-становится `False` (петля не повторяется). При принятии отправляется событие
-`trace` со `status: rewriting` (запрет — см. `correction.py`).
-
-## assistant (graph.py:152)
+## assistant (graph.py:362)
 
 Основной узел генерации:
 
 1. подгружается долгосрочная память пользователя через `store.asearch`
-   (namespace `("memories", user_id)`, graph.py:158-161);
+   (namespace `("memories", user_id)`, graph.py:368-370);
 2. строится контекст: при `retrieval_failed` — строгий текст «поиск временно
-   недоступен» (graph.py:163-169), иначе — нумерованные выдержки `[n]` из
+   недоступен» (graph.py:372-378), иначе — нумерованные выдержки `[n]` из
    `retrieved`, при пустой выдаче — «в базе знаний нет выдержек»;
 3. в системном сообщении подставляются память, контекст и сегодняшняя дата
    (`prompts.py:1`, формат `MODEL_SYSTEM_MESSAGE`);
 4. если есть `summary` — добавляется блок `<internal_context>`
-   (graph.py:188-198);
+   (graph.py:397-406);
 5. вызов `model.ainvoke(messages=all_messages)`;
-6. при ошибке модели (семейство `MODEL_ERRORS`, graph.py:31) — ответ
+6. при ошибке модели (семейство `MODEL_ERRORS`, graph.py:32) — ответ
    `MODEL_UNAVAILABLE_TEXT` и событие `trace` со `status: model_unavailable`;
-   узел не падает (graph.py:199-204);
+   узел не падает (graph.py:408-413);
 7. если включена проверка чисел (`verify_numbers`) — `annotate_numbers(text,
-   context)` (`agent/numbers.py:38`) помечает числа, которых нет в контексте.
+   context)` (`agent/numbers.py:88`) помечает числа, которых нет в контексте.
 
 Ответ кладётся в `messages` как `AIMessage`.
 
 ### О числах — numbers.py
 
-`MODEL_SYSTEM_MESSAGE` прямо требует «каждое число — из CONTEXT, дословно»
-(`prompts.py:17`, правила 6.1-6.2). Это гарантия против выдуманных значений.
-Поверх числа проверяются пост-обработкой, и неподтверждённые помечаются
-припиской — `WARNING_TEMPLATE` (`numbers.py:32`).
+`MODEL_SYSTEM_MESSAGE` прямо требует «каждое число — из CONTEXT, дословно». Это
+гарантия против выдуманных значений. Поверх числа проверяются пост-обработкой,
+и неподтверждённые помечаются припиской — `WARNING_TEMPLATE`
+(`numbers.py:82`).
 
-## should_extract_memory / write_memory (graph.py:109, 303)
+## should_extract_memory / write_memory (graph.py:122, 462)
 
 Решение, стоит ли трогать память, принимает `memory_gate.worth_extracting`
 (`agent/memory_gate.py:39`): ищет маркеры от первого лица («я», «мне»,
@@ -162,14 +173,15 @@ GUI она не выводится.
 случаев?») `write_memory` не вызывается — вызов модели на безличный вопрос не
 тратится.
 
-`write_memory` (graph.py:303-357):
+`write_memory` (graph.py:462-527):
 
 - собирает промпт по памяти (count/max, существующие пункты, последние
   реплики);
 - вызывает `support_model` с промптом `MEMORY_EXTRACT_PROMPT` (`prompts.py:27`);
 - парсит JSON по контракту `{"memories": [...]}` через `domain/memory/schema.py`;
-- синхронизирует `store`: удаляются устарелые пункты (`store.adelete`),
-  добавляются новые (`store.aput`), пустые игнорируются.
+- синхронизирует `store`: удаляются устаревшие пункты (`store.adelete`),
+  добавляются новые (`store.aput`), пустой набор при непустой памяти
+  игнорируется (один неудачный ответ модели не стирает всё досье).
 
 Память — это **устойчивые факты о человеке** (имя, должность, допуски), а не
 журнал вопросов; промпт явно не позволяет запоминать «о чём спрашивал».
@@ -180,8 +192,9 @@ GUI она не выводится.
 | --- | --- | --- |
 | `MODEL_SYSTEM_MESSAGE` | prompts.py:1 | Системный промпт ассистента: ответы по CONTEXT, отказы, числа, память |
 | `MEMORY_EXTRACT_PROMPT` | prompts.py:27 | Извлечение/обновление фактов о пользователе |
-| `REWRITE_PROMPT` | prompts.py:49 | Переписывание запроса для поиска |
-| `GRADE_PROMPT` | prompts.py:60 | Промпт грейдера (применение — в `docs/RETRIEVE.md`) |
+| `GRADE_PROMPT` | prompts.py:49 | Промпт грейдера (применение — в `docs/RETRIEVE.md`) |
+| `PLAN_PROMPT` | prompts.py:58 | Планировщик: режим и подзапросы |
+| `SEARCH_AGENT_PROMPT` | prompts.py:71 | Системный промпт ветки-поиска (ReAct, лимит обращений) |
 
 ## Кастомные события — events.py
 
@@ -239,7 +252,8 @@ GUI она не выводится.
 - Сборка производится в `infrastructure/config/composition_root.py`
   (`create_application`): `create_app_agent(model, support_model,
   context_manager, store=InMemoryStore(), checkpointer=MemorySaver(),
-  search=..., grading=..., verify_numbers=...)`.
+  search=..., max_requests=..., branch_retries=..., top_k=...,
+  verify_numbers=...)`.
 - Реестр моделей и эмбеддингов — `infrastructure/config/model_registry.py`
   (два слота: `default` для ответа, `support` для служебных задач); модели
   подбираются из настроек в `infrastructure/config/settings.py`.

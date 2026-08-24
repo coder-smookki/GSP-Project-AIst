@@ -55,8 +55,6 @@ class AgentState(TypedDict):
     failures: NotRequired[Annotated[list[str], merge_or_reset]]
     followups: NotRequired[list[str]]
     retrieval_failed: NotRequired[bool]
-    rewrite_attempts: NotRequired[int]
-    needs_rewrite: NotRequired[bool]
 
 
 class SearchAgentState(TypedDict):
