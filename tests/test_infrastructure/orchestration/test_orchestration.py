@@ -48,6 +48,24 @@ async def test_ingest_flow_dry_run_counts_chunks() -> None:
     assert report.failed == []
 
 
+async def test_ingest_flow_dry_run_accepts_qa_index_flag() -> None:
+    """Флаг qa_index принимается; в dry-run модель QA не собирается.
+
+    Сборка клиента чат-модели потребовала бы живого Ollama, поэтому в
+    сухом прогоне она пропускается — как и в основном пути (scripts/ingest.py).
+    Тест фиксирует, что флаг проходит до конца прогона офлайн.
+    """
+    report = await ingest_flow(
+        source_kind="files",
+        corpus_dir=str(CORPUS),
+        limit=1,
+        dry_run=True,
+        qa_index=True,
+    )
+    assert len(report.outcomes) == 1
+    assert report.failed == []
+
+
 def test_ingest_flow_is_a_prefect_flow() -> None:
     """Обёртка — настоящий поток Prefect, а не обычная функция."""
     assert isinstance(ingest_flow, prefect.flows.Flow)
@@ -81,7 +99,13 @@ def test_deployment_kwargs_defaults_and_env(monkeypatch) -> None:
     в параметры прогона и расписание. Это то, что контейнер раннера читает
     из `docker-compose.orchestration.yml`.
     """
-    for key in ("AIST_CRON", "AIST_INTERVAL", "AIST_SECTION_ID", "AIST_LIMIT"):
+    for key in (
+        "AIST_CRON",
+        "AIST_INTERVAL",
+        "AIST_SECTION_ID",
+        "AIST_LIMIT",
+        "AIST_QA_INDEX",
+    ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("AIST_SOURCE_KIND", "files")
     monkeypatch.setenv("AIST_SWITCH_ALIAS", "1")
@@ -92,6 +116,7 @@ def test_deployment_kwargs_defaults_and_env(monkeypatch) -> None:
     assert params["source_kind"] == "files"
     assert params["generation"] == 1
     assert params["dry_run"] is False
+    assert params["qa_index"] is False
     assert params["switch_alias"] is True
     assert params["limit"] is None
     assert "cron" not in kwargs
@@ -100,7 +125,9 @@ def test_deployment_kwargs_defaults_and_env(monkeypatch) -> None:
     monkeypatch.setenv("AIST_CRON", "0 2 * * *")
     monkeypatch.setenv("AIST_LIMIT", "10")
     monkeypatch.setenv("AIST_SECTION_ID", "7")
+    monkeypatch.setenv("AIST_QA_INDEX", "1")
     kwargs = _deployment_kwargs()
     assert kwargs["cron"] == "0 2 * * *"
     assert kwargs["parameters"]["limit"] == 10
     assert kwargs["parameters"]["section_id"] == 7
+    assert kwargs["parameters"]["qa_index"] is True

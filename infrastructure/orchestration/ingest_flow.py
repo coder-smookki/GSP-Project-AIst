@@ -6,7 +6,6 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 
-from infrastructure.config.settings import get_settings
 from infrastructure.ingest.config import (
     DEFAULT_CONFIG,
     PIPELINE_VERSION,
@@ -120,6 +119,31 @@ async def classify_step(
 
 
 @task(
+    name="QA-обогащение",
+    task_run_name=_phase_ref_id("QA-обогащение"),
+    log_prints=True,
+    cache_policy=NO_CACHE,
+)
+async def qa_enrich_step(
+    pipeline: IngestPipeline,
+    chunks: list[IngestChunk],
+    ref: DocumentRef,
+) -> None:
+    from infrastructure.ingest import qa_index
+
+    if pipeline.qa_model is None or not chunks:
+        return
+    run_logger = get_run_logger()
+    stats = await qa_index.enrich(chunks, pipeline.qa_model)
+    run_logger.info(
+        "документ %s: QA-обогащение %d/%d чанков",
+        ref.doc_id,
+        stats.enriched,
+        stats.considered,
+    )
+
+
+@task(
     name="Эмбеддинги",
     task_run_name=_phase_ref_id("эмбеддинги"),
     log_prints=True,
@@ -131,7 +155,12 @@ async def embed_step(
     ref: DocumentRef,
 ) -> list[list[float]]:
     run_logger = get_run_logger()
-    vectors = await embedder.aembed([chunk.text for chunk in chunks])
+    # Кодируется text_indexed, если он заполнен: при QA-индексации там
+    # фрагмент вместе с вопросами, на которые он отвечает. Показывается
+    # по-прежнему text (см. infrastructure/ingest/qa_index.py).
+    vectors = await embedder.aembed(
+        [chunk.text_indexed or chunk.text for chunk in chunks]
+    )
     run_logger.info("документ %s: эмбеддингов %d", ref.doc_id, len(vectors))
     return vectors
 
@@ -191,10 +220,14 @@ async def ingest_document_step(
         # Имя модели входит в отпечаток: векторы разных моделей несовместимы
         # по смыслу даже при равной размерности. Без него смена эмбеддера
         # проходила как «документ не изменился», индекс оставался собранным
-        # прежней моделью, и качество поиска молча падало. Основной путь
-        # индексации это учитывает, поток Prefect - нет, и расхождение
-        # проявлялось только при запуске через оркестратор.
+        # прежней моделью, и качество поиска молча падало.
         embedder_id = str(getattr(embedder, "model_name", "") or "")
+        if pipeline.qa_model is not None:
+            # Как в основном пути (pipeline.py): отпечаток обязан отличать
+            # обычный прогон от QA, иначе повторная индексация с вопросами
+            # сочла бы документы неизменившимися и не переписала бы ни
+            # одного вектора.
+            embedder_id = f"{embedder_id}+qa"
         fingerprint = pipeline.repository.fingerprint(document, embedder_id)
 
         if not chunks:
@@ -209,6 +242,8 @@ async def ingest_document_step(
             outcome.chunks = len(chunks)
         else:
             areas = await classify_step(pipeline, document, ref)
+            if pipeline.qa_model is not None:
+                await qa_enrich_step(pipeline, chunks, ref)
             vectors = await embed_step(embedder, chunks, ref)
             outcome.chunks = await upsert_step(
                 store,
@@ -314,6 +349,7 @@ async def ingest_flow(
     limit: int | None = None,
     dry_run: bool = False,
     full: bool = False,
+    qa_index: bool = False,
     switch_alias: bool = False,
     sync_tag: str | None = None,
     pipeline_version: str = PIPELINE_VERSION,
@@ -321,9 +357,29 @@ async def ingest_flow(
     embedding_model: str | None = None,
     embedding_provider: str | None = None,
     embedding_query_instruction: str | None = None,
+    llm_model: str | None = None,
+    llm_provider: str | None = None,
 ) -> IngestReport:
     run_logger = get_run_logger()
-    settings = get_settings()
+    # Настройки кэшируются lru_cache — без сброса долгоживущий раннер
+    # продолжал бы жить со старыми LLM_*/EMBEDDING_* после смены .env.
+    from infrastructure.config.settings import get_settings as _get_settings
+
+    _get_settings.cache_clear()
+    settings = _get_settings()
+    # Параметры flow перекрывают окружение для этого прогона (видно в UI).
+    if llm_model is not None:
+        settings = settings.model_copy(update={"llm_model": llm_model})
+    if llm_provider is not None:
+        settings = settings.model_copy(update={"llm_provider": llm_provider})
+    run_logger.info(
+        "настройки моделей: LLM %s/%s (base %s), эмбеддер %s/%s",
+        settings.llm_provider,
+        settings.llm_model,
+        settings.ollama_local_base_url,
+        embedding_provider or settings.embedding_provider,
+        embedding_model or settings.embedding_model,
+    )
 
     source = build_source(settings, source_kind, corpus_dir, section_id)
     effective_collection = collection or f"{settings.qdrant_collection}_v{generation}"
@@ -350,7 +406,21 @@ async def ingest_flow(
         DEFAULT_CONFIG,
         incremental=IncrementalConfig(pipeline_version=pipeline_version),
     )
-    pipeline = IngestPipeline(config=config)
+    # Клиент QA-модели собирается напрямую, минуя реестр: в одном процессе
+    # раннера живут несколько deployment-ов, и глобальный слот "default"
+    # привёл бы к их взаимному затиранию (та же причина, что в build_index).
+    qa_model = None
+    if qa_index and not dry_run:
+        from infrastructure.config.model_registry import build_model_client
+
+        qa_model = build_model_client(settings, settings.llm_model)
+        run_logger.info(
+            "QA-индексация включена: %s/%s, на каждый фрагмент уходит "
+            "вызов модели, прогон будет заметно дольше",
+            settings.llm_provider,
+            settings.llm_model,
+        )
+    pipeline = IngestPipeline(config=config, qa_model=qa_model)
     run_sync_tag = sync_tag or f"run-{int(time.time())}"
 
     report = None
@@ -390,6 +460,7 @@ async def ingest_flow(
             f"- Чанков: **{report.total_chunks}**",
             f"- Ошибок: **{len(report.failed)}**",
             f"- Dry-run: `{dry_run}`",
+            f"- QA-индексация: `{qa_index}`",
         ]
         if report.switched_from:
             lines.append(
