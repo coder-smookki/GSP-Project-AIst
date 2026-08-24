@@ -9,6 +9,10 @@ import chainlit as cl
 from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 from chainlit.input_widget import InputWidget, MultiSelect
 from chainlit.server import app as _chainlit_app
+
+# Своя страница регистрации: Chainlit собран на FastAPI, поэтому маршрут
+# добавляется в то же приложение (см. gui/register.py).
+from chainlit.server import app as chainlit_server_app
 from chainlit.types import ThreadDict
 from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
@@ -28,7 +32,10 @@ from gui.db import (
     seed_admin,
     update_password,
 )
+from gui.register import register_routes
 from gui.stages import StageView
+
+register_routes(chainlit_server_app)
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +109,25 @@ _check_auth_secret()
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+#: Типы разделов регламента для тонкой настройки поиска.
+#:
+#: Поиск умеет фильтровать по ним с самого начала, но интерфейс их не
+#: показывал. Пользы больше всего от «Порядок проведения»: инженер чаще
+#: ищет процедуру, а не термины и не список литературы, и сужение по типу
+#: убирает из выдачи ровно то, что мешает.
+SECTION_CHOICES = {
+    "Порядок проведения": "procedura",
+    "Термины и определения": "terminy",
+    "Общие положения": "obshchie",
+    "Ответственность": "otvetstvennost",
+    "Назначение и область применения": "naznachenie",
+    "Приложения": "prilozhenie",
+    "Нормативные ссылки": "normativnye_ssylki",
+}
+
+#: Пустой выбор означает поиск по всем типам разделов.
+DEFAULT_SECTIONS: list[str] = []
 
 AREA_CHOICES = {
     "Пожарная безопасность": "pozharnaya_bezopasnost",
@@ -280,6 +306,8 @@ async def on_chat_start():
     cl.user_session.set("thread_id", thread["thread_id"])
     cl.user_session.set("user_id", user_id)
     cl.user_session.set("areas", DEFAULT_AREAS)
+    cl.user_session.set("sections", DEFAULT_SECTIONS)
+    cl.user_session.set("show_stages", True)
 
     widgets: list[InputWidget] = [
         MultiSelect(
@@ -287,6 +315,16 @@ async def on_chat_start():
             label="Области знаний",
             items=AREA_CHOICES,
             initial=DEFAULT_AREAS,
+        ),
+        MultiSelect(
+            id="sections",
+            label="Типы разделов",
+            items=SECTION_CHOICES,
+            initial=DEFAULT_SECTIONS,
+            description=(
+                "Пусто — искать по всем разделам. Сузьте до «Порядок "
+                "проведения», если нужна процедура, а не термины"
+            ),
         ),
         cl.input_widget.Checkbox(
             id="always_answer_with_db",
@@ -296,13 +334,22 @@ async def on_chat_start():
                 "Принудительно использовать поиск по базе даже для общих вопросов"
             ),
         ),
+        cl.input_widget.Checkbox(
+            id="show_stages",
+            label="Показывать этапы выполнения",
+            initial=True,
+            description=(
+                "Лента шагов над ответом: планирование, поиск, отбор "
+                "источников. Выключите, если мешает читать"
+            ),
+        ),
     ]
     chat_settings = cl.ChatSettings(inputs=widgets)
     await chat_settings.send()
 
     await cl.Message(
         content=(
-            f"Здравствуйте, **{user_id}**. Я АИст — помощник по корпоративной базе "
+            f"Здравствуйте, **{user_id}**. Я AIst - помощник по корпоративной базе "
             "знаний: охрана труда, промышленная и пожарная безопасность, "
             "гражданская оборона и ЧС.\n\n"
             "Задайте вопрос своими словами. В ответе будут ссылки на документ "
@@ -334,6 +381,8 @@ async def on_chat_resume(thread: ThreadDict) -> None:
     cl.user_session.set("thread_id", thread_id)
     cl.user_session.set("user_id", app_user.identifier)
     cl.user_session.set("areas", DEFAULT_AREAS)
+    cl.user_session.set("sections", DEFAULT_SECTIONS)
+    cl.user_session.set("show_stages", True)
     logger.info("диалог %s восстановлен для %s", thread_id, app_user.identifier)
 
 
@@ -348,10 +397,23 @@ async def on_settings_update(settings: dict):
         areas = [raw]
     cl.user_session.set("areas", areas)
 
+    raw_sections = settings.get("sections")
+    if isinstance(raw_sections, list):
+        sections = raw_sections
+    elif raw_sections is None or raw_sections == "":
+        sections = []
+    else:
+        sections = [raw_sections]
+    cl.user_session.set("sections", sections)
+
     # чекбокс «Всегда искать в базе знаний»
     always_db = settings.get("always_answer_with_db")
     if isinstance(always_db, bool):
         cl.user_session.set("always_answer_with_db", always_db)
+
+    show_stages = settings.get("show_stages")
+    if isinstance(show_stages, bool):
+        cl.user_session.set("show_stages", show_stages)
 
 
 @cl.on_message
@@ -384,7 +446,11 @@ async def on_message(message: cl.Message):
             msg_sent = True
             await msg.send()
 
-    stages = StageView()
+    # Лента этапов рисуется только если человек её не выключил: на длинных
+    # ответах пять шагов над текстом мешают читать, а смысл они несут один
+    # раз - когда надо убедиться, что система работает.
+    show_stages = cl.user_session.get("show_stages")
+    stages = StageView() if show_stages is not False else None
 
     # Ключ панели источников создаётся ДО цикла: панель рисуется по событию
     # sources, а поток завершается только после узла write_memory — то есть
@@ -393,6 +459,7 @@ async def on_message(message: cl.Message):
     sidebar_drawn = False
 
     areas: list[str] | None = cl.user_session.get("areas")
+    sections: list[str] | None = cl.user_session.get("sections")
     always_db: bool = cl.user_session.get("always_answer_with_db", False)
 
     sidebar_key = f"sources-{msg.id or uuid.uuid4()}"
@@ -412,7 +479,10 @@ async def on_message(message: cl.Message):
             thread_id=thread_id,
             assistant_id=assistant_id,
             input=build_input(
-                message.content, areas=areas, always_answer_with_db=always_db
+                message.content,
+                sections=sections,
+                areas=areas,
+                always_answer_with_db=always_db,
             ),
             stream_mode=["messages", "updates", "custom"],
             version="v1",
@@ -463,7 +533,8 @@ async def on_message(message: cl.Message):
                     elif kind == "followups":
                         followups = payload.get("items") or []
                     elif kind == "trace":
-                        await stages.handle(payload)
+                        if stages is not None:
+                            await stages.handle(payload)
                 continue
 
             if chunk.event != "updates":
@@ -497,7 +568,8 @@ async def on_message(message: cl.Message):
         logger.exception("поток запуска графа оборван")
     finally:
         # Незакрытый шаг остался бы «выполняется» навсегда.
-        await stages.close()
+        if stages is not None:
+            await stages.close()
 
     msg.content = pick_final_text(partials, assistant_final, error=run_error)
 

@@ -1,0 +1,154 @@
+/* Фирменный стиль AIst поверх темы Chainlit.
+ *
+ * Палитра живёт в public/theme.json: там переменные, которые Chainlit
+ * раздаёт своим компонентам. Здесь только то, чего переменными не выразить -
+ * градиент знака, форма пузырей и мелкая правка вида.
+ *
+ * Цвета взяты из логотипа команды: тёмно-синий надписи (#001848), голубой
+ * крыла (#00A8F8) и фиолетовый клюва (#5030F8). Тёмно-синий совпадает с
+ * фоном шаблона презентации Газстройпрома, поэтому интерфейс не выбивается
+ * из общего вида кейса.
+ *
+ * Шрифты СИСТЕМНЫЕ, загрузка с внешних адресов запрещена: демонстрация идёт
+ * без интернета, и Google Fonts оставили бы страницу без шрифта.
+ *
+ * Все селекторы ниже сверены с вёрсткой Chainlit 2.11 (frontend/dist).
+ * Правило без совпадения - молчаливо мёртвый код, поэтому «на всякий
+ * случай» здесь ничего не оставлено.
+ */
+
+:root {
+  --aist-cyan: #00a8f8;
+  --aist-blue: #0070f8;
+  --aist-violet: #5030f8;
+  --aist-sweep: linear-gradient(
+    100deg,
+    var(--aist-cyan) 0%,
+    var(--aist-blue) 52%,
+    var(--aist-violet) 100%
+  );
+}
+
+/* Фирменная линия под шапкой: тот же переход, что в знаке. */
+#header {
+  position: relative;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+#header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--aist-sweep);
+  opacity: 0.9;
+}
+
+/* Кнопка отправки. Ровный градиент вместо плоской заливки: он повторяет
+ * переход крыла в клюв на знаке. */
+#chat-submit {
+  background: var(--aist-sweep) !important;
+  border: none !important;
+  color: #fff !important;
+}
+
+#chat-submit:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+/* Поле ввода: рамка подсвечивается фирменным голубым, а не системным. */
+#message-composer {
+  border-radius: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#message-composer:focus-within {
+  border-color: var(--aist-cyan);
+  box-shadow: 0 0 0 3px hsl(199 100% 50% / 0.16);
+}
+
+/* Реплика пользователя: заливка вместо голого текста, чтобы в длинной
+ * переписке было видно, где вопрос, а где ответ. */
+[data-step-type="user_message"] .message-content {
+  background: hsl(var(--secondary));
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px 14px 4px 14px;
+  padding: 10px 14px;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
+}
+
+/* Ход работы агента читается как список шагов, а не как сноски. */
+.step {
+  border-left: 2px solid hsl(var(--border));
+  padding-left: 12px;
+}
+
+/* Боковая панель источников. Выписки из регламентов - главный предмет
+ * разговора, поэтому цитата отделена и не сливается с текстом ответа. */
+#side-view-title {
+  border-bottom: 1px solid hsl(var(--border));
+  padding-bottom: 8px;
+}
+
+#side-view-content blockquote {
+  border-left: 3px solid var(--aist-cyan);
+  padding-left: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Готовые вопросы на пустом экране: карточки, а не строчки списка. */
+#starters button {
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+#starters button:hover {
+  border-color: var(--aist-cyan);
+  transform: translateY(-1px);
+}
+
+/* Кнопка нового диалога - главное действие в боковой панели. */
+#new-chat-button:hover {
+  color: var(--aist-cyan);
+}
+
+/* Оговорка внизу: она нужна, но не должна спорить с ответом. */
+.watermark {
+  opacity: 0.65;
+  font-size: 11px;
+}
+
+/* Знак в шапке: у логотипа прозрачный фон, подложка ему не нужна. */
+#header img {
+  background: transparent !important;
+}
+
+/* Полосы прокрутки. Системные светлые полосы на тёмном фоне бросаются в
+ * глаза сильнее, чем содержимое. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--aist-blue);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
