@@ -92,7 +92,7 @@ def httpx_mock(httpx_mock):  # type: ignore[no-redef]
 
 
 @pytest.fixture(autouse=True)
-def _isolate_settings(monkeypatch):
+def _isolate_settings(monkeypatch, request):
     """Отвязывает настройки от машины, на которой идут тесты.
 
     ``Settings`` наследует ``BaseSettings`` и потому дочитывает значения из
@@ -107,9 +107,19 @@ def _isolate_settings(monkeypatch):
     окружения проекта на время теста стираются. Тест, которому нужно
     конкретное значение, задаёт его сам — явно и без сюрпризов.
 
+    Исключение - тесты с меткой ``integration``. Они и существуют затем,
+    чтобы сходить к настоящему серверу, а окружение несёт для них доступы.
+    Без исключения ``test_kb_live.py`` пропускался ВСЕГДА, на любой машине и
+    при любых заданных ``KB_EMAIL``/``KB_PASSWORD``: фикстура стирала их
+    раньше, чем тест успевал прочитать.
+
     Args:
         monkeypatch: Штатная фикстура подмены значений.
+        request: Доступ к меткам текущего теста.
     """
+    if request.node.get_closest_marker("integration") is not None:
+        return
+
     from infrastructure.config.settings import Settings
 
     monkeypatch.setitem(Settings.model_config, "env_file", None)
