@@ -71,6 +71,25 @@ try:
 except ImportError:
     pass
 
+# pytest-httpx мокает все httpx-запросы, включая внутренние запросы
+# prefect к временному серверу (127.0.0.1:xxxxx/api/csrf-token). Когда тест
+# использует httpx_mock, teardown prefect падает "No response can be found".
+# Разрешаем реальные запросы к localhost, как это делает сам prefect.
+@pytest.fixture
+def httpx_mock(httpx_mock):  # type: ignore[no-redef]
+    orig_should_mock = httpx_mock._options.should_mock
+
+    def _should_mock(request):  # type: ignore[no-untyped-def]
+        url = str(request.url)
+        if url.startswith("http://127.0.0.1") or url.startswith(
+            "http://localhost"
+        ):
+            return False
+        return orig_should_mock(request)
+
+    httpx_mock._options.should_mock = _should_mock
+    return httpx_mock
+
 
 @pytest.fixture(autouse=True)
 def _isolate_settings(monkeypatch):
