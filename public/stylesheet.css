@@ -1,112 +1,154 @@
-/* Фирменный стиль АИст поверх темы Chainlit.
+/* Фирменный стиль AIst поверх темы Chainlit.
  *
- * Палитра взята из шаблона презентации Газстройпрома - это первоисточник,
- * а не подбор на глаз. Основные цвета заданы переменными в theme.json;
- * здесь только то, что переменными не выражается.
+ * Палитра живёт в public/theme.json: там переменные, которые Chainlit
+ * раздаёт своим компонентам. Здесь только то, чего переменными не выразить -
+ * градиент знака, форма пузырей и мелкая правка вида.
  *
- * Никаких внешних адресов: шрифты системные, изображений со стороны нет.
- * Обращение в сеть нарушило бы блокирующее требование замкнутого контура.
+ * Цвета взяты из логотипа команды: тёмно-синий надписи (#001848), голубой
+ * крыла (#00A8F8) и фиолетовый клюва (#5030F8). Тёмно-синий совпадает с
+ * фоном шаблона презентации Газстройпрома, поэтому интерфейс не выбивается
+ * из общего вида кейса.
+ *
+ * Шрифты СИСТЕМНЫЕ, загрузка с внешних адресов запрещена: демонстрация идёт
+ * без интернета, и Google Fonts оставили бы страницу без шрифта.
+ *
+ * Все селекторы ниже сверены с вёрсткой Chainlit 2.11 (frontend/dist).
+ * Правило без совпадения - молчаливо мёртвый код, поэтому «на всякий
+ * случай» здесь ничего не оставлено.
  */
 
 :root {
-  --gsp-navy: #081830;
-  --gsp-deep: #18365e;
-  --gsp-blue: #086eb6;
-  --gsp-sky: #4aafe4;
-  --gsp-pale: #b3def7;
-  --gsp-lime: #a1d71e;
+  --aist-cyan: #00a8f8;
+  --aist-blue: #0070f8;
+  --aist-violet: #5030f8;
+  --aist-sweep: linear-gradient(
+    100deg,
+    var(--aist-cyan) 0%,
+    var(--aist-blue) 52%,
+    var(--aist-violet) 100%
+  );
 }
 
-/* Фирменная полоса под шапкой: узнаваемая деталь, не мешающая чтению. */
-#header,
-header {
-  border-bottom: 2px solid var(--gsp-blue);
+/* Фирменная линия под шапкой: тот же переход, что в знаке. */
+#header {
+  position: relative;
+  border-bottom: 1px solid hsl(var(--border));
 }
 
-/* Пузырь вопроса пользователя - фирменным синим. */
-.user-message,
+#header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--aist-sweep);
+  opacity: 0.9;
+}
+
+/* Кнопка отправки. Ровный градиент вместо плоской заливки: он повторяет
+ * переход крыла в клюв на знаке. */
+#chat-submit {
+  background: var(--aist-sweep) !important;
+  border: none !important;
+  color: #fff !important;
+}
+
+#chat-submit:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+/* Поле ввода: рамка подсвечивается фирменным голубым, а не системным. */
+#message-composer {
+  border-radius: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#message-composer:focus-within {
+  border-color: var(--aist-cyan);
+  box-shadow: 0 0 0 3px hsl(199 100% 50% / 0.16);
+}
+
+/* Реплика пользователя: заливка вместо голого текста, чтобы в длинной
+ * переписке было видно, где вопрос, а где ответ. */
 [data-step-type="user_message"] .message-content {
-  background: var(--gsp-blue);
-  color: #ffffff;
+  background: hsl(var(--secondary));
+  border: 1px solid hsl(var(--border));
+  border-radius: 14px 14px 4px 14px;
+  padding: 10px 14px;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
 }
 
-/* Маркеры источников и номера пунктов - той же семьёй цветов. */
-a {
-  color: var(--gsp-blue);
+/* Ход работы агента читается как список шагов, а не как сноски. */
+.step {
+  border-left: 2px solid hsl(var(--border));
+  padding-left: 12px;
 }
 
-a:hover {
-  color: var(--gsp-deep);
+/* Боковая панель источников. Выписки из регламентов - главный предмет
+ * разговора, поэтому цитата отделена и не сливается с текстом ответа. */
+#side-view-title {
+  border-bottom: 1px solid hsl(var(--border));
+  padding-bottom: 8px;
 }
 
-/* Шаги выполнения: процесс обозначается голубым, а не серым, чтобы было
-   видно, что система работает, а не задумалась. */
-.step[data-running="true"],
-[data-step-type="tool"] {
-  border-left: 3px solid var(--gsp-sky);
+#side-view-content blockquote {
+  border-left: 3px solid var(--aist-cyan);
+  padding-left: 12px;
+  color: hsl(var(--muted-foreground));
 }
 
-/* Стартовые подсказки: карточка с фирменной рамкой вместо плоского блока. */
-#starter-button,
-.starter-button {
-  border: 1px solid var(--gsp-pale);
-  border-radius: 10px;
+/* Готовые вопросы на пустом экране: карточки, а не строчки списка. */
+#starters button {
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  transition: border-color 0.15s ease, transform 0.15s ease;
 }
 
-#starter-button:hover,
-.starter-button:hover {
-  border-color: var(--gsp-blue);
-  background: rgba(8, 110, 182, 0.06);
+#starters button:hover {
+  border-color: var(--aist-cyan);
+  transform: translateY(-1px);
 }
 
-/* Кнопка отправки - основной фирменный синий. */
-#chat-submit,
-button[type="submit"] {
-  background: var(--gsp-blue);
-  color: #ffffff;
+/* Кнопка нового диалога - главное действие в боковой панели. */
+#new-chat-button:hover {
+  color: var(--aist-cyan);
 }
 
-#chat-submit:hover,
-button[type="submit"]:hover {
-  background: var(--gsp-deep);
+/* Оговорка внизу: она нужна, но не должна спорить с ответом. */
+.watermark {
+  opacity: 0.65;
+  font-size: 11px;
 }
 
-/* Боковая панель тёмно-синяя: так шапка и список диалогов читаются как
-   единый фирменный блок, а поле чтения остаётся светлым. */
-[data-sidebar],
-.sidebar {
-  background: var(--gsp-navy);
-  color: var(--gsp-pale);
+/* Знак в шапке: у логотипа прозрачный фон, подложка ему не нужна. */
+#header img {
+  background: transparent !important;
 }
 
-/* Акцент на активном диалоге - лаймовая метка из фирменной палитры. */
-[data-sidebar] [data-active="true"] {
-  box-shadow: inset 3px 0 0 var(--gsp-lime);
+/* Полосы прокрутки. Системные светлые полосы на тёмном фоне бросаются в
+ * глаза сильнее, чем содержимое. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
 }
 
-/* Экранный диктор и клавиатура: видимый фокус обязателен, тема его гасит. */
-:focus-visible {
-  outline: 2px solid var(--gsp-blue);
-  outline-offset: 2px;
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
 }
 
-/* Уважаем системную настройку: анимации здесь служебные. */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
+*::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 999px;
 }
 
-/* Заставка страницы входа.
- *
- * Chainlit вешает на неё `brightness(0.2) grayscale(1)`: он рассчитывает,
- * что туда положат фотографию, и гасит её, чтобы не мешала форме. У нас там
- * фирменный знак, и обесцвечивать его незачем - от корпоративных цветов
- * не остаётся ничего. Приглушаем мягко и цвет сохраняем.
- */
-img.object-cover[src*="favicon"] {
-  filter: brightness(0.82) saturate(1) !important;
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--aist-blue);
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
 }

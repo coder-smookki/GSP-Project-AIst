@@ -95,13 +95,20 @@ reaction_on_message_received = false
 
 [UI]
 # Name of the assistant.
-name = "АИст"
+name = "AIst"
 
-# default_theme = "dark"
+# Тёмная по умолчанию: знак команды и вся палитра построены от
+# тёмно-синего, на светлом фоне градиент крыла теряется.
+default_theme = "dark"
 
 # Force a specific language for all users (e.g., "en-US", "he-IL", "fr-FR")
 # If not set, the browser's language will be used
-# language = "en-US"
+#
+# Русской локали в поставке Chainlit нет - она лежит своя, в
+# .chainlit/translations/ru-RU.json. Язык задан жёстко: по языку браузера
+# интерфейс уходил бы в английский на любой машине с английской системой,
+# а база знаний и ответы русские.
+language = "ru-RU"
 
 # layout = "wide"
 
@@ -129,6 +136,13 @@ custom_css = "/public/stylesheet.css"
 
 # Specify additional attributes for a custom CSS file
 # custom_css_attributes = "media=\"print\""
+
+# Подложка страницы входа. Chainlit гасит её своим фильтром, рассчитывая на
+# фотографию; у нас там фирменный знак, поэтому фильтр задан свой - иначе
+# от цветов логотипа не остаётся ничего.
+login_page_image = "/public/login-bg.jpg"
+login_page_image_filter = "brightness-90"
+login_page_image_dark_filter = "brightness-90"
 
 # Specify a JavaScript file that can be used to customize the user interface.
 # The JavaScript file can be served from the public directory.
