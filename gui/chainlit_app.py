@@ -18,7 +18,6 @@ from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
 from pydantic import BaseModel
 
-from gui import branching
 from gui.contract import (
     build_input,
     decode_aist_envelope,
@@ -68,7 +67,6 @@ def build_client(user_id: str):
             "Задайте токен в deploy/.env и перезапустите стек."
         )
     return get_client(url=AEGRA_URL, headers=headers)
-
 
 #: Значение из шаблона deploy/.env.example. Его копируют как есть, и тогда
 #: ключ подписи сессий становится публично известной строкой из репозитория.
@@ -303,13 +301,9 @@ async def on_chat_start():
     thread_id = cl.context.session.thread_id
     thread = await client.threads.create(thread_id=thread_id, if_exists="do_nothing")
 
-    root = await branching.ensure_root(thread_id, thread["thread_id"])
-
     cl.user_session.set("client", client)
     cl.user_session.set("assistant_id", assistants[0]["assistant_id"])
-    cl.user_session.set("thread_id", root.agent_thread_id)
-    cl.user_session.set("chat_id", thread_id)
-    cl.user_session.set("branch_id", root.branch_id)
+    cl.user_session.set("thread_id", thread["thread_id"])
     cl.user_session.set("user_id", user_id)
     cl.user_session.set("areas", DEFAULT_AREAS)
     cl.user_session.set("sections", DEFAULT_SECTIONS)
@@ -382,27 +376,14 @@ async def on_chat_resume(thread: ThreadDict) -> None:
     thread_id = str(thread.get("id") or cl.context.session.thread_id)
     await client.threads.create(thread_id=thread_id, if_exists="do_nothing")
 
-    # Диалог мог быть оставлен внутри ветки; продолжать надо с неё, иначе
-    # вопрос ушёл бы в исходную ленту, а ответ встал бы в ветку.
-    branch = await branching.active_branch(thread_id)
-    if branch is None:
-        branch = await branching.ensure_root(thread_id, thread_id)
-
     cl.user_session.set("client", client)
     cl.user_session.set("assistant_id", assistants[0]["assistant_id"])
-    cl.user_session.set("thread_id", branch.agent_thread_id)
-    cl.user_session.set("chat_id", thread_id)
-    cl.user_session.set("branch_id", branch.branch_id)
+    cl.user_session.set("thread_id", thread_id)
     cl.user_session.set("user_id", app_user.identifier)
     cl.user_session.set("areas", DEFAULT_AREAS)
     cl.user_session.set("sections", DEFAULT_SECTIONS)
     cl.user_session.set("show_stages", True)
-    logger.info(
-        "диалог %s восстановлен для %s, ветка %s",
-        thread_id,
-        app_user.identifier,
-        branch.label,
-    )
+    logger.info("диалог %s восстановлен для %s", thread_id, app_user.identifier)
 
 
 @cl.on_settings_update
@@ -481,21 +462,6 @@ async def on_message(message: cl.Message):
     sections: list[str] | None = cl.user_session.get("sections")
     always_db: bool = cl.user_session.get("always_answer_with_db", False)
 
-    # Первый вопрос ветки несёт историю до развилки: тред у ветки свой и
-    # пока пустой (см. gui/branching.py).
-    branch = await _current_branch()
-    history: list[dict] = []
-    if branch is not None and not branch.seeded:
-        parent = (
-            await branching.get_branch(branch.parent_branch_id)
-            if branch.parent_branch_id
-            else None
-        )
-        if parent is not None:
-            history = await branching.snapshot(
-                client, parent.agent_thread_id, branch.fork_after
-            )
-
     sidebar_key = f"sources-{msg.id or uuid.uuid4()}"
     sidebar_drawn = False
 
@@ -517,7 +483,6 @@ async def on_message(message: cl.Message):
                 sections=sections,
                 areas=areas,
                 always_answer_with_db=always_db,
-                history=history,
             ),
             stream_mode=["messages", "updates", "custom"],
             version="v1",
@@ -612,17 +577,15 @@ async def on_message(message: cl.Message):
     if not sidebar_drawn:
         await cl.ElementSidebar.set_elements([], key=sidebar_key)
 
-    actions = [
-        cl.Action(name="followup", label=label, payload={"text": label})
-        for label in followups[:4]
-    ]
-
-    if run_error is None:
-        if branch is not None and not branch.seeded:
-            await branching.mark_seeded(branch.branch_id)
-        actions.extend(await _branch_actions())
-
-    msg.actions = actions
+    if followups:
+        msg.actions = [
+            cl.Action(
+                name="followup",
+                label=label,
+                payload={"text": label},
+            )
+            for label in followups[:4]
+        ]
 
     await ensure_message_sent()
     await msg.update()
@@ -639,153 +602,6 @@ async def on_followup(action: cl.Action):
     question = cl.Message(content=text, type="user_message")
     await question.send()
     await on_message(question)
-
-
-async def _current_branch():
-    """Отдаёт активную ветку текущего диалога.
-
-    Returns:
-        Branch | None: Ветка либо ``None``, если диалог ещё не размечен -
-        например, у переписки, начатой до появления ветвления.
-    """
-    branch_id: str | None = cl.user_session.get("branch_id")
-    if not branch_id:
-        return None
-    try:
-        return await branching.get_branch(branch_id)
-    except Exception as exc:
-        logger.warning("ветка %s не прочитана: %s", branch_id, exc)
-        return None
-
-
-async def _branch_actions() -> list[cl.Action]:
-    """Собирает кнопки ветвления под ответом.
-
-    Развилка предлагается по числу сообщений в треде агента: оно и есть
-    точка, после которой ветка отделится.
-
-    Returns:
-        list[cl.Action]: Кнопка развилки и, если веток больше одной,
-        кнопка переключения. Пустой список, если состояние недоступно.
-    """
-    client = cl.user_session.get("client")
-    chat_id: str | None = cl.user_session.get("chat_id")
-    thread_id: str | None = cl.user_session.get("thread_id")
-    if client is None or not chat_id or not thread_id:
-        return []
-
-    after = await branching.count_messages(client, thread_id)
-    if not after:
-        return []
-
-    actions = [
-        cl.Action(
-            name="branch_here",
-            label="↳ Развилка отсюда",
-            payload={"after": after},
-        )
-    ]
-    if len(await branching.list_branches(chat_id)) > 1:
-        actions.append(cl.Action(name="show_branches", label="⑂ Ветки", payload={}))
-    return actions
-
-
-@cl.action_callback("branch_here")
-async def on_branch_here(action: cl.Action):
-    """Создаёт ветку от выбранного ответа и переключает на неё.
-
-    Args:
-        action: Нажатая кнопка; в полезной нагрузке точка развилки.
-
-    Returns:
-        None
-    """
-    client = cl.user_session.get("client")
-    chat_id: str | None = cl.user_session.get("chat_id")
-    parent = await _current_branch()
-    after = int(action.payload.get("after") or 0)
-
-    if client is None or not chat_id or parent is None or after <= 0:
-        await cl.Message(
-            content="Развилку сделать не удалось: нет состояния диалога."
-        ).send()
-        return
-
-    branch = await branching.fork(client, chat_id, parent, after)
-    cl.user_session.set("thread_id", branch.agent_thread_id)
-    cl.user_session.set("branch_id", branch.branch_id)
-
-    await cl.Message(
-        content=(
-            f"Вы в ветке **{branch.label}**. История до этого места сохранена, "
-            f"исходная лента (**{parent.label}**) осталась нетронутой - "
-            "к ней можно вернуться кнопкой «Ветки».\n\n"
-            "Задайте следующий вопрос: он уйдёт в новую ветку."
-        ),
-        actions=[
-            cl.Action(
-                name="switch_branch",
-                label=f"← {parent.label}",
-                payload={"branch_id": parent.branch_id},
-            )
-        ],
-    ).send()
-
-
-@cl.action_callback("show_branches")
-async def on_show_branches(action: cl.Action):
-    """Показывает дерево веток и кнопки перехода.
-
-    Args:
-        action: Нажатая кнопка; полезная нагрузка не используется.
-
-    Returns:
-        None
-    """
-    chat_id: str | None = cl.user_session.get("chat_id")
-    if not chat_id:
-        return
-    branches = await branching.list_branches(chat_id)
-    if not branches:
-        return
-
-    await cl.Message(
-        content="**Ветки диалога**\n\n" + branching.describe(branches),
-        actions=[
-            cl.Action(
-                name="switch_branch",
-                label=("▸ " if item.is_active else "") + item.label,
-                payload={"branch_id": item.branch_id},
-            )
-            for item in branches
-        ],
-    ).send()
-
-
-@cl.action_callback("switch_branch")
-async def on_switch_branch(action: cl.Action):
-    """Переключает диалог на выбранную ветку.
-
-    Args:
-        action: Нажатая кнопка; в полезной нагрузке идентификатор ветки.
-
-    Returns:
-        None
-    """
-    chat_id: str | None = cl.user_session.get("chat_id")
-    branch_id = str(action.payload.get("branch_id") or "")
-    if not chat_id or not branch_id:
-        return
-
-    branch = await branching.get_branch(branch_id)
-    if branch is None:
-        await cl.Message(content="Ветка не найдена.").send()
-        return
-
-    await branching.activate(chat_id, branch.branch_id)
-    cl.user_session.set("thread_id", branch.agent_thread_id)
-    cl.user_session.set("branch_id", branch.branch_id)
-    await cl.Message(content=f"Продолжаем в ветке **{branch.label}**.").send()
 
 
 _password_router = APIRouter()
