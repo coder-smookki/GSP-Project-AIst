@@ -12,6 +12,14 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      # Продублировано в самом сервисе: образ инициализирует базу только при
+      # первом запуске на пустом томе, и если пароль не задан, контейнер
+      # выходит с «Database is uninitialized», healthcheck не зеленеет, а
+      # агент и интерфейс не стартуют вовсе - оба ждут healthy.
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в deploy/.env}
+      - POSTGRES_DB=${POSTGRES_DB:-aegra}
     ports:
       # Только на петлевой интерфейс: в базе лежат пароли пользователей
       # интерфейса и вся переписка.
@@ -30,12 +38,11 @@ services:
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
     ports:
-      # Только на петлевой интерфейс. Aegra работает без аутентификации
-      # (в логах её собственный user_id=anonymous), поэтому доступный по
-      # сети порт 2026 позволяет кому угодно запускать граф и, подставив
-      # configurable.user_id, читать чужую долгосрочную память. Интерфейс
-      # ходит к ней по внутренней сети docker, host-порт нужен только для
-      # /health и отладки.
+      # Только на петлевой интерфейс. Аутентификация включена
+      # (deploy/auth.py): без токена доверенного посредника Aegra не
+      # отвечает, а личность берётся из заголовка, а не из тела запроса.
+      # Петля оставлена как второй рубеж: интерфейс ходит к агенту по
+      # внутренней сети docker, host-порт нужен только для /health и отладки.
       - "127.0.0.1:${AEGRA_PORT:-2026}:2026"
     env_file:
       - .env
@@ -50,6 +57,9 @@ services:
       - QDRANT_COLLECTION=${QDRANT_COLLECTION:-aist_chunks}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-bge-m3}
       - RERANK_ENDPOINT=${RERANK_ENDPOINT:-http://host.docker.internal:8899}
+      # Без токена Aegra отказывает всем (deploy/auth.py). Требуем его прямо
+      # здесь, чтобы это выяснялось при старте стека, а не первым 503.
+      - AEGRA_API_TOKEN=${AEGRA_API_TOKEN:?задайте AEGRA_API_TOKEN в deploy/.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,14 +74,24 @@ services:
       dockerfile: deploy/Dockerfile.gui
     restart: unless-stopped
     ports:
-      - "${GUI_PORT:-8000}:8000"
+      # По умолчанию только петля: в интерфейсе вся переписка и вход по
+      # паролю, а демонстрация идёт с той же машины. Чтобы открыть наружу
+      # осознанно, задайте GUI_PORT_MAP="0.0.0.0:8000:8000".
+      - "${GUI_PORT_MAP:-127.0.0.1:${GUI_PORT:-8000}:8000}"
     env_file:
       - .env
     environment:
       - AEGRA_URL=${AEGRA_URL:-http://aegra:2026}
-      - GUI_DATABASE_URL=${GUI_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/chainlit}
+      # Пароль подставляется из POSTGRES_PASSWORD, а не зашит строкой:
+      # с захардкоженным «postgres» интерфейс переставал подключаться,
+      # как только у базы задавали настоящий пароль.
+      - GUI_DATABASE_URL=${GUI_DATABASE_URL:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres:5432/chainlit}
+      - CHAINLIT_AUTH_SECRET=${CHAINLIT_AUTH_SECRET:?задайте CHAINLIT_AUTH_SECRET в deploy/.env}
+      # Пусто - страница регистрации отдаёт 404, регистрации нет.
+      - REGISTRATION_CODE=${REGISTRATION_CODE:-}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?задайте ADMIN_PASSWORD в deploy/.env}
+      - AEGRA_API_TOKEN=${AEGRA_API_TOKEN:?задайте AEGRA_API_TOKEN в deploy/.env}
     depends_on:
       postgres:
         condition: service_healthy

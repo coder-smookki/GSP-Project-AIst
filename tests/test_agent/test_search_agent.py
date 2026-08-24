@@ -67,14 +67,17 @@ class _RecordingSearch(MockSearch):
         self._hits = hits
         self._error = error
 
-    async def query(self, query, sections=None, limit=None, areas=None):
+    async def query(self, query, sections=None, limit=None, areas=None, docs=None):
         self.queries.append(query)
         self.sections = sections
+        self.docs = docs
         if self._error:
             raise SearchUnavailable("поиск лежит")
         if self._hits is not None:
             return self._hits
-        return await super().query(query, sections=sections, limit=limit, areas=areas)
+        return await super().query(
+            query, sections=sections, limit=limit, areas=areas, docs=docs
+        )
 
 
 class TestSearchAgent:
@@ -164,6 +167,22 @@ class TestSearchAgent:
         app = self._agent(model, search)
         await app.ainvoke({"query": "СОУТ", "rounds": 0, "sections": ["procedura"]})
         assert search.sections == ["procedura"]
+
+    @pytest.mark.asyncio
+    async def test_selected_documents_reach_search(self):
+        """Выбранные документы доходят до поиска через состояние ветки.
+
+        Третий уровень дерева областей знаний бесполезен, если отбор теряется
+        по дороге к веточному агенту: пользователь ограничил бы выдачу одним
+        регламентом, а поиск всё равно шёл бы по всей базе.
+        """
+        model = _ScriptedModel(_tool_call("СОУТ"))
+        search = _RecordingSearch()
+        app = self._agent(model, search)
+        await app.ainvoke(
+            {"query": "СОУТ", "rounds": 0, "docs": ["Р-У2-59", "Р-У2-23"]}
+        )
+        assert search.docs == ["Р-У2-59", "Р-У2-23"]
 
     @pytest.mark.asyncio
     async def test_prompt_carries_subquery_and_rounds(self):

@@ -23,7 +23,7 @@ from pathlib import Path
 # а не корень репозитория, и импорт `eval` и `infrastructure` падает.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval.cache import DEFAULT_DIR, ResultCache, _print_list, _print_ab_list, _print_list
+from eval.cache import DEFAULT_DIR, ResultCache, _print_ab_list, _print_list
 from eval.config import RunConfig, Variant
 from eval.golden import DEFAULT_GOLDEN, GoldenSetError
 from eval.result import RunResult
@@ -235,9 +235,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="подробный лог")
     sub = parser.add_subparsers(dest="command", required=True, title="команды")
 
-    run_p = sub.add_parser(
-        "run", help="качество поиска и ответов на золотом наборе"
-    )
+    run_p = sub.add_parser("run", help="качество поиска и ответов на золотом наборе")
     run_p.add_argument(
         "--golden", default=str(DEFAULT_GOLDEN), help="путь к золотому набору"
     )
@@ -349,7 +347,7 @@ def build_parser() -> argparse.ArgumentParser:
     tune_p.add_argument(
         "--params",
         required=True,
-        help='JSON-спека сетки: \'{"retrieval_top_k": [3, 5, 8]}\'',
+        help="JSON-спека сетки: '{\"retrieval_top_k\": [3, 5, 8]}'",
     )
     tune_p.add_argument(
         "--objective",

@@ -76,6 +76,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="разобрать корпус и посчитать чанки, ничего не записывая",
     )
     parser.add_argument(
+        "--qa-index",
+        action="store_true",
+        help=(
+            "QA-индексация: приписать каждому фрагменту вопросы, на которые "
+            "он отвечает, и кодировать вектор по ним (см. "
+            "infrastructure/ingest/qa_index.py). Точность поиска выше, но "
+            "прогон дольше: на каждый фрагмент уходит вызов модели"
+        ),
+    )
+    parser.add_argument(
         "--verbose", action="store_true", help="подробный журнал работы"
     )
     return parser
@@ -157,6 +167,16 @@ async def run(args: argparse.Namespace) -> int:
                 await client.close()
             return EXIT_FAILED
 
+    qa_model = None
+    if args.qa_index and not args.dry_run:
+        from infrastructure.config.model_registry import get_model
+
+        qa_model = get_model("default")
+        console.print(
+            "[cyan]QA-индексация включена:[/cyan] на каждый фрагмент уходит "
+            "вызов модели, прогон будет заметно дольше"
+        )
+
     sync_tag = f"run-{int(time.time())}"
 
     known_hashes: dict[str, str] | None = None
@@ -180,6 +200,7 @@ async def run(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
             progress=show,
             known_hashes=known_hashes,
+            qa_model=qa_model,
         )
 
         if (
@@ -188,7 +209,23 @@ async def run(args: argparse.Namespace) -> int:
             and not report.failed
             and store is not None
         ):
-            report.switched_from = await store.switch_generation(collection)
+            # Отсутствие ошибок ещё не значит, что поколение годное. Прогон
+            # по пустому источнику или с --limit заканчивается без единой
+            # ошибки, и переключение алиаса на такое поколение уводило всю
+            # базу знаний в офлайн: поиск начинал честно отвечать «в базе
+            # знаний информации нет» вообще на всё.
+            if report.total_chunks <= 0:
+                console.print(
+                    "[yellow]Алиас не переключён:[/yellow] поколение пустое, "
+                    "загружено 0 фрагментов"
+                )
+            elif args.limit:
+                console.print(
+                    "[yellow]Алиас не переключён:[/yellow] прогон был "
+                    f"ограничен --limit {args.limit}, поколение неполное"
+                )
+            else:
+                report.switched_from = await store.switch_generation(collection)
         elif args.switch_alias and report.failed:
             console.print(
                 "[yellow]Алиас не переключён:[/yellow] в прогоне были ошибки, "

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -39,6 +40,73 @@ def _clean(text: str) -> str:
         str: Строка без ведущих и завершающих пробелов.
     """
     return text.strip()
+
+
+def parse_plan_json(text: str) -> SearchPlan | None:
+    """Разбирает план из свободного текста модели.
+
+    Запасной путь на случай, когда структурированный вывод не сработал.
+    Модели по-разному оформляют JSON: заворачивают в ограждение ```json,
+    добавляют пояснение до или после, а gpt-oss при выключенных
+    размышлениях возвращает пустую строку. Поэтому JSON вырезается из
+    текста, а не парсится целиком.
+
+    Args:
+        text: Ответ модели как есть.
+
+    Returns:
+        SearchPlan | None: Разобранный план либо ``None``, если в тексте
+        нет пригодного JSON.
+    """
+    if not text or not text.strip():
+        return None
+
+    body = text.strip()
+    if "```" in body:
+        parts = body.split("```")
+        body = parts[1] if len(parts) > 1 else body
+        body = body.removeprefix("json").strip()
+
+    start, end = body.find("{"), body.rfind("}")
+    if start < 0 or end <= start:
+        return None
+
+    try:
+        data = json.loads(body[start : end + 1])
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    mode = data.get("mode")
+    if mode not in ("chat", "kb"):
+        return None
+    raw = data.get("subqueries") or []
+    if not isinstance(raw, list):
+        return None
+    return SearchPlan(mode=mode, subqueries=[str(q) for q in raw if str(q).strip()])
+
+
+async def _plan_via_text(model, question: str, cap: int) -> SearchPlan | None:
+    """Просит план обычным сообщением, без структурированного вывода.
+
+    Args:
+        model: Клиент модели.
+        question: Исходный запрос пользователя.
+        cap: Предел числа подзапросов.
+
+    Returns:
+        SearchPlan | None: План либо ``None``, если и так не вышло.
+    """
+    try:
+        answer = await model.ainvoke(
+            messages=[
+                SystemMessage(PLAN_PROMPT.format(max_subqueries=cap)),
+                HumanMessage(question),
+            ]
+        )
+    except Exception as exc:
+        logger.warning("запасной разбор плана не выполнен: %s", exc)
+        return None
+    return parse_plan_json(str(getattr(answer, "content", "") or ""))
 
 
 async def plan_search(
@@ -79,11 +147,21 @@ async def plan_search(
             ]
         )
     except Exception as exc:
-        logger.warning("планировщик не выполнен, ищем по исходному вопросу: %s", exc)
-        return SearchPlan(mode="kb", subqueries=[_clean(question)])
+        # Структурированный вывод ломается по-разному у разных моделей: у
+        # gpt-oss при выключенных размышлениях ответ приходит пустым, и
+        # разбор падает с «Invalid json output:» без содержимого. Раньше это
+        # молча уводило на поиск по исходному вопросу, то есть декомпозиция
+        # не работала вовсе, а в логе оставалось одно предупреждение. Пробуем
+        # получить план обычным сообщением: разбор JSON из текста переживает
+        # и ограждения ```json, и пояснения вокруг.
+        logger.warning("структурированный план не получен (%s), пробуем текстом", exc)
+        plan = await _plan_via_text(model, question, cap)
 
     if plan is None:
-        logger.warning("планировщик вернул пусто — ищем по исходному вопросу")
+        logger.warning(
+            "планировщик не дал плана: декомпозиция пропущена, "
+            "ищем по исходному вопросу целиком"
+        )
         return SearchPlan(mode="kb", subqueries=[_clean(question)])
 
     if plan.mode == "chat":

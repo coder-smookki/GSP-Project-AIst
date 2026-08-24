@@ -34,8 +34,25 @@ def chunk_payload(
     areas: list[str],
     sync_tag: str,
     content_hash: str = "",
+    chunk_total: int = 0,
 ) -> dict[str, Any]:
+    """Собирает полезную нагрузку точки индекса.
+
+    Args:
+        chunk: Фрагмент документа.
+        areas: Области знаний документа.
+        sync_tag: Метка прогона индексации.
+        content_hash: Отпечаток содержимого документа.
+        chunk_total: Сколько точек всего должно быть у документа. Нужен, чтобы
+            отличить оборвавшуюся загрузку от завершённой: при первой загрузке
+            все записанные точки несут ОДИН отпечаток, поэтому по отпечаткам
+            недописанный документ неотличим от целого.
+
+    Returns:
+        dict[str, Any]: Полезная нагрузка точки.
+    """
     return {
+        "chunk_total": chunk_total,
         "chunk_id": chunk.chunk_id,
         "doc_id": chunk.doc_id,
         "doc_code": chunk.doc_code,
@@ -79,7 +96,30 @@ class QdrantStore:
         await assert_server_supported(self._client)
 
         if await self._client.collection_exists(name):
-            logger.info("коллекция %s уже существует, создание пропущено", name)
+            # Размерность вектора прошита в схему коллекции и на лету не
+            # меняется. Раньше существующая коллекция принималась как есть, и
+            # смена модели эмбеддингов проходила незамеченной: документы
+            # пропускались как неизменившиеся (модель не входит в их
+            # отпечаток), запись не выполнялась, а падало это позже и в другом
+            # месте - на первом же запросе с «Vector dimension error: expected
+            # dim: 2560, got 1024». Связать такое сообщение с индексацией
+            # трудно, поэтому проверяем сразу и говорим, что делать.
+            existing = await self._client.get_collection(name)
+            vectors = existing.config.params.vectors or {}
+            current = getattr(vectors.get(DENSE_VECTOR), "size", None)
+            if current is not None and current != dim:
+                raise ValueError(
+                    f"коллекция {name} собрана под вектор размерности {current}, "
+                    f"а текущий эмбеддер даёт {dim}. Размерность в схеме "
+                    f"коллекции не меняется: соберите новое поколение "
+                    f"(--generation N) и переключите алиас (--switch-alias), "
+                    f"либо верните прежнюю модель эмбеддингов"
+                )
+            logger.info(
+                "коллекция %s уже существует, размерность %s совпадает",
+                name,
+                current,
+            )
         else:
             await self._client.create_collection(
                 collection_name=name,
@@ -136,9 +176,15 @@ class QdrantStore:
                     id=chunk.point_id(),
                     vector={
                         DENSE_VECTOR: vector,
-                        SPARSE_VECTOR: bm25_document(chunk.text),
+                        # BM25 строится по тому же тексту, что и плотный
+                        # вектор: иначе каналы гибрида смотрят на разное.
+                        SPARSE_VECTOR: bm25_document(
+                            chunk.text_indexed or chunk.text
+                        ),
                     },
-                    payload=chunk_payload(chunk, areas, sync_tag, content_hash),
+                    payload=chunk_payload(
+                        chunk, areas, sync_tag, content_hash, len(chunks)
+                    ),
                 )
                 for chunk, vector in zip(batch, batch_vectors, strict=True)
             ]
@@ -188,6 +234,29 @@ class QdrantStore:
         return None
 
     async def switch_generation(self, collection: str) -> str | None:
+        # Алиас и коллекция делят одно пространство имён: Qdrant не даст
+        # создать алиас с именем существующей коллекции и ответит сырым
+        # «409 Conflict: Collection ... already exists». По такому сообщению
+        # причину не угадать, а она в настройке: QDRANT_COLLECTION задаёт имя
+        # АЛИАСА, а не поколения. Если туда записать готовое имя коллекции
+        # (скажем, aist_chunks_v2), поколение соберётся как aist_chunks_v2_v1,
+        # а переключение упадёт.
+        # Проверяется СПИСОК настоящих коллекций, а не collection_exists:
+        # тот разрешает алиасы и отвечает True на имя алиаса. Из-за этого
+        # проверка срабатывала ложно на каждом переключении после первого
+        # поколения - то есть блокировала ровно тот сценарий, ради которого
+        # алиасы и заведены.
+        listing = await self._client.get_collections()
+        existing = {item.name for item in listing.collections}
+        if self._alias in existing:
+            raise ValueError(
+                f"нельзя создать алиас {self._alias}: коллекция с таким именем "
+                f"уже существует. QDRANT_COLLECTION задаёт имя алиаса, а не "
+                f"поколения; поколения называются <алиас>_v1, <алиас>_v2. "
+                f"Поставьте QDRANT_COLLECTION={self._alias.rsplit('_v', 1)[0]} "
+                f"и выберите поколение флагом --generation"
+            )
+
         previous = await self.current_generation()
         operations: list[models.AliasOperations] = []
         if previous:

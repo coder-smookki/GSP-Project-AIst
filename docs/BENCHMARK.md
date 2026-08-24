@@ -6,37 +6,86 @@
 
 ## Рекомендации
 
-**Текущий лидер:** `LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2` (граф `emb-qwen3-4b`) — hit@1/3/5 = 0.829/0.927/0.927, MRR = 0.874.
+**Текущий лидер:** `LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10, pref=30, rrf=60, min_rel=0.55, колл.=aist_chunks_v1` (граф `base`) — hit@1/3/5 = 0.833/1.000/1.000, MRR = 0.917.
 
 **Значимые эффекты (p < 0.05):**
+- `base` → `prefetch20` (_кандидаты: 10 → 20_): **неоднозначно** — hit@3: 0.917→0.880 (p=0.008, ухудшение); hit@5: 0.917→0.951 (p=0.004, улучшение); not_found: 0.083→0.049 (p=0.004, улучшение); лат., мед.: 0.308→0.453 (p=0.002, ухудшение); лат., p95: 0.345→0.527 (p=0.002, ухудшение)
+- `base` → `tables-md` (_коллекция: aist_chunks → aist_chunks_v2_): **хуже** — лат., мед.: 0.181→0.192 (p=0.010, ухудшение); лат., p95: 0.216→0.223 (p=0.010, ухудшение)
 - `qwen3.8:27b-mlx` → `gemma4:e2b-mlx` (_LLM: qwen3.8:27b-mlx → gemma4:e2b-mlx_): **лучше** — лат., мед.: 0.305→0.294 (p=0.000, улучшение); лат., p95: 0.472→0.326 (p=0.000, улучшение)
-- `prod` → `opt` (_prefetch: 30 → 10; мин. релевантность: 0.55 → 0.2_): **лучше** — mrr: 0.776→0.858 (p=0.039, улучшение); лат., мед.: 0.310→0.304 (p=0.000, улучшение); лат., p95: 0.444→0.354 (p=0.000, улучшение)
+- `prod` → `opt` (_мин. релевантность: 0.55 → 0.2; prefetch: 30 → 10_): **лучше** — mrr: 0.776→0.858 (p=0.039, улучшение); лат., мед.: 0.310→0.304 (p=0.000, улучшение); лат., p95: 0.444→0.354 (p=0.000, улучшение)
 - `rerank-on` → `rerank-off` (_реранк: вкл → выкл_): **неоднозначно** — hit@1: 0.732→0.561 (p=0.039, ухудшение); mrr: 0.776→0.649 (p=0.028, ухудшение); лат., мед.: 0.297→0.138 (p=0.000, улучшение); лат., p95: 0.345→0.142 (p=0.000, улучшение)
 
-Проверено A/B-сравнений: 6, из них без значимых различий: 3.
+Проверено A/B-сравнений: 9, из них без значимых различий: 4.
 
 ## Лидерборд
 
 Каждая строка — уникальная конфигурация (модель, эмбеддер, top_k, реранк), агрегированная по всем прогонам её вариантов. Сортировка — по MRR. Конфигурации разных графов агента не смешиваются: у каждого графа своя секция и свой лидер.
 
-### Граф: `emb-qwen3-4b`
-
-| конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | лат., мед. | отказ | кол-во | заметка |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.326 | 1.000 | 1 | максимальное качество |
-| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.3, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.325 | 1.000 | 1 | самый быстрый |
-| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=20, rrf=40, min_rel=0.3, колл.=aist_chunks_v2 | 0.829 | 0.902 | 0.927 | 0.872 | 0.073 | 0.328 | 1.000 | 1 | — |
 ### Граф: `base`
 
 | конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | лат., мед. | отказ | кол-во | заметка |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| LLM=gpt-oss:20b, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.307 | 1.000 | 1 | максимальное качество |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10, pref=30, rrf=60, min_rel=0.55, колл.=aist_chunks_v1 | 0.833 | 1.000 | 1.000 | 0.917 | 0.000 | 0.181 | 0.000 | 1 | максимальное качество |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.835 | 0.927 | 0.927 | 0.879 | 0.073 | 0.314 | 0.539 | 23 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=20, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.837 | 0.911 | 0.923 | 0.877 | 0.077 | 0.269 | 0.986 | 7 | — |
+### Граф: `emb-qwen3-4b`
+
+| конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | лат., мед. | отказ | кол-во | заметка |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=15, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.951 | 0.876 | 0.049 | 0.406 | 0.500 | 1 | максимальное качество |
+### Граф: `react-branch-v1`
+
+| конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | лат., мед. | отказ | кол-во | заметка |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.327 | 1.000 | 1 | максимальное качество, самый быстрый |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.328 | 0.750 | 2 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.324 | 0.500 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.320 | 0.500 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.5, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.316 | 0.500 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.3, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.318 | 0.333 | 3 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.4, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.316 | 0.300 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.2, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.316 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.1, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.328 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=8, rrf=40, min_rel=0.3, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.316 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=5, rrf=40, min_rel=0.3, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.327 | 0.000 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=20, pref=20, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.831 | 0.880 | 0.951 | 0.874 | 0.049 | 0.460 | 0.464 | 11 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=20, rrf=40, min_rel=0.45, колл.=aist_chunks_v3 | 0.829 | 0.902 | 0.927 | 0.872 | 0.073 | 0.324 | 1.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=20, rrf=40, min_rel=0.3, колл.=aist_chunks_v2 | 0.829 | 0.902 | 0.927 | 0.872 | 0.073 | 0.328 | 1.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=20, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2 | 0.829 | 0.878 | 0.951 | 0.872 | 0.049 | 0.468 | 0.500 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=15, rrf=40, min_rel=0.3, колл.=aist_chunks_v2 | 0.829 | 0.902 | 0.927 | 0.872 | 0.073 | 0.308 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=12, rrf=40, min_rel=0.3, колл.=aist_chunks_v2 | 0.829 | 0.902 | 0.927 | 0.872 | 0.073 | 0.316 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10, pref=30, rrf=60, min_rel=0.55, колл.=aist_chunks_v2 | 0.750 | 1.000 | 1.000 | 0.861 | 0.000 | 0.192 | 0.000 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=60, min_rel=0.45, колл.=aist_chunks | 0.826 | 0.893 | 0.893 | 0.858 | 0.107 | 0.267 | 0.900 | 1 | — |
 | LLM=qwen3.8:27b-mlx, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.305 | 1.000 | 1 | — |
 | LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=60, min_rel=0.2, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.304 | 1.000 | 1 | — |
 | LLM=qwen3.6:35b-a3b-nvfp4, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.303 | 0.900 | 1 | — |
 | LLM=qwen3.5:4b-mlx, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.295 | 0.800 | 1 | — |
 | LLM=gemma4:e2b-mlx, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.294 | 0.600 | 1 | — |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.295 | 0.550 | 2 | — |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.5, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.284 | 0.200 | 1 | — |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.4, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.282 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.35, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.283 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.3, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.269 | 0.000 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=15, pref=20, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.818 | 0.893 | 0.909 | 0.857 | 0.091 | 0.333 | 0.000 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=20, rrf=40, min_rel=0.6, колл.=aist_chunks | 0.818 | 0.884 | 0.901 | 0.855 | 0.099 | 0.252 | 0.600 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=20, rrf=40, min_rel=0.3, колл.=aist_chunks | 0.818 | 0.884 | 0.901 | 0.855 | 0.099 | 0.267 | 0.000 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=20, rrf=20, min_rel=0.45, колл.=aist_chunks | 0.818 | 0.884 | 0.901 | 0.855 | 0.099 | 0.264 | 0.000 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=8, реранк=вкл, канд.=10, pref=20, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.818 | 0.884 | 0.901 | 0.855 | 0.099 | 0.249 | 0.000 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=3, реранк=вкл, канд.=10, pref=20, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.818 | 0.884 | 0.884 | 0.851 | 0.116 | 0.263 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=5, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2 | 0.805 | 0.878 | 0.902 | 0.848 | 0.098 | 0.250 | 0.500 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=25, rrf=40, min_rel=0.3, колл.=aist_chunks_v2 | 0.805 | 0.878 | 0.902 | 0.848 | 0.098 | 0.317 | 0.000 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=30, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.785 | 0.860 | 0.884 | 0.826 | 0.116 | 0.254 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=60, min_rel=0.55, колл.=aist_chunks_v2 | 0.780 | 0.878 | 0.878 | 0.825 | 0.122 | 0.327 | 0.600 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=8, rrf=60, min_rel=0.55, колл.=aist_chunks_v2 | 0.780 | 0.878 | 0.878 | 0.825 | 0.122 | 0.316 | 0.600 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=5, rrf=60, min_rel=0.55, колл.=aist_chunks_v2 | 0.780 | 0.878 | 0.878 | 0.825 | 0.122 | 0.324 | 0.600 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=15, rrf=60, min_rel=0.55, колл.=aist_chunks_v2 | 0.780 | 0.854 | 0.878 | 0.823 | 0.122 | 0.326 | 0.600 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=12, rrf=60, min_rel=0.55, колл.=aist_chunks_v2 | 0.780 | 0.854 | 0.878 | 0.823 | 0.122 | 0.333 | 0.600 | 1 | — |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.55, колл.=aist_chunks | 0.756 | 0.878 | 0.878 | 0.809 | 0.122 | 0.282 | 0.500 | 1 | — |
+| LLM=gemma4:26b-nvfp4, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=5, pref=20, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.769 | 0.851 | 0.851 | 0.807 | 0.149 | 0.195 | 0.000 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=25, rrf=60, min_rel=0.55, колл.=aist_chunks_v2 | 0.756 | 0.829 | 0.854 | 0.799 | 0.146 | 0.334 | 0.600 | 1 | — |
+| LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=3, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2 | 0.732 | 0.780 | 0.927 | 0.785 | 0.073 | 0.218 | 0.500 | 1 | самый быстрый |
 | LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10, pref=30, rrf=60, min_rel=0.55, колл.=aist_chunks | 0.732 | 0.805 | 0.854 | 0.776 | 0.146 | 0.303 | 1.000 | 2 | — |
+| LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10, pref=30, rrf=60, min_rel=0.55, колл.=aist_chunks | 0.732 | 0.805 | 0.854 | 0.776 | 0.146 | 0.292 | 0.500 | 1 | — |
 | LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=выкл, канд.=10, pref=30, rrf=60, min_rel=0.55, колл.=aist_chunks | 0.561 | 0.732 | 0.780 | 0.649 | 0.220 | 0.138 | 1.000 | 1 | самый быстрый, реранк выкл |
 
 ## Лучшие по графам
@@ -45,8 +94,9 @@
 
 | граф | лучшая конфигурация | hit@1 | hit@3 | hit@5 | MRR | not_found | кол-во | заметка |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `emb-qwen3-4b` | LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 1 | общий лидер по MRR |
-| `base` | LLM=gpt-oss:20b, emb=bge-m3, top_k=3, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 1 | — |
+| `base` | LLM=gpt-oss:20b, emb=bge-m3, top_k=5, реранк=вкл, канд.=10, pref=30, rrf=60, min_rel=0.55, колл.=aist_chunks_v1 | 0.833 | 1.000 | 1.000 | 0.917 | 0.000 | 1 | общий лидер по MRR |
+| `emb-qwen3-4b` | LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=15, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2 | 0.829 | 0.927 | 0.951 | 0.876 | 0.049 | 1 | — |
+| `react-branch-v1` | LLM=gpt-oss:20b, emb=qwen3-emb, top_k=5, реранк=вкл, канд.=10, pref=10, rrf=40, min_rel=0.45, колл.=aist_chunks_v2_v2 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 1 | — |
 
 ## Как пользоваться
 
@@ -149,293 +199,6 @@
 Точки сетки остаются в «Истории результатов», но в лидерборд не попадают —
 для них есть раздел «Итоги тюнинга по сетке».
 
-## Итоги тюнинга по сетке
-
-Сетка из 81 точек (граф `base`), цель — `hit@1` (max). Точки кэшированы в `eval/results/`; в лидерборд они не попадают, потому что это инструментальные измерения — сводка здесь.
-
-| параметр | значения |
-| --- | --- |
-| `retrieval_top_k` | 3, 5, 8 |
-| `retrieval_prefetch` | 20, 30, 50 |
-| `retrieval_rrf_k` | 40, 60, 80 |
-| `retrieval_min_relevance` | 0.3, 0.55, 0.7 |
-
-**Лучшая точка** (по `hit@1`): `retrieval_top_k=3;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3`.
-
-| метрика | значение |
-| --- | --- |
-| hit@1 | 0.805 |
-| hit@3 | 0.902 |
-| hit@5 | 0.902 |
-| mrr | 0.850 |
-| not_found | 0.098 |
-| latency_median | 0.296 |
-
-### `retrieval_top_k`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | 27 | 0.580* | 0.645* | 0.645 | 0.609 | 0.355 | 0.284* |
-| 5 | 27 | 0.580 | 0.645 | 0.668 | 0.615 | 0.332 | 0.286 |
-| 8 | 27 | 0.580 | 0.645 | 0.670* | 0.615* | 0.328* | 0.292 |
-
-### `retrieval_prefetch`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 20 | 27 | 0.602* | 0.667* | 0.678* | 0.634* | 0.322* | 0.286 |
-| 30 | 27 | 0.585 | 0.634 | 0.656 | 0.612 | 0.344 | 0.291 |
-| 50 | 27 | 0.553 | 0.634 | 0.650 | 0.592 | 0.348 | 0.285* |
-
-### `retrieval_rrf_k`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 40 | 27 | 0.580* | 0.645* | 0.662* | 0.613 | 0.337* | 0.287 |
-| 60 | 27 | 0.580 | 0.645 | 0.661 | 0.613* | 0.339 | 0.288 |
-| 80 | 27 | 0.580 | 0.645 | 0.660 | 0.613 | 0.339 | 0.287* |
-
-### `retrieval_min_relevance`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.3 | 27 | 0.772* | 0.870* | 0.894* | 0.822* | 0.105* | 0.287 |
-| 0.55 | 27 | 0.724 | 0.821 | 0.846 | 0.773 | 0.154 | 0.287* |
-| 0.7 | 27 | 0.244 | 0.244 | 0.244 | 0.244 | 0.756 | 0.288 |
-
-**Направления:** `retrieval_top_k` — не влияет; `retrieval_prefetch` → `20`; `retrieval_rrf_k` — не влияет; `retrieval_min_relevance` → `0.3`.
-
-## Итоги тюнинга по сетке
-
-Сетка из 24 точек (граф `base`), цель — `hit@1` (max). Точки кэшированы в `eval/results/`; в лидерборд они не попадают, потому что это инструментальные измерения — сводка здесь.
-
-| параметр | значения |
-| --- | --- |
-| `retrieval_min_relevance` | 0.1, 0.2, 0.25, 0.3 |
-| `retrieval_prefetch` | 10, 15, 20 |
-| `retrieval_top_k` | 3, 5 |
-
-**Лучшая точка** (по `hit@1`): `retrieval_min_relevance=0.1;retrieval_prefetch=10;retrieval_top_k=3`.
-
-| метрика | значение |
-| --- | --- |
-| hit@1 | 0.805 |
-| hit@3 | 0.927 |
-| hit@5 | 0.927 |
-| mrr | 0.858 |
-| not_found | 0.073 |
-| latency_median | 0.301 |
-
-### `retrieval_min_relevance`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.1 | 6 | 0.805* | 0.911* | 0.919* | 0.854* | 0.081* | 0.287 |
-| 0.2 | 6 | 0.805 | 0.911 | 0.919 | 0.854 | 0.081 | 0.283* |
-| 0.25 | 6 | 0.805 | 0.911 | 0.919 | 0.854 | 0.081 | 0.284 |
-| 0.3 | 6 | 0.805 | 0.911 | 0.919 | 0.854 | 0.081 | 0.283 |
-
-### `retrieval_prefetch`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 10 | 8 | 0.805* | 0.927* | 0.927* | 0.858* | 0.073* | 0.286 |
-| 15 | 8 | 0.805 | 0.902 | 0.915 | 0.853 | 0.085 | 0.283* |
-| 20 | 8 | 0.805 | 0.902 | 0.915 | 0.853 | 0.085 | 0.284 |
-
-### `retrieval_top_k`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | 12 | 0.805* | 0.911* | 0.911 | 0.852 | 0.089 | 0.285 |
-| 5 | 12 | 0.805 | 0.911 | 0.927* | 0.856* | 0.073* | 0.283* |
-
-**Направления:** `retrieval_min_relevance` — не влияет; `retrieval_prefetch` — не влияет; `retrieval_top_k` — не влияет.
-
-## Итоги тюнинга по сетке
-
-Сетка из 6 точек (граф `base`), цель — `hit@1` (max). Точки кэшированы в `eval/results/`; в лидерборд они не попадают, потому что это инструментальные измерения — сводка здесь.
-
-| параметр | значения |
-| --- | --- |
-| `retrieval_min_relevance` | 0.3, 0.35, 0.4, 0.45, 0.5, 0.55 |
-
-**Лучшая точка** (по `hit@1`): `retrieval_min_relevance=0.3`.
-
-| метрика | значение |
-| --- | --- |
-| hit@1 | 0.805 |
-| hit@3 | 0.927 |
-| hit@5 | 0.927 |
-| mrr | 0.858 |
-| not_found | 0.073 |
-| latency_median | 0.269 |
-
-### `retrieval_min_relevance`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.3 | 1 | 0.805* | 0.927* | 0.927* | 0.858* | 0.073* | 0.269* |
-| 0.35 | 1 | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.283 |
-| 0.4 | 1 | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.282 |
-| 0.45 | 1 | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.284 |
-| 0.5 | 1 | 0.805 | 0.927 | 0.927 | 0.858 | 0.073 | 0.284 |
-| 0.55 | 1 | 0.756 | 0.878 | 0.878 | 0.809 | 0.122 | 0.282 |
-
-**Направления:** `retrieval_min_relevance` → `0.3`.
-
-## Итоги тюнинга по сетке
-
-Сетка из 81 точек (граф `emb-qwen3-4b`), цель — `hit@1` (max). Точки кэшированы в `eval/results/`; в лидерборд они не попадают, потому что это инструментальные измерения — сводка здесь.
-
-| параметр | значения |
-| --- | --- |
-| `retrieval_top_k` | 3, 5, 8 |
-| `retrieval_prefetch` | 20, 30, 50 |
-| `retrieval_rrf_k` | 40, 60, 80 |
-| `retrieval_min_relevance` | 0.3, 0.55, 0.7 |
-
-**Лучшая точка** (по `hit@1`): `retrieval_top_k=3;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3`.
-
-| метрика | значение |
-| --- | --- |
-| hit@1 | 0.829 |
-| hit@3 | 0.902 |
-| hit@5 | 0.902 |
-| mrr | 0.866 |
-| not_found | 0.098 |
-| latency_median | 0.333 |
-
-### `retrieval_top_k`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | 27 | 0.621* | 0.678* | 0.678 | 0.650 | 0.322 | 0.315 |
-| 5 | 27 | 0.621 | 0.678 | 0.700* | 0.655 | 0.300 | 0.311* |
-| 8 | 27 | 0.621 | 0.678 | 0.700 | 0.656* | 0.294* | 0.317 |
-
-### `retrieval_prefetch`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 20 | 27 | 0.634* | 0.691* | 0.702* | 0.666* | 0.295* | 0.316 |
-| 30 | 27 | 0.618 | 0.675 | 0.686 | 0.649 | 0.314 | 0.314 |
-| 50 | 27 | 0.612 | 0.669 | 0.691 | 0.647 | 0.306 | 0.314* |
-
-### `retrieval_rrf_k`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 40 | 27 | 0.623* | 0.680* | 0.695* | 0.656* | 0.304* | 0.315 |
-| 60 | 27 | 0.623 | 0.680 | 0.695 | 0.656 | 0.304 | 0.314* |
-| 80 | 27 | 0.618 | 0.675 | 0.689 | 0.650 | 0.309 | 0.315 |
-
-### `retrieval_min_relevance`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.3 | 27 | 0.810* | 0.883* | 0.905* | 0.853* | 0.089* | 0.315 |
-| 0.55 | 27 | 0.762 | 0.835 | 0.856 | 0.804 | 0.144 | 0.314* |
-| 0.7 | 27 | 0.293 | 0.317 | 0.317 | 0.305 | 0.683 | 0.315 |
-
-**Направления:** `retrieval_top_k` — не влияет; `retrieval_prefetch` → `20`; `retrieval_rrf_k` → `40`; `retrieval_min_relevance` → `0.3`.
-
-## Итоги тюнинга по сетке
-
-Сетка из 8 точек (граф `emb-qwen3-4b`), цель — `hit@1` (max). Точки кэшированы в `eval/results/`; в лидерборд они не попадают, потому что это инструментальные измерения — сводка здесь.
-
-| параметр | значения |
-| --- | --- |
-| `retrieval_prefetch` | 5, 8, 10, 12, 15, 20, 25, 30 |
-
-**Лучшая точка** (по `hit@1`): `retrieval_prefetch=5`.
-
-| метрика | значение |
-| --- | --- |
-| hit@1 | 0.829 |
-| hit@3 | 0.927 |
-| hit@5 | 0.927 |
-| mrr | 0.874 |
-| not_found | 0.073 |
-| latency_median | 0.327 |
-
-### `retrieval_prefetch`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 5 | 1 | 0.829* | 0.927* | 0.927* | 0.874* | 0.073* | 0.327 |
-| 8 | 1 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.316 |
-| 10 | 1 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.315 |
-| 12 | 1 | 0.829 | 0.902 | 0.927 | 0.872 | 0.073 | 0.316 |
-| 15 | 1 | 0.829 | 0.902 | 0.927 | 0.872 | 0.073 | 0.308* |
-| 20 | 1 | 0.829 | 0.902 | 0.927 | 0.872 | 0.073 | 0.313 |
-| 25 | 1 | 0.805 | 0.878 | 0.902 | 0.848 | 0.098 | 0.317 |
-| 30 | 1 | 0.805 | 0.878 | 0.902 | 0.848 | 0.098 | 0.315 |
-
-**Направления:** `retrieval_prefetch` → `5`.
-
-## Итоги тюнинга по сетке
-
-Сетка из 5 точек (граф `emb-qwen3-4b`), цель — `hit@1` (max). Точки кэшированы в `eval/results/`; в лидерборд они не попадают, потому что это инструментальные измерения — сводка здесь.
-
-| параметр | значения |
-| --- | --- |
-| `retrieval_min_relevance` | 0.1, 0.2, 0.3, 0.4, 0.5 |
-
-**Лучшая точка** (по `hit@1`): `retrieval_min_relevance=0.1`.
-
-| метрика | значение |
-| --- | --- |
-| hit@1 | 0.829 |
-| hit@3 | 0.927 |
-| hit@5 | 0.927 |
-| mrr | 0.874 |
-| not_found | 0.073 |
-| latency_median | 0.328 |
-
-### `retrieval_min_relevance`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.1 | 1 | 0.829* | 0.927* | 0.927* | 0.874* | 0.073* | 0.328 |
-| 0.2 | 1 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.316 |
-| 0.3 | 1 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.314* |
-| 0.4 | 1 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.316 |
-| 0.5 | 1 | 0.829 | 0.927 | 0.927 | 0.874 | 0.073 | 0.316 |
-
-**Направления:** `retrieval_min_relevance` — не влияет.
-
-## Итоги тюнинга по сетке
-
-Сетка из 5 точек (граф `emb-qwen3-4b`), цель — `hit@1` (max). Точки кэшированы в `eval/results/`; в лидерборд они не попадают, потому что это инструментальные измерения — сводка здесь.
-
-| параметр | значения |
-| --- | --- |
-| `rerank_candidates` | 3, 5, 10, 15, 20 |
-
-**Лучшая точка** (по `hit@1`): `rerank_candidates=10`.
-
-| метрика | значение |
-| --- | --- |
-| hit@1 | 0.829 |
-| hit@3 | 0.927 |
-| hit@5 | 0.927 |
-| mrr | 0.874 |
-| not_found | 0.073 |
-| latency_median | 0.331 |
-
-### `rerank_candidates`
-
-| значение | n | hit@1 | hit@3 | hit@5 | mrr | not_found | latency_median |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 3 | 1 | 0.732 | 0.780 | 0.927 | 0.785 | 0.073 | 0.218* |
-| 5 | 1 | 0.805 | 0.878 | 0.902 | 0.848 | 0.098 | 0.250 |
-| 10 | 1 | 0.829* | 0.927* | 0.927 | 0.874 | 0.073 | 0.331 |
-| 15 | 1 | 0.829 | 0.927 | 0.951* | 0.876* | 0.049* | 0.406 |
-| 20 | 1 | 0.829 | 0.878 | 0.951 | 0.872 | 0.049 | 0.468 |
-
-**Направления:** `rerank_candidates` → `10`.
-
 ## История результатов
 
 Каждая строка — один прогон: группа вариантов, снятых на одном наборе,
@@ -444,10 +207,65 @@
 в историю как есть, но в лидерборд не включаются.
 
 <details>
-<summary>сырые прогоны (222)</summary>
+<summary>сырые прогоны (277)</summary>
 
 | дата | граф | окружение | варианты | метрики | вердикт | кэш |
 | --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-24 02:23 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=60, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.826<br>hit@3 0.893<br>hit@5 0.893<br>mrr 0.858<br>not_found 0.107<br>refusal_rate 0.900<br>latency_median 0.267<br>latency_p95 0.431<br>answer_chars 41.800 | — | [base](../eval/results/edf853da5ffc322b26f197aa747e9279.json) |
+| 2026-08-24 02:15 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=60, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | retrieval_prefetch=10;retrieval_rrf_k=60 | hit@1 0.826<br>hit@3 0.893<br>hit@5 0.893<br>mrr 0.858<br>not_found 0.107<br>refusal_rate 0.000<br>latency_median 0.256<br>latency_p95 0.286<br>answer_chars 0.000 | — | [retrieval_prefetch=10;retrieval_rrf_k=60](../eval/results/0272574c1359b7333bbc1f02955801bb.json) |
+| 2026-08-24 02:14 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=15, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | rerank_candidates=15 | hit@1 0.818<br>hit@3 0.893<br>hit@5 0.909<br>mrr 0.857<br>not_found 0.091<br>refusal_rate 0.000<br>latency_median 0.333<br>latency_p95 0.394<br>answer_chars 0.000 | — | [rerank_candidates=15](../eval/results/fdfc31a8ac94b8c69ef414106d689088.json) |
+| 2026-08-24 02:13 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=5, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | rerank_candidates=5 | hit@1 0.769<br>hit@3 0.851<br>hit@5 0.851<br>mrr 0.807<br>not_found 0.149<br>refusal_rate 0.000<br>latency_median 0.195<br>latency_p95 0.219<br>answer_chars 0.000 | — | [rerank_candidates=5](../eval/results/fc3714c84b6527df7b5471a7c91b229b.json) |
+| 2026-08-24 02:12 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.6, max_req=10, retries=1, coll=aist_chunks | retrieval_min_relevance=0.6 | hit@1 0.818<br>hit@3 0.884<br>hit@5 0.901<br>mrr 0.855<br>not_found 0.099<br>refusal_rate 0.600<br>latency_median 0.252<br>latency_p95 0.285<br>answer_chars 0.000 | — | [retrieval_min_relevance=0.6](../eval/results/85d94f2e01a48cb2babadc7b67aa159d.json) |
+| 2026-08-24 02:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.3, max_req=10, retries=1, coll=aist_chunks | retrieval_min_relevance=0.3 | hit@1 0.818<br>hit@3 0.884<br>hit@5 0.901<br>mrr 0.855<br>not_found 0.099<br>refusal_rate 0.000<br>latency_median 0.267<br>latency_p95 0.301<br>answer_chars 0.000 | — | [retrieval_min_relevance=0.3](../eval/results/00bba8d134705ce292d33ff7e77d6dbb.json) |
+| 2026-08-24 02:10 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=60, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | retrieval_rrf_k=60, retrieval_prefetch=20;retrieval_rrf_k=60 | hit@1 retrieval_rrf_k=60=0.826 / retrieval_prefetch=20;retrieval_rrf_k=60=0.818<br>hit@3 retrieval_rrf_k=60=0.893 / retrieval_prefetch=20;retrieval_rrf_k=60=0.884<br>hit@5 retrieval_rrf_k=60=0.909 / retrieval_prefetch=20;retrieval_rrf_k=60=0.901<br>mrr retrieval_rrf_k=60=0.863 / retrieval_prefetch=20;retrieval_rrf_k=60=0.855<br>not_found retrieval_rrf_k=60=0.091 / retrieval_prefetch=20;retrieval_rrf_k=60=0.099<br>refusal_rate retrieval_rrf_k=60=0.000 / retrieval_prefetch=20;retrieval_rrf_k=60=0.000<br>latency_median retrieval_rrf_k=60=0.256 / retrieval_prefetch=20;retrieval_rrf_k=60=0.255<br>latency_p95 retrieval_rrf_k=60=0.291 / retrieval_prefetch=20;retrieval_rrf_k=60=0.286<br>answer_chars retrieval_rrf_k=60=0.000 / retrieval_prefetch=20;retrieval_rrf_k=60=0.000 | retrieval_prefetch=20;retrieval_rrf_k=60 (лучше: latency_p95, latency_median) | [retrieval_rrf_k=60](../eval/results/5d70a3fc240629e4d5127fc3cb007915.json)<br>[retrieval_prefetch=20;retrieval_rrf_k=60](../eval/results/0f2342da622a7c5cc7ab170a9393a5f6.json) |
+| 2026-08-24 02:09 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=20, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | retrieval_rrf_k=20 | hit@1 0.818<br>hit@3 0.884<br>hit@5 0.901<br>mrr 0.855<br>not_found 0.099<br>refusal_rate 0.000<br>latency_median 0.264<br>latency_p95 0.302<br>answer_chars 0.000 | — | [retrieval_rrf_k=20](../eval/results/c75aaf13e90b6b06a9f817e7cab5b076.json) |
+| 2026-08-24 02:08 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=30, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | retrieval_prefetch=30 | hit@1 0.785<br>hit@3 0.860<br>hit@5 0.884<br>mrr 0.826<br>not_found 0.116<br>refusal_rate 0.000<br>latency_median 0.254<br>latency_p95 0.290<br>answer_chars 0.000 | — | [retrieval_prefetch=30](../eval/results/b5bb4eda4064306c6905d9fff1d57d6f.json) |
+| 2026-08-24 02:07 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | retrieval_prefetch=10, retrieval_prefetch=10;retrieval_rrf_k=40 | hit@1 retrieval_prefetch=10=0.826 / retrieval_prefetch=10;retrieval_rrf_k=40=0.826<br>hit@3 retrieval_prefetch=10=0.893 / retrieval_prefetch=10;retrieval_rrf_k=40=0.893<br>hit@5 retrieval_prefetch=10=0.893 / retrieval_prefetch=10;retrieval_rrf_k=40=0.893<br>mrr retrieval_prefetch=10=0.858 / retrieval_prefetch=10;retrieval_rrf_k=40=0.858<br>not_found retrieval_prefetch=10=0.107 / retrieval_prefetch=10;retrieval_rrf_k=40=0.107<br>refusal_rate retrieval_prefetch=10=0.000 / retrieval_prefetch=10;retrieval_rrf_k=40=0.000<br>latency_median retrieval_prefetch=10=0.272 / retrieval_prefetch=10;retrieval_rrf_k=40=0.265<br>latency_p95 retrieval_prefetch=10=0.307 / retrieval_prefetch=10;retrieval_rrf_k=40=0.304<br>answer_chars retrieval_prefetch=10=0.000 / retrieval_prefetch=10;retrieval_rrf_k=40=0.000 | retrieval_prefetch=10;retrieval_rrf_k=40 (лучше: latency_p95, latency_median) | [retrieval_prefetch=10](../eval/results/ba7c0c63d7823ef6c014ba28c069e83d.json)<br>[retrieval_prefetch=10;retrieval_rrf_k=40](../eval/results/8d8beabe43850072d8dc0a3f9ac9ad9a.json) |
+| 2026-08-24 02:06 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=8, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | retrieval_top_k=8 | hit@1 0.818<br>hit@3 0.884<br>hit@5 0.901<br>mrr 0.855<br>not_found 0.099<br>refusal_rate 0.000<br>latency_median 0.249<br>latency_p95 0.283<br>answer_chars 0.000 | — | [retrieval_top_k=8](../eval/results/f42dba3dba845340ea8809ce43f55d6a.json) |
+| 2026-08-24 02:05 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=3, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | retrieval_top_k=3 | hit@1 0.818<br>hit@3 0.884<br>hit@5 0.884<br>mrr 0.851<br>not_found 0.116<br>refusal_rate 0.000<br>latency_median 0.263<br>latency_p95 0.300<br>answer_chars 0.000 | — | [retrieval_top_k=3](../eval/results/92f22bb5af66cbaffb0ee7664dd22fcd.json) |
+| 2026-08-24 01:58 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.802<br>hit@3 0.876<br>hit@5 0.893<br>mrr 0.843<br>not_found 0.107<br>refusal_rate 1.000<br>latency_median 0.259<br>latency_p95 0.461<br>answer_chars 29.000 | — | [base](../eval/results/bb13d3253d456dc10c18d8184541a466.json) |
+| 2026-08-24 01:55 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.926<br>hit@3 0.942<br>hit@5 0.950<br>mrr 0.936<br>not_found 0.050<br>refusal_rate 1.000<br>latency_median 0.263<br>latency_p95 0.313<br>answer_chars 29.000 | — | [base](../eval/results/9791f8fccc2adb0640becb73682734fc.json) |
+| 2026-08-24 01:49 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.818<br>hit@3 0.868<br>hit@5 0.884<br>mrr 0.847<br>not_found 0.116<br>refusal_rate 1.000<br>latency_median 0.264<br>latency_p95 0.435<br>answer_chars 29.000 | — | [base](../eval/results/a4e19a2f64ef9d7bb9a722110a0a00da.json) |
+| 2026-08-24 01:47 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.884<br>hit@3 0.926<br>hit@5 0.934<br>mrr 0.907<br>not_found 0.066<br>refusal_rate 1.000<br>latency_median 0.263<br>latency_p95 0.317<br>answer_chars 29.000 | — | [base](../eval/results/69c884609112355ea8305e4861742d3f.json) |
+| 2026-08-24 01:44 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.810<br>hit@3 0.884<br>hit@5 0.901<br>mrr 0.851<br>not_found 0.099<br>refusal_rate 1.000<br>latency_median 0.268<br>latency_p95 0.376<br>answer_chars 29.000 | — | [base](../eval/results/79b29b8f906176109d62d1d2b2cbe3c9.json) |
+| 2026-08-24 01:38 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.818<br>hit@3 0.884<br>hit@5 0.901<br>mrr 0.855<br>not_found 0.099<br>refusal_rate 0.900<br>latency_median 0.269<br>latency_p95 0.391<br>answer_chars 41.800 | — | [base](../eval/results/a0c4db6dc699e81763db899d9dc65a7e.json) |
+| 2026-08-24 01:35 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.800<br>hit@3 1.000<br>hit@5 1.000<br>mrr 0.900<br>not_found 0.000<br>refusal_rate 1.000<br>latency_median 0.295<br>latency_p95 6.205<br>answer_chars 29.000 | — | [base](../eval/results/963847ec61f1abf6cecd06392538ccf4.json) |
+| 2026-08-24 01:33 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base, retrieval_top_k=5, retrieval_prefetch=20, retrieval_rrf_k=40, retrieval_min_relevance=0.45, rerank_candidates=10, retrieval_prefetch=20;retrieval_rrf_k=40 | hit@1 base=0.818 / retrieval_top_k=5=0.818 / retrieval_prefetch=20=0.818 / retrieval_rrf_k=40=0.818 / retrieval_min_relevance=0.45=0.826 / rerank_candidates=10=0.826 / retrieval_prefetch=20;retrieval_rrf_k=40=0.818<br>hit@3 base=0.884 / retrieval_top_k=5=0.884 / retrieval_prefetch=20=0.884 / retrieval_rrf_k=40=0.884 / retrieval_min_relevance=0.45=0.893 / rerank_candidates=10=0.893 / retrieval_prefetch=20;retrieval_rrf_k=40=0.884<br>hit@5 base=0.901 / retrieval_top_k=5=0.901 / retrieval_prefetch=20=0.901 / retrieval_rrf_k=40=0.901 / retrieval_min_relevance=0.45=0.909 / rerank_candidates=10=0.909 / retrieval_prefetch=20;retrieval_rrf_k=40=0.901<br>mrr base=0.855 / retrieval_top_k=5=0.855 / retrieval_prefetch=20=0.855 / retrieval_rrf_k=40=0.855 / retrieval_min_relevance=0.45=0.863 / rerank_candidates=10=0.863 / retrieval_prefetch=20;retrieval_rrf_k=40=0.855<br>not_found base=0.099 / retrieval_top_k=5=0.099 / retrieval_prefetch=20=0.099 / retrieval_rrf_k=40=0.099 / retrieval_min_relevance=0.45=0.091 / rerank_candidates=10=0.091 / retrieval_prefetch=20;retrieval_rrf_k=40=0.099<br>refusal_rate base=0.000 / retrieval_top_k=5=0.000 / retrieval_prefetch=20=0.000 / retrieval_rrf_k=40=0.000 / retrieval_min_relevance=0.45=0.000 / rerank_candidates=10=0.000 / retrieval_prefetch=20;retrieval_rrf_k=40=0.000<br>latency_median base=0.261 / retrieval_top_k=5=0.256 / retrieval_prefetch=20=0.257 / retrieval_rrf_k=40=0.253 / retrieval_min_relevance=0.45=0.257 / rerank_candidates=10=0.263 / retrieval_prefetch=20;retrieval_rrf_k=40=0.254<br>latency_p95 base=0.307 / retrieval_top_k=5=0.286 / retrieval_prefetch=20=0.287 / retrieval_rrf_k=40=0.291 / retrieval_min_relevance=0.45=0.288 / rerank_candidates=10=0.296 / retrieval_prefetch=20;retrieval_rrf_k=40=0.286<br>answer_chars base=0.000 / retrieval_top_k=5=0.000 / retrieval_prefetch=20=0.000 / retrieval_rrf_k=40=0.000 / retrieval_min_relevance=0.45=0.000 / rerank_candidates=10=0.000 / retrieval_prefetch=20;retrieval_rrf_k=40=0.000 | retrieval_top_k=5 (лучше: latency_p95, latency_median)<br>retrieval_prefetch=20 (лучше: latency_p95, latency_median)<br>retrieval_rrf_k=40 (лучше: latency_p95, latency_median)<br>retrieval_min_relevance=0.45 (лучше: latency_p95, latency_median)<br>rerank_candidates=10 (лучше: latency_p95; хуже: latency_median)<br>retrieval_prefetch=20;retrieval_rrf_k=40 (лучше: latency_p95, latency_median) | [base](../eval/results/9776c1a3b1dc4434732858ae548aa894.json)<br>[retrieval_top_k=5](../eval/results/fce69f0a2ba281cbe846b74159e370c4.json)<br>[retrieval_prefetch=20](../eval/results/120e67c6d366b330ae65444ad3ba46b1.json)<br>[retrieval_rrf_k=40](../eval/results/791c8b2cc6d86e09c4b447568081b445.json)<br>[retrieval_min_relevance=0.45](../eval/results/6d60bca1f62fd1ed5031807410795430.json)<br>[rerank_candidates=10](../eval/results/0ecc3cd96ace31317baeeb7bbc12c158.json)<br>[retrieval_prefetch=20;retrieval_rrf_k=40](../eval/results/ceb0415295d6d9008e49e59caf517b1b.json) |
+| 2026-08-19 01:48 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base, embed-instruction | hit@1 base=0.854 / embed-instruction=0.854<br>hit@3 base=0.976 / embed-instruction=0.976<br>hit@5 base=0.976 / embed-instruction=0.976<br>mrr base=0.915 / embed-instruction=0.915<br>not_found base=0.024 / embed-instruction=0.024<br>refusal_rate base=0.900 / embed-instruction=1.000<br>latency_median base=0.324 / embed-instruction=0.325<br>latency_p95 base=0.450 / embed-instruction=0.641<br>answer_chars base=40.000 / embed-instruction=29.000 | embed-instruction (хуже: latency_p95, latency_median) | [base](../eval/results/26ecd5656edecb8de9fecdaaead14fc2.json)<br>[embed-instruction](../eval/results/50be915b46dee34767e947e271d44109.json) |
+| 2026-08-19 01:46 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base, embed-instruction | hit@1 base=0.805 / embed-instruction=0.805<br>hit@3 base=0.927 / embed-instruction=0.902<br>hit@5 base=0.927 / embed-instruction=0.902<br>mrr base=0.862 / embed-instruction=0.854<br>not_found base=0.073 / embed-instruction=0.098<br>refusal_rate base=0.900 / embed-instruction=1.000<br>latency_median base=0.323 / embed-instruction=0.322<br>latency_p95 base=0.621 / embed-instruction=0.627<br>answer_chars base=71.400 / embed-instruction=29.000 | embed-instruction: без значимых различий | [base](../eval/results/6ca3618cc3baae8d5c937cfca4597000.json)<br>[embed-instruction](../eval/results/a91ecc8958e80e7b5e1fd6fe17d6244f.json) |
+| 2026-08-19 01:43 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base, embed-instruction | hit@1 base=0.854 / embed-instruction=0.854<br>hit@3 base=0.927 / embed-instruction=0.902<br>hit@5 base=0.927 / embed-instruction=0.902<br>mrr base=0.886 / embed-instruction=0.878<br>not_found base=0.073 / embed-instruction=0.098<br>refusal_rate base=0.900 / embed-instruction=1.000<br>latency_median base=0.320 / embed-instruction=0.324<br>latency_p95 base=0.487 / embed-instruction=0.504<br>answer_chars base=41.800 / embed-instruction=29.000 | embed-instruction: без значимых различий | [base](../eval/results/854569d739a2e6b1cbbc03dcc7ba7cff.json)<br>[embed-instruction](../eval/results/27848674e228c285be3a5bee3f362ef1.json) |
+| 2026-08-19 01:40 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base, embed-instruction | hit@1 base=0.854 / embed-instruction=0.854<br>hit@3 base=0.976 / embed-instruction=0.976<br>hit@5 base=0.976 / embed-instruction=0.976<br>mrr base=0.915 / embed-instruction=0.915<br>not_found base=0.024 / embed-instruction=0.024<br>refusal_rate base=0.600 / embed-instruction=0.000<br>latency_median base=0.319 / embed-instruction=0.314<br>latency_p95 base=0.343 / embed-instruction=0.340<br>answer_chars base=0.000 / embed-instruction=0.000 | embed-instruction (хуже: refusal_rate) | [base](../eval/results/f60f1e5163b87bb38266dd558a783e3f.json)<br>[embed-instruction](../eval/results/ffc35ddc6f27ce82c0f157dc79e3a5e9.json) |
+| 2026-08-19 01:39 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base, embed-instruction | hit@1 base=0.805 / embed-instruction=0.805<br>hit@3 base=0.927 / embed-instruction=0.902<br>hit@5 base=0.927 / embed-instruction=0.902<br>mrr base=0.862 / embed-instruction=0.854<br>not_found base=0.073 / embed-instruction=0.098<br>refusal_rate base=0.300 / embed-instruction=0.000<br>latency_median base=0.307 / embed-instruction=0.313<br>latency_p95 base=0.352 / embed-instruction=0.339<br>answer_chars base=0.000 / embed-instruction=0.000 | embed-instruction: без значимых различий | [base](../eval/results/3cd04fc4f70568c07c1ce896c6057dce.json)<br>[embed-instruction](../eval/results/2872552e7553a5f65b48bb9a66d1e7ed.json) |
+| 2026-08-19 01:39 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base, embed-instruction | hit@1 base=0.854 / embed-instruction=0.854<br>hit@3 base=0.927 / embed-instruction=0.902<br>hit@5 base=0.927 / embed-instruction=0.902<br>mrr base=0.886 / embed-instruction=0.878<br>not_found base=0.073 / embed-instruction=0.098<br>refusal_rate base=0.700 / embed-instruction=0.000<br>latency_median base=0.311 / embed-instruction=0.317<br>latency_p95 base=0.353 / embed-instruction=0.340<br>answer_chars base=0.000 / embed-instruction=0.000 | embed-instruction (хуже: refusal_rate) | [base](../eval/results/12c61e8807c12ad07380b8d073165f47.json)<br>[embed-instruction](../eval/results/00136bdf79acd2054e53f9713cceb996.json) |
+| 2026-08-19 01:26 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks_v3 | gemma4:26b-nvfp4 | hit@1 0.829<br>hit@3 0.902<br>hit@5 0.927<br>mrr 0.872<br>not_found 0.073<br>refusal_rate 1.000<br>latency_median 0.324<br>latency_p95 0.503<br>answer_chars 29.000 | — | [gemma4:26b-nvfp4](../eval/results/20531fe7e04437bc282e116f414378b9.json) |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.854<br>hit@3 0.902<br>hit@5 0.902<br>mrr 0.878<br>not_found 0.098<br>refusal_rate 0.300<br>latency_median 0.444<br>latency_p95 0.529<br>answer_chars 0.000 | — | [prefetch20](../eval/results/f1f265d4311126daa14c48a50ae3db24.json) |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.805<br>hit@3 0.829<br>hit@5 0.927<br>mrr 0.841<br>not_found 0.073<br>refusal_rate 0.500<br>latency_median 0.446<br>latency_p95 0.531<br>answer_chars 0.000 | — | [prefetch20](../eval/results/dfe9d1f789aa9dc33da8310f223b0c2f.json) |
+| 2026-08-19 01:19 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.829<br>hit@3 0.854<br>hit@5 0.951<br>mrr 0.866<br>not_found 0.049<br>refusal_rate 0.300<br>latency_median 0.455<br>latency_p95 0.491<br>answer_chars 0.000 | — | [prefetch20](../eval/results/f234bc878193ef4827901fbc3d357872.json) |
+| 2026-08-19 01:19 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.902<br>hit@3 0.927<br>hit@5 1.000<br>mrr 0.933<br>not_found 0.000<br>refusal_rate 0.500<br>latency_median 0.461<br>latency_p95 0.535<br>answer_chars 0.000 | — | [prefetch20](../eval/results/092805c40970dc1e6710a5e0753bbe66.json) |
+| 2026-08-19 01:19 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.829<br>hit@3 0.854<br>hit@5 0.902<br>mrr 0.854<br>not_found 0.098<br>refusal_rate 0.300<br>latency_median 0.455<br>latency_p95 0.542<br>answer_chars 0.000 | — | [prefetch20](../eval/results/501b6aad4bf9e29d6e59effc164b761e.json) |
+| 2026-08-19 01:18 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.732<br>hit@3 0.805<br>hit@5 0.951<br>mrr 0.805<br>not_found 0.049<br>refusal_rate 0.700<br>latency_median 0.450<br>latency_p95 0.520<br>answer_chars 0.000 | — | [prefetch20](../eval/results/71eb38cf3f2816626030481a82e1c504.json) |
+| 2026-08-19 01:18 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.854<br>hit@3 0.902<br>hit@5 0.951<br>mrr 0.890<br>not_found 0.049<br>refusal_rate 0.400<br>latency_median 0.458<br>latency_p95 0.542<br>answer_chars 0.000 | — | [prefetch20](../eval/results/95fbbc3ef4ce2682957c54ad9b3a49d8.json) |
+| 2026-08-19 01:17 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.854<br>hit@3 0.927<br>hit@5 1.000<br>mrr 0.909<br>not_found 0.000<br>refusal_rate 0.600<br>latency_median 0.459<br>latency_p95 0.509<br>answer_chars 0.000 | — | [prefetch20](../eval/results/7b3daeeb94b9fb252d3db7124a1a6c57.json) |
+| 2026-08-19 01:17 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.805<br>hit@3 0.902<br>hit@5 0.951<br>mrr 0.866<br>not_found 0.049<br>refusal_rate 0.300<br>latency_median 0.448<br>latency_p95 0.538<br>answer_chars 0.000 | — | [prefetch20](../eval/results/a92b4843df8d1deb7e14520ab94b2467.json) |
+| 2026-08-19 01:16 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.854<br>hit@3 0.902<br>hit@5 0.976<br>mrr 0.896<br>not_found 0.024<br>refusal_rate 0.700<br>latency_median 0.458<br>latency_p95 0.537<br>answer_chars 0.000 | — | [prefetch20](../eval/results/a8c250f181289b9a40c76b94e13f571a.json) |
+| 2026-08-19 01:16 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.854<br>hit@3 0.902<br>hit@5 0.902<br>mrr 0.878<br>not_found 0.098<br>refusal_rate 0.300<br>latency_median 0.298<br>latency_p95 0.359<br>answer_chars 0.000 | — | [base](../eval/results/ae15ca1fa1dfaff55fb9976b8e58eb0e.json) |
+| 2026-08-19 01:16 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.805<br>hit@3 0.878<br>hit@5 0.878<br>mrr 0.837<br>not_found 0.122<br>refusal_rate 0.500<br>latency_median 0.306<br>latency_p95 0.336<br>answer_chars 0.000 | — | [base](../eval/results/261c7775730ba97ea8028f0d51492f91.json) |
+| 2026-08-19 01:15 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.829<br>hit@3 0.902<br>hit@5 0.902<br>mrr 0.862<br>not_found 0.098<br>refusal_rate 0.300<br>latency_median 0.303<br>latency_p95 0.344<br>answer_chars 0.000 | — | [base](../eval/results/f670e5c3b9e80150dd9e2da90e3a375f.json) |
+| 2026-08-19 01:15 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.902<br>hit@3 0.951<br>hit@5 0.951<br>mrr 0.927<br>not_found 0.049<br>refusal_rate 0.500<br>latency_median 0.304<br>latency_p95 0.349<br>answer_chars 0.000 | — | [base](../eval/results/9502376fb351f65e72bf26658a8a0f1b.json) |
+| 2026-08-19 01:15 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.829<br>hit@3 0.878<br>hit@5 0.878<br>mrr 0.854<br>not_found 0.122<br>refusal_rate 0.300<br>latency_median 0.308<br>latency_p95 0.341<br>answer_chars 0.000 | — | [base](../eval/results/066027bbcf11d553544628499642bdbd.json) |
+| 2026-08-19 01:14 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.732<br>hit@3 0.927<br>hit@5 0.927<br>mrr 0.821<br>not_found 0.073<br>refusal_rate 0.700<br>latency_median 0.310<br>latency_p95 0.340<br>answer_chars 0.000 | — | [base](../eval/results/0a803570695c70f863243efa9ec91966.json) |
+| 2026-08-19 01:14 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.854<br>hit@3 0.902<br>hit@5 0.902<br>mrr 0.878<br>not_found 0.098<br>refusal_rate 0.400<br>latency_median 0.304<br>latency_p95 0.336<br>answer_chars 0.000 | — | [base](../eval/results/b278e2e430d734bd43ee3de6da7d5171.json) |
+| 2026-08-19 01:14 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.854<br>hit@3 0.976<br>hit@5 0.976<br>mrr 0.915<br>not_found 0.024<br>refusal_rate 0.600<br>latency_median 0.312<br>latency_p95 0.340<br>answer_chars 0.000 | — | [base](../eval/results/d412a579a1623d621d7224feefa5af99.json) |
+| 2026-08-19 01:13 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.805<br>hit@3 0.927<br>hit@5 0.927<br>mrr 0.862<br>not_found 0.073<br>refusal_rate 0.300<br>latency_median 0.315<br>latency_p95 0.350<br>answer_chars 0.000 | — | [base](../eval/results/54be58746aec043f7cc2e8122f082e08.json) |
+| 2026-08-19 01:13 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.854<br>hit@3 0.927<br>hit@5 0.927<br>mrr 0.886<br>not_found 0.073<br>refusal_rate 0.700<br>latency_median 0.319<br>latency_p95 0.357<br>answer_chars 0.000 | — | [base](../eval/results/09cd95d163604298d06e757586c6690d.json) |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | prefetch20 | hit@1 0.829<br>hit@3 0.878<br>hit@5 0.951<br>mrr 0.872<br>not_found 0.049<br>refusal_rate 0.500<br>latency_median 0.523<br>latency_p95 0.646<br>answer_chars 0.000 | — | [prefetch20](../eval/results/3928a0b4cc5373eb0706359a9256876e.json) |
+| 2026-08-19 01:10 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.829<br>hit@3 0.927<br>hit@5 0.927<br>mrr 0.874<br>not_found 0.073<br>refusal_rate 0.500<br>latency_median 0.330<br>latency_p95 0.388<br>answer_chars 0.000 | — | [base](../eval/results/a96c841a7d3df3172d9b34232dc36d9e.json) |
+| 2026-08-19 00:14 | `base` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.829<br>hit@3 0.927<br>hit@5 0.927<br>mrr 0.874<br>not_found 0.073<br>refusal_rate 0.500<br>latency_median 0.324<br>latency_p95 0.357<br>answer_chars 0.000 | — | [base](../eval/results/98e35d4834f8e72d992c9869551ecb00.json) |
+| 2026-08-18 22:12 | `base` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks_v2 | base | hit@1 0.829<br>hit@3 0.927<br>hit@5 0.927<br>mrr 0.874<br>not_found 0.073<br>refusal_rate 0.500<br>latency_median 0.320<br>latency_p95 0.362<br>answer_chars 0.000 | — | [base](../eval/results/56346131f7dec12b162d6b0ee35e7c9c.json) |
+| 2026-08-18 21:43 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks | base | hit@1 0.732<br>hit@3 0.805<br>hit@5 0.854<br>mrr 0.776<br>not_found 0.146<br>refusal_rate 0.500<br>latency_median 0.292<br>latency_p95 0.336<br>answer_chars 0.000 | — | [base](../eval/results/8a510c0fed2c132d506994e00a890191.json) |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | tables-md | hit@1 0.750<br>hit@3 1.000<br>hit@5 1.000<br>mrr 0.861<br>not_found 0.000<br>refusal_rate 0.000<br>latency_median 0.192<br>latency_p95 0.223<br>answer_chars 0.000 | — | [tables-md](../eval/results/a4d58ae1be97544aab7ca6c702519a21.json) |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v1 | base | hit@1 0.833<br>hit@3 1.000<br>hit@5 1.000<br>mrr 0.917<br>not_found 0.000<br>refusal_rate 0.000<br>latency_median 0.181<br>latency_p95 0.216<br>answer_chars 0.000 | — | [base](../eval/results/388cb185d4e10bfd50c41699602202d0.json) |
+| 2026-08-17 00:56 | `react-branch-v1` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks_v2_v2 | gpt-oss-20b-qwen3-emb | hit@1 0.829<br>hit@3 0.927<br>hit@5 0.927<br>mrr 0.874<br>not_found 0.073<br>refusal_rate 1.000<br>latency_median 0.327<br>latency_p95 0.420<br>answer_chars 28.600 | — | [gpt-oss-20b-qwen3-emb](../eval/results/6ea49d727f23f50ee6bb970a45c6b241.json) |
 | 2026-08-16 15:13 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, coll=aist_chunks_v2 | qwen3-emb-best | hit@1 0.829<br>hit@3 0.927<br>hit@5 0.927<br>mrr 0.874<br>not_found 0.073<br>refusal_rate 1.000<br>latency_median 0.326<br>latency_p95 0.454<br>answer_chars 28.600 | — | [qwen3-emb-best](../eval/results/a042dd849e449891f134654b419f43bc.json) |
 | 2026-08-16 15:11 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=20, min_rel=0.45, coll=aist_chunks_v2 | rerank_candidates=20 | hit@1 0.829<br>hit@3 0.878<br>hit@5 0.951<br>mrr 0.872<br>not_found 0.049<br>refusal_rate 0.500<br>latency_median 0.468<br>latency_p95 0.548<br>answer_chars 0.000 | — | [rerank_candidates=20](../eval/results/4bf89917eda194b3b1f13421a60c2721.json) |
 | 2026-08-16 15:10 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=15, min_rel=0.45, coll=aist_chunks_v2 | rerank_candidates=15 | hit@1 0.829<br>hit@3 0.927<br>hit@5 0.951<br>mrr 0.876<br>not_found 0.049<br>refusal_rate 0.500<br>latency_median 0.406<br>latency_p95 0.459<br>answer_chars 0.000 | — | [rerank_candidates=15](../eval/results/a73f5163ae7f2e15715f6abf11010c4c.json) |
@@ -512,7 +330,7 @@
 | 2026-08-16 14:32 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=30, rrf=80, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=80;retrieval_min_relevance=0.55 | hit@1 0.756<br>hit@3 0.829<br>hit@5 0.854<br>mrr 0.799<br>not_found 0.146<br>refusal_rate 0.600<br>latency_median 0.311<br>latency_p95 0.348<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=80;retrieval_min_relevance=0.55](../eval/results/8e27946bfab9c90157eefba08e58b3f5.json) |
 | 2026-08-16 14:31 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=30, rrf=80, rerank=вкл, cand=10, min_rel=0.3, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=80;retrieval_min_relevance=0.3 | hit@1 0.805<br>hit@3 0.878<br>hit@5 0.902<br>mrr 0.848<br>not_found 0.098<br>refusal_rate 0.000<br>latency_median 0.312<br>latency_p95 0.348<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=80;retrieval_min_relevance=0.3](../eval/results/9ba3feeadc9a26a3d4061344454f74b2.json) |
 | 2026-08-16 14:31 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.7, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.7 | hit@1 0.293<br>hit@3 0.317<br>hit@5 0.317<br>mrr 0.305<br>not_found 0.683<br>refusal_rate 1.000<br>latency_median 0.311<br>latency_p95 0.347<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.7](../eval/results/801637c9f08fde618cf9fc8c1c5c2b3b.json) |
-| 2026-08-16 14:31 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55, retrieval_prefetch=30 | hit@1 retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.756 / retrieval_prefetch=30=0.756<br>hit@3 retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.829 / retrieval_prefetch=30=0.829<br>hit@5 retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.854 / retrieval_prefetch=30=0.854<br>mrr retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.799 / retrieval_prefetch=30=0.799<br>not_found retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.146 / retrieval_prefetch=30=0.146<br>refusal_rate retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.600 / retrieval_prefetch=30=0.600<br>latency_median retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.309 / retrieval_prefetch=30=0.326<br>latency_p95 retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.352 / retrieval_prefetch=30=0.368<br>answer_chars retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.000 / retrieval_prefetch=30=0.000 | retrieval_prefetch=30 (хуже: latency_median, latency_p95) | [retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55](../eval/results/703fd558fd29b2148d9aee8b2dd9dbf6.json)<br>[retrieval_prefetch=30](../eval/results/d6230911fb1fa37868cb0ecd856b7dd4.json) |
+| 2026-08-16 14:31 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55, retrieval_prefetch=30 | hit@1 retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.756 / retrieval_prefetch=30=0.756<br>hit@3 retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.829 / retrieval_prefetch=30=0.829<br>hit@5 retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.854 / retrieval_prefetch=30=0.854<br>mrr retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.799 / retrieval_prefetch=30=0.799<br>not_found retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.146 / retrieval_prefetch=30=0.146<br>refusal_rate retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.600 / retrieval_prefetch=30=0.600<br>latency_median retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.309 / retrieval_prefetch=30=0.326<br>latency_p95 retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.352 / retrieval_prefetch=30=0.368<br>answer_chars retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.000 / retrieval_prefetch=30=0.000 | retrieval_prefetch=30 (хуже: latency_p95, latency_median) | [retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.55](../eval/results/703fd558fd29b2148d9aee8b2dd9dbf6.json)<br>[retrieval_prefetch=30](../eval/results/d6230911fb1fa37868cb0ecd856b7dd4.json) |
 | 2026-08-16 14:30 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.3, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.3 | hit@1 0.805<br>hit@3 0.878<br>hit@5 0.902<br>mrr 0.848<br>not_found 0.098<br>refusal_rate 0.000<br>latency_median 0.313<br>latency_p95 0.347<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=60;retrieval_min_relevance=0.3](../eval/results/d0aa8980b215dfc532d811bb4654af1a.json) |
 | 2026-08-16 14:30 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=30, rrf=40, rerank=вкл, cand=10, min_rel=0.7, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=40;retrieval_min_relevance=0.7 | hit@1 0.293<br>hit@3 0.317<br>hit@5 0.317<br>mrr 0.305<br>not_found 0.683<br>refusal_rate 1.000<br>latency_median 0.312<br>latency_p95 0.351<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=40;retrieval_min_relevance=0.7](../eval/results/c686a1c6e594f249c64b72a09bffeb21.json) |
 | 2026-08-16 14:30 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=30, rrf=40, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=40;retrieval_min_relevance=0.55 | hit@1 0.756<br>hit@3 0.829<br>hit@5 0.854<br>mrr 0.799<br>not_found 0.146<br>refusal_rate 0.600<br>latency_median 0.315<br>latency_p95 0.349<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=30;retrieval_rrf_k=40;retrieval_min_relevance=0.55](../eval/results/4d82421210980fdd6582d7b4c416cdf4.json) |
@@ -521,11 +339,11 @@
 | 2026-08-16 14:29 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=80, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=80;retrieval_min_relevance=0.55 | hit@1 0.780<br>hit@3 0.854<br>hit@5 0.878<br>mrr 0.823<br>not_found 0.122<br>refusal_rate 0.600<br>latency_median 0.315<br>latency_p95 0.350<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=80;retrieval_min_relevance=0.55](../eval/results/f89d599fb621de16dc9ad12c28587e3b.json) |
 | 2026-08-16 14:28 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=80, rerank=вкл, cand=10, min_rel=0.3, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=80;retrieval_min_relevance=0.3 | hit@1 0.829<br>hit@3 0.902<br>hit@5 0.927<br>mrr 0.872<br>not_found 0.073<br>refusal_rate 0.000<br>latency_median 0.312<br>latency_p95 0.346<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=80;retrieval_min_relevance=0.3](../eval/results/488a0bbb010c6eb17abc594b7915f521.json) |
 | 2026-08-16 14:28 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=60, rerank=вкл, cand=10, min_rel=0.7, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.7 | hit@1 0.293<br>hit@3 0.317<br>hit@5 0.317<br>mrr 0.305<br>not_found 0.683<br>refusal_rate 1.000<br>latency_median 0.316<br>latency_p95 0.353<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.7](../eval/results/218b0b93f7025e2378024bf74d34cf40.json) |
-| 2026-08-16 14:28 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=60, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55, retrieval_prefetch=20 | hit@1 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.780 / retrieval_prefetch=20=0.780<br>hit@3 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.854 / retrieval_prefetch=20=0.854<br>hit@5 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.878 / retrieval_prefetch=20=0.878<br>mrr retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.823 / retrieval_prefetch=20=0.823<br>not_found retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.122 / retrieval_prefetch=20=0.122<br>refusal_rate retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.600 / retrieval_prefetch=20=0.600<br>latency_median retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.314 / retrieval_prefetch=20=0.334<br>latency_p95 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.352 / retrieval_prefetch=20=0.379<br>answer_chars retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.000 / retrieval_prefetch=20=0.000 | retrieval_prefetch=20 (хуже: latency_median, latency_p95) | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55](../eval/results/7a7fdab563600b8f437c1444d6e41ef7.json)<br>[retrieval_prefetch=20](../eval/results/5dadef80b877ae912754878b5ba5bbb3.json) |
+| 2026-08-16 14:28 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=60, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55, retrieval_prefetch=20 | hit@1 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.780 / retrieval_prefetch=20=0.780<br>hit@3 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.854 / retrieval_prefetch=20=0.854<br>hit@5 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.878 / retrieval_prefetch=20=0.878<br>mrr retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.823 / retrieval_prefetch=20=0.823<br>not_found retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.122 / retrieval_prefetch=20=0.122<br>refusal_rate retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.600 / retrieval_prefetch=20=0.600<br>latency_median retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.314 / retrieval_prefetch=20=0.334<br>latency_p95 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.352 / retrieval_prefetch=20=0.379<br>answer_chars retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55=0.000 / retrieval_prefetch=20=0.000 | retrieval_prefetch=20 (хуже: latency_p95, latency_median) | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.55](../eval/results/7a7fdab563600b8f437c1444d6e41ef7.json)<br>[retrieval_prefetch=20](../eval/results/5dadef80b877ae912754878b5ba5bbb3.json) |
 | 2026-08-16 14:27 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=60, rerank=вкл, cand=10, min_rel=0.3, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.3 | hit@1 0.829<br>hit@3 0.902<br>hit@5 0.927<br>mrr 0.872<br>not_found 0.073<br>refusal_rate 0.000<br>latency_median 0.313<br>latency_p95 0.346<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=60;retrieval_min_relevance=0.3](../eval/results/96062f630d4c3dc9cace204183604dd4.json) |
 | 2026-08-16 14:27 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.7, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.7 | hit@1 0.293<br>hit@3 0.317<br>hit@5 0.317<br>mrr 0.305<br>not_found 0.683<br>refusal_rate 1.000<br>latency_median 0.314<br>latency_p95 0.350<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.7](../eval/results/5511ea7a1c3f49c277b0120c6417a27b.json) |
 | 2026-08-16 14:27 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.55 | hit@1 0.780<br>hit@3 0.854<br>hit@5 0.878<br>mrr 0.823<br>not_found 0.122<br>refusal_rate 0.600<br>latency_median 0.316<br>latency_p95 0.351<br>answer_chars 0.000 | — | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.55](../eval/results/2e252aa6c81df39f5b0dafcf68846248.json) |
-| 2026-08-16 14:26 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.3, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3, retrieval_prefetch=20 | hit@1 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.829 / retrieval_prefetch=20=0.829<br>hit@3 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.902 / retrieval_prefetch=20=0.902<br>hit@5 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.927 / retrieval_prefetch=20=0.927<br>mrr retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.872 / retrieval_prefetch=20=0.872<br>not_found retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.073 / retrieval_prefetch=20=0.073<br>refusal_rate retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.000 / retrieval_prefetch=20=0.000<br>latency_median retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.312 / retrieval_prefetch=20=0.313<br>latency_p95 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.349 / retrieval_prefetch=20=0.364<br>answer_chars retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.000 / retrieval_prefetch=20=0.000 | retrieval_prefetch=20 (хуже: latency_median, latency_p95) | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3](../eval/results/f67fb8bfaeabf99c70cbda81903fd6e7.json)<br>[retrieval_prefetch=20](../eval/results/79b2bf0400fb9e71c9e922090856972e.json) |
+| 2026-08-16 14:26 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.3, coll=aist_chunks_v2 | retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3, retrieval_prefetch=20 | hit@1 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.829 / retrieval_prefetch=20=0.829<br>hit@3 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.902 / retrieval_prefetch=20=0.902<br>hit@5 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.927 / retrieval_prefetch=20=0.927<br>mrr retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.872 / retrieval_prefetch=20=0.872<br>not_found retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.073 / retrieval_prefetch=20=0.073<br>refusal_rate retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.000 / retrieval_prefetch=20=0.000<br>latency_median retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.312 / retrieval_prefetch=20=0.313<br>latency_p95 retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.349 / retrieval_prefetch=20=0.364<br>answer_chars retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3=0.000 / retrieval_prefetch=20=0.000 | retrieval_prefetch=20 (хуже: latency_p95, latency_median) | [retrieval_top_k=5;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3](../eval/results/f67fb8bfaeabf99c70cbda81903fd6e7.json)<br>[retrieval_prefetch=20](../eval/results/79b2bf0400fb9e71c9e922090856972e.json) |
 | 2026-08-16 14:26 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=3, prefetch=50, rrf=80, rerank=вкл, cand=10, min_rel=0.7, coll=aist_chunks_v2 | retrieval_top_k=3;retrieval_prefetch=50;retrieval_rrf_k=80;retrieval_min_relevance=0.7 | hit@1 0.293<br>hit@3 0.317<br>hit@5 0.317<br>mrr 0.305<br>not_found 0.683<br>refusal_rate 1.000<br>latency_median 0.314<br>latency_p95 0.355<br>answer_chars 0.000 | — | [retrieval_top_k=3;retrieval_prefetch=50;retrieval_rrf_k=80;retrieval_min_relevance=0.7](../eval/results/4ac32db183decd75e8d7ae1fcac9a00d.json) |
 | 2026-08-16 14:26 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=3, prefetch=50, rrf=80, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks_v2 | retrieval_top_k=3;retrieval_prefetch=50;retrieval_rrf_k=80;retrieval_min_relevance=0.55 | hit@1 0.732<br>hit@3 0.805<br>hit@5 0.805<br>mrr 0.768<br>not_found 0.195<br>refusal_rate 0.600<br>latency_median 0.311<br>latency_p95 0.357<br>answer_chars 0.000 | — | [retrieval_top_k=3;retrieval_prefetch=50;retrieval_rrf_k=80;retrieval_min_relevance=0.55](../eval/results/31caf2259f9d1a40e18d5d789319c5a2.json) |
 | 2026-08-16 14:25 | `emb-qwen3-4b` | llm=gpt-oss:20b, emb=qwen3-embedding:4b, top_k=3, prefetch=50, rrf=80, rerank=вкл, cand=10, min_rel=0.3, coll=aist_chunks_v2 | retrieval_top_k=3;retrieval_prefetch=50;retrieval_rrf_k=80;retrieval_min_relevance=0.3 | hit@1 0.780<br>hit@3 0.854<br>hit@5 0.854<br>mrr 0.817<br>not_found 0.146<br>refusal_rate 0.000<br>latency_median 0.311<br>latency_p95 0.356<br>answer_chars 0.000 | — | [retrieval_top_k=3;retrieval_prefetch=50;retrieval_rrf_k=80;retrieval_min_relevance=0.3](../eval/results/55633a4c741a11a3d841641c834077d0.json) |
@@ -669,7 +487,7 @@
 | 2026-08-16 11:42 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=3, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks | retrieval_top_k=3;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.55 | hit@1 0.756<br>hit@3 0.854<br>hit@5 0.854<br>mrr 0.801<br>not_found 0.146<br>refusal_rate 0.500<br>latency_median 0.283<br>latency_p95 0.320<br>answer_chars 0.000 | — | [retrieval_top_k=3;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.55](../eval/results/d09b346d911f35e50a842088e15802ec.json) |
 | 2026-08-16 11:41 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=3, prefetch=20, rrf=40, rerank=вкл, cand=10, min_rel=0.3, coll=aist_chunks | retrieval_top_k=3;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3 | hit@1 0.805<br>hit@3 0.902<br>hit@5 0.902<br>mrr 0.850<br>not_found 0.098<br>refusal_rate 0.000<br>latency_median 0.296<br>latency_p95 0.334<br>answer_chars 0.000 | — | [retrieval_top_k=3;retrieval_prefetch=20;retrieval_rrf_k=40;retrieval_min_relevance=0.3](../eval/results/d08384125806a79ab586340012d9dfde.json) |
 | 2026-08-16 11:36 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=выкл, cand=10, min_rel=0.55, coll=aist_chunks | rerank-off | hit@1 0.561<br>hit@3 0.732<br>hit@5 0.780<br>mrr 0.649<br>not_found 0.220<br>refusal_rate 1.000<br>latency_median 0.138<br>latency_p95 0.142<br>answer_chars 28.600 | — | [rerank-off](../eval/results/fe01fb92d638d0e0eb77737a113689b0.json) |
-| 2026-08-16 11:35 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks | rerank-on, prod | hit@1 rerank-on=0.732 / prod=0.732<br>hit@3 rerank-on=0.805 / prod=0.805<br>hit@5 rerank-on=0.854 / prod=0.854<br>mrr rerank-on=0.776 / prod=0.776<br>not_found rerank-on=0.146 / prod=0.146<br>refusal_rate rerank-on=1.000 / prod=1.000<br>latency_median rerank-on=0.297 / prod=0.310<br>latency_p95 rerank-on=0.345 / prod=0.444<br>answer_chars rerank-on=28.600 / prod=28.700 | prod (хуже: latency_median, latency_p95) | [rerank-on](../eval/results/05e2f8f2b087eff1974532ed2d670f4c.json)<br>[prod](../eval/results/2fd0522a070901cb66234faa703a6c8e.json) |
+| 2026-08-16 11:35 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, coll=aist_chunks | rerank-on, prod | hit@1 rerank-on=0.732 / prod=0.732<br>hit@3 rerank-on=0.805 / prod=0.805<br>hit@5 rerank-on=0.854 / prod=0.854<br>mrr rerank-on=0.776 / prod=0.776<br>not_found rerank-on=0.146 / prod=0.146<br>refusal_rate rerank-on=1.000 / prod=1.000<br>latency_median rerank-on=0.297 / prod=0.310<br>latency_p95 rerank-on=0.345 / prod=0.444<br>answer_chars rerank-on=28.600 / prod=28.700 | prod (хуже: latency_p95, latency_median) | [rerank-on](../eval/results/05e2f8f2b087eff1974532ed2d670f4c.json)<br>[prod](../eval/results/2fd0522a070901cb66234faa703a6c8e.json) |
 
 </details>
 
@@ -680,20 +498,68 @@
 
 | дата | граф | тест (base → variant) | что изменилось | итог | значимые отличия (p < 0.05) |
 | --- | --- | --- | --- | --- | --- |
+| 2026-08-19 01:53 | `base` | `base` → `embed-instruction` |  | **паритет** | — |
+| 2026-08-19 01:20 | `base` | `base` → `prefetch20` | кандидаты: 10 → 20 | **неоднозначно** | hit@3: 0.917→0.880 (p=0.008, ухудшение); hit@5: 0.917→0.951 (p=0.004, улучшение); not_found: 0.083→0.049 (p=0.004, улучшение); лат., мед.: 0.308→0.453 (p=0.002, ухудшение); лат., p95: 0.345→0.527 (p=0.002, ухудшение) |
+| 2026-08-17 10:54 | `base` | `base` → `tables-md` | коллекция: aist_chunks → aist_chunks_v2 | **хуже** | лат., мед.: 0.181→0.192 (p=0.010, ухудшение); лат., p95: 0.216→0.223 (p=0.010, ухудшение) |
 | 2026-08-16 14:10 | `base` | `qwen3.8:27b-mlx` → `gpt-oss:20b` | LLM: qwen3.8:27b-mlx → gpt-oss:20b | **паритет** | — |
 | 2026-08-16 14:10 | `base` | `qwen3.8:27b-mlx` → `gemma4:e2b-mlx` | LLM: qwen3.8:27b-mlx → gemma4:e2b-mlx | **лучше** | лат., мед.: 0.305→0.294 (p=0.000, улучшение); лат., p95: 0.472→0.326 (p=0.000, улучшение) |
 | 2026-08-16 14:10 | `base` | `qwen3.8:27b-mlx` → `qwen3.5:4b-mlx` | LLM: qwen3.8:27b-mlx → qwen3.5:4b-mlx | **паритет** | — |
 | 2026-08-16 14:10 | `base` | `qwen3.8:27b-mlx` → `qwen3.6:35b-a3b-nvfp4` | LLM: qwen3.8:27b-mlx → qwen3.6:35b-a3b-nvfp4 | **паритет** | — |
-| 2026-08-16 13:40 | `base` | `prod` → `opt` | prefetch: 30 → 10; мин. релевантность: 0.55 → 0.2 | **лучше** | mrr: 0.776→0.858 (p=0.039, улучшение); лат., мед.: 0.310→0.304 (p=0.000, улучшение); лат., p95: 0.444→0.354 (p=0.000, улучшение) |
+| 2026-08-16 13:40 | `base` | `prod` → `opt` | мин. релевантность: 0.55 → 0.2; prefetch: 30 → 10 | **лучше** | mrr: 0.776→0.858 (p=0.039, улучшение); лат., мед.: 0.310→0.304 (p=0.000, улучшение); лат., p95: 0.444→0.354 (p=0.000, улучшение) |
 | 2026-08-16 11:36 | `base` | `rerank-on` → `rerank-off` | реранк: вкл → выкл | **неоднозначно** | hit@1: 0.732→0.561 (p=0.039, ухудшение); mrr: 0.776→0.649 (p=0.028, ухудшение); лат., мед.: 0.297→0.138 (p=0.000, улучшение); лат., p95: 0.345→0.142 (p=0.000, улучшение) |
 
 <details>
-<summary>все сравнения по метрикам (54)</summary>
+<summary>все сравнения по метрикам (99)</summary>
 
 «Δ» — разница variant - base. Вердикт: «лучше» — значимое улучшение (p < 0.05), «хуже» — ухудшение, «без разницы» — нет значимых отличий.
 
 | дата | граф | окружение | base | variant | метрика | base | variant | Δ | p-value | вердикт | тест |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-08-19 01:53 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | hit@1 | 0.837 | 0.837 | +0.000 | 1.000 | без разницы | bootstrap |
+| 2026-08-19 01:53 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | hit@3 | 0.943 | 0.927 | -0.016 | 0.510 | без разницы | bootstrap |
+| 2026-08-19 01:53 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | hit@5 | 0.943 | 0.927 | -0.016 | 0.510 | без разницы | bootstrap |
+| 2026-08-19 01:53 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | mrr | 0.888 | 0.882 | -0.005 | 0.510 | без разницы | bootstrap |
+| 2026-08-19 01:53 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | not_found | 0.057 | 0.073 | +0.016 | 0.510 | без разницы | bootstrap |
+| 2026-08-19 01:53 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | refusal_rate | 0.900 | 1.000 | +0.100 | 0.255 | без разницы | bootstrap |
+| 2026-08-19 01:53 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | latency_median | 0.322 | 0.324 | +0.002 | 0.505 | без разницы | bootstrap |
+| 2026-08-19 01:53 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | latency_p95 | 0.519 | 0.591 | +0.071 | 0.255 | без разницы | bootstrap |
+| 2026-08-19 01:53 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | answer_chars | 51.067 | 29.000 | -22.067 | 0.255 | без разницы | bootstrap |
+| 2026-08-19 01:41 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | hit@1 | 0.837 | 0.837 | +0.000 | 1.000 | без разницы | bootstrap |
+| 2026-08-19 01:41 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | hit@3 | 0.943 | 0.927 | -0.016 | 0.510 | без разницы | bootstrap |
+| 2026-08-19 01:41 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | hit@5 | 0.943 | 0.927 | -0.016 | 0.510 | без разницы | bootstrap |
+| 2026-08-19 01:41 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | mrr | 0.888 | 0.882 | -0.005 | 0.510 | без разницы | bootstrap |
+| 2026-08-19 01:41 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | not_found | 0.057 | 0.073 | +0.016 | 0.510 | без разницы | bootstrap |
+| 2026-08-19 01:41 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | refusal_rate | 0.533 | 0.000 | -0.533 | 0.255 | без разницы | bootstrap |
+| 2026-08-19 01:41 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | latency_median | 0.312 | 0.315 | +0.002 | 0.510 | без разницы | bootstrap |
+| 2026-08-19 01:41 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | latency_p95 | 0.349 | 0.340 | -0.009 | 0.255 | без разницы | bootstrap |
+| 2026-08-19 01:41 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | embed-instruction | answer_chars | 0.000 | 0.000 | +0.000 | 1.000 | без разницы | bootstrap |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | hit@1 | 0.832 | 0.832 | +0.000 | 1.000 | без разницы | bootstrap |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | hit@3 | 0.917 | 0.880 | -0.037 | 0.008 | хуже | bootstrap |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | hit@5 | 0.917 | 0.951 | +0.034 | 0.004 | лучше | bootstrap |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | mrr | 0.872 | 0.874 | +0.002 | 0.484 | без разницы | bootstrap |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | not_found | 0.083 | 0.049 | -0.034 | 0.004 | лучше | bootstrap |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | refusal_rate | 0.460 | 0.460 | +0.000 | 1.000 | без разницы | bootstrap |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | latency_median | 0.308 | 0.453 | +0.146 | 0.002 | хуже | bootstrap |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | latency_p95 | 0.345 | 0.527 | +0.182 | 0.002 | хуже | bootstrap |
+| 2026-08-19 01:20 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | answer_chars | 0.000 | 0.000 | +0.000 | 1.000 | без разницы | bootstrap |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | hit@1 | 0.829 | 0.829 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | hit@3 | 0.927 | 0.878 | -0.049 | 0.500 | без разницы | mcnemar |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | hit@5 | 0.927 | 0.951 | +0.024 | 1.000 | без разницы | mcnemar |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | mrr | 0.874 | 0.872 | -0.002 | 0.785 | без разницы | wilcoxon |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | not_found | 0.073 | 0.049 | -0.024 | 1.000 | без разницы | mcnemar |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | refusal_rate | 0.500 | 0.500 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | latency_median | 0.330 | 0.523 | +0.194 | 0.000 | хуже | wilcoxon |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | latency_p95 | 0.388 | 0.646 | +0.258 | 0.000 | хуже | wilcoxon |
+| 2026-08-19 01:11 | `base` | llm=gemma4:26b-nvfp4, emb=qwen3-embedding:4b, top_k=5, prefetch=20, rrf=40, rerank=вкл, cand=20, min_rel=0.45, max_req=10, retries=1, coll=aist_chunks | base | prefetch20 | answer_chars | 0.000 | 0.000 | +0.000 | 1.000 | без разницы | wilcoxon |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | base | tables-md | hit@1 | 0.833 | 0.750 | -0.083 | 1.000 | без разницы | mcnemar |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | base | tables-md | hit@3 | 1.000 | 1.000 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | base | tables-md | hit@5 | 1.000 | 1.000 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | base | tables-md | mrr | 0.917 | 0.861 | -0.056 | 0.500 | без разницы | wilcoxon |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | base | tables-md | not_found | 0.000 | 0.000 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | base | tables-md | refusal_rate | 0.000 | 0.000 | +0.000 | 1.000 | без разницы | mcnemar |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | base | tables-md | latency_median | 0.181 | 0.192 | +0.011 | 0.010 | хуже | wilcoxon |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | base | tables-md | latency_p95 | 0.216 | 0.223 | +0.006 | 0.010 | хуже | wilcoxon |
+| 2026-08-17 10:54 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=5, prefetch=30, rrf=60, rerank=вкл, cand=10, min_rel=0.55, max_req=10, retries=1, coll=aist_chunks_v2 | base | tables-md | answer_chars | 0.000 | 0.000 | +0.000 | 1.000 | без разницы | wilcoxon |
 | 2026-08-16 14:10 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=3, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, coll=aist_chunks | qwen3.8:27b-mlx | gpt-oss:20b | hit@1 | 0.805 | 0.805 | +0.000 | 1.000 | без разницы | mcnemar |
 | 2026-08-16 14:10 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=3, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, coll=aist_chunks | qwen3.8:27b-mlx | gpt-oss:20b | hit@3 | 0.927 | 0.927 | +0.000 | 1.000 | без разницы | mcnemar |
 | 2026-08-16 14:10 | `base` | llm=gpt-oss:20b, emb=bge-m3:567m, top_k=3, prefetch=10, rrf=40, rerank=вкл, cand=10, min_rel=0.45, coll=aist_chunks | qwen3.8:27b-mlx | gpt-oss:20b | hit@5 | 0.927 | 0.927 | +0.000 | 1.000 | без разницы | mcnemar |

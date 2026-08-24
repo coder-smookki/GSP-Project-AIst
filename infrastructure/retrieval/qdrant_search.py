@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Sequence
 
@@ -43,8 +44,23 @@ class QdrantSearch(Search):
 
     @staticmethod
     def _build_filter(
-        areas: Sequence[str] | None, section_types: Sequence[str] | None
+        areas: Sequence[str] | None,
+        section_types: Sequence[str] | None,
+        doc_codes: Sequence[str] | None = None,
     ) -> models.Filter | None:
+        """Собирает фильтр Qdrant по трём уровням дерева областей знаний.
+
+        Все три поля проиндексированы как KEYWORD (см. ``PAYLOAD_INDEXES``),
+        поэтому фильтрация идёт по индексу, а не перебором.
+
+        Args:
+            areas: Области знаний (payload ``area``, список на чанк).
+            section_types: Типы разделов (payload ``section_type``).
+            doc_codes: Коды документов (payload ``doc_code``).
+
+        Returns:
+            models.Filter | None: Фильтр или ``None``, если ограничений нет.
+        """
         must: list[models.Condition] = []
         if areas:
             must.append(
@@ -56,6 +72,12 @@ class QdrantSearch(Search):
             must.append(
                 models.FieldCondition(
                     key="section_type", match=models.MatchAny(any=list(section_types))
+                )
+            )
+        if doc_codes:
+            must.append(
+                models.FieldCondition(
+                    key="doc_code", match=models.MatchAny(any=list(doc_codes))
                 )
             )
         return models.Filter(must=must) if must else None
@@ -80,6 +102,7 @@ class QdrantSearch(Search):
         sections: list[str] | None = None,
         limit: int | None = None,
         areas: list[str] | None = None,
+        docs: list[str] | None = None,
     ) -> list[tuple[Chunk, float]]:
         text = query.strip()
         if not text:
@@ -92,7 +115,7 @@ class QdrantSearch(Search):
             else effective_limit
         )
         prefetch_limit = max(self._prefetch, fetch_limit)
-        query_filter = self._build_filter(areas, sections)
+        query_filter = self._build_filter(areas, sections, docs)
 
         try:
             encoded = (
@@ -136,13 +159,19 @@ class QdrantSearch(Search):
 
         if self._reranker is not None and hits:
             try:
-                hits = self._reranker.rerank(text, hits, effective_limit)
-            except RerankerUnavailable as exc:
-                logger.error(
-                    "переоценка отключена до перезапуска: %s",
-                    exc,
+                # Переоценка синхронная: это либо HTTP к хост-сервису, либо
+                # инференс кросс-энкодера. Прямой вызов из корутины замораживал
+                # весь событийный цикл на всё её время - параллельные ветки
+                # поиска выстраивались в очередь, а стриминг ответа замирал.
+                hits = await asyncio.to_thread(
+                    self._reranker.rerank, text, hits, effective_limit
                 )
-                self._reranker = None
+            except RerankerUnavailable as exc:
+                # Реранкер не выбрасывается: у него своё остывание на 30 с
+                # (REMOTE_COOLDOWN_SECONDS), и обнуление ссылки его обходило -
+                # один сетевой сбой отключал переоценку до перезапуска
+                # процесса, а с ней уходило +17 пунктов hit@1, молча.
+                logger.error("переоценка пропущена для этого запроса: %s", exc)
                 hits = hits[:effective_limit]
         else:
             hits = hits[:effective_limit]

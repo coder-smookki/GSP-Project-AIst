@@ -28,6 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=None, help="обработать не более N")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--full", action="store_true")
+    parser.add_argument(
+        "--qa-index",
+        action="store_true",
+        help="QA-индексация: вопросы модели приписываются фрагментам перед "
+        "кодированием (см. infrastructure/ingest/qa_index.py)",
+    )
     parser.add_argument("--switch-alias", action="store_true")
     parser.add_argument("--verbose", action="store_true")
     return parser
@@ -52,6 +58,7 @@ async def run(args: argparse.Namespace) -> None:
         limit=args.limit,
         dry_run=args.dry_run,
         full=args.full,
+        qa_index=args.qa_index,
         switch_alias=args.switch_alias,
     )
 

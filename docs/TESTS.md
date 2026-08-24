@@ -26,8 +26,9 @@ pytest -m "not integration"
 Настройки `[tool.pytest.ini_options]` в `pyproject.toml:47`:
 
 - `asyncio_mode = "auto"` — async-тесты без явных декораторов;
-- маркеры `integration`, `llm`, `embeddings`, `tools`, `corpus`, `qdrant`
-  описаны там же (маркер `tools` объявлен, но в наборе не используется).
+- маркеры `integration`, `llm`, `embeddings`, `tools`, `corpus`, `qdrant`,
+  `vllm` описаны там же (маркер `tools` объявлен, но в наборе не
+  используется).
 
 Линт и формат — `ruff` (config там же, `[tool.ruff]`): русскоязычным правилам
 `RUF001-003` дано исключение.
@@ -39,6 +40,7 @@ pytest -m "not integration"
 | `test_ollama_server.py` | реальная LLM (Ollama): invoke/astream/tools |
 | `test_ollama_embeddings.py` | реальная эмбеддинг-модель (Ollama) |
 | `test_qdrant_live.py` | живой Qdrant (docker), но фиктивные 8-dim векторы — LLM не нужна |
+| `test_vllm_server.py` | живой сервер vLLM: генерация, эмбеддинги, переоценка |
 
 Всё остальное — офлайн. `MockSearch` реализуется в
 `infrastructure/retrieval/mock_search.py` и переэкспортируется через
@@ -50,6 +52,9 @@ pytest -m "not integration"
 - `test_ollama_server.py` сам пропускается, если модель не загружена в Ollama;
 - `test_qdrant_live.py` создаёт временную коллекцию и сам себя пропускает,
   если Qdrant недоступен — спокойно живёт в общем прогоне;
+- `test_vllm_server.py` спрашивает у сервера `/v1/models` и пропускается с
+  подсказкой, если сервера нет; адрес переоценки и эмбеддера берётся из
+  своих настроек, поэтому группы пропускаются независимо;
 - конфиг-фикстура `conftest.py` только добавляет корень репозитория в
   `sys.path`.
 
@@ -82,10 +87,15 @@ pytest -m "not integration"
 | `ingest/test_pipeline.py` | офлайн-конвейер на синтетической фикстуре `kb_articles.json`: regex CLAUSE_HEAD, HTML-парсинг, деанонимия (по документу), чанкинг, стабильные id | none. |
 | `ingest/test_real_corpus.py` | регрессию на реальном дампе `fixtures/corpus/` (20 статей, 44030): полнота, ≥1300 чанков, уникальные id, отсутствие плейсхолдеров, доля деанонимизации | marker `corpus`, `pytestmark` модуля |
 | `llm/test_ollama_server.py` | живой `OllamaClient`: invoke, tools, astream | **Оllama**, marker `llm` |
+| `config/test_model_registry.py` | сборка клиентов по провайдеру (ollama-local, llamacpp, vllm), оверрайды индексации, отказ на неизвестном провайдере с перечислением поддерживаемых | none |
+| `embeddings/test_vllm_embeddings.py` | `VLLMEmbeddingClient`: разбор `/v1/embeddings`, текст вместо номеров токенов, заголовок авторизации, кеш размерности, ошибка 404 | `pytest-httpx` |
+| `llm/test_vllm_client.py` | `VLLMClient`: тело запроса в терминах vLLM (`repetition_penalty`, `chat_template_kwargs`), разбор ответа и потока SSE, ошибка 401 | `pytest-httpx` |
+| `llm/test_vllm_server.py` | живые клиенты vLLM: генерация, поток, эмбеддинги, переоценка | **живой vLLM**, markers `vllm`+`integration` |
 | `llm/test_options.py` | опции клиента: на клиенте, reasoning off/on, num_ctx/repeat_penalty, tools через bind_tools, llama-cpp без extra_body | `FakeClient` |
 | `orchestration/test_orchestration.py` | обёртки Prefect: dry-run чанки, flow/task реальные, `_document_ref_id`, сборка `_deployment_kwargs` из `AIST_*` | `importorskip("prefect")`, офлайн |
 | `retrieval/test_qdrant_layer.py` | слой без Qdrant: BM25 по-русски, shared options, point id, payload-фильтры, `SearchUnavailable`, восстановление из payload | `client=None`, `_BrokenEmbedder` |
 | `retrieval/test_qdrant_live.py` | гибрид на живом Qdrant: BM25, dense+sparse, стеммер, RRF, alias-переключение, sweep | **живой Qdrant**, markers `qdrant`+`integration` |
+| `retrieval/test_vllm_rerank.py` | `VLLMRerankerClient`: разбор `/v1/rerank` с восстановлением порядка, ошибки сервера и разбора, выбор счётчика оценок настройкой `rerank_provider` | `pytest-httpx` |
 | `retrieval/test_search.py` | `MockSearch` и `to_citation` (регулярные/табличные, snippet ≤400) | in-memory |
 
 ### Корневые — `tests/`

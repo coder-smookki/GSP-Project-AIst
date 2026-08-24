@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
+from infrastructure.ingest import qa_index
 from infrastructure.ingest.areas import AreaClassifier
 from infrastructure.ingest.chunker import Chunker
 from infrastructure.ingest.config import (
@@ -83,8 +84,13 @@ class IngestPipeline:
         chunker: Chunker | None = None,
         classifier: Classifier | None = None,
         repository: HashRepository | None = None,
+        qa_model=None,
     ) -> None:
         self.config = config
+        #: Модель, которой приписываются вопросы к фрагментам перед
+        #: кодированием. ``None`` - QA-индексация выключена
+        #: (см. infrastructure/ingest/qa_index.py).
+        self.qa_model = qa_model
         self.parsers = (
             parsers
             if parsers is not None
@@ -195,7 +201,13 @@ class IngestPipeline:
             outcome.areas = areas
             outcome.title = document.doc_title or outcome.title
 
-            fingerprint = self.repository.fingerprint(document)
+            embedder_id = str(getattr(embedder, "model_name", "") or "")
+            if self.qa_model is not None:
+                # Отпечаток обязан отличать обычный прогон от QA: иначе
+                # повторная индексация с вопросами сочла бы документы
+                # неизменившимися и не переписала бы ни одного вектора.
+                embedder_id = f"{embedder_id}+qa"
+            fingerprint = self.repository.fingerprint(document, embedder_id)
 
             if not chunks:
                 outcome.error = "конвейер не дал ни одного чанка"
@@ -210,7 +222,14 @@ class IngestPipeline:
             elif store is None or embedder is None:
                 outcome.error = "нет индекса или эмбеддера для записи"
             else:
-                vectors = await embedder.aembed([chunk.text for chunk in chunks])
+                if self.qa_model is not None:
+                    await qa_index.enrich(chunks, self.qa_model)
+                # Кодируется text_indexed, если он заполнен: при
+                # QA-индексации там фрагмент вместе с вопросами, на которые
+                # он отвечает. Показывается по-прежнему text.
+                vectors = await embedder.aembed(
+                    [chunk.text_indexed or chunk.text for chunk in chunks]
+                )
                 outcome.chunks = await store.upsert_chunks(
                     collection, chunks, vectors, areas, sync_tag, fingerprint
                 )
@@ -233,12 +252,13 @@ async def ingest_documents(
     progress: Callable[[str, int, int], None] | None = None,
     known_hashes: dict[str, str] | None = None,
     pipeline_version: str = PIPELINE_VERSION,
+    qa_model=None,
 ) -> IngestReport:
     config = replace(
         DEFAULT_CONFIG,
         incremental=IncrementalConfig(pipeline_version=pipeline_version),
     )
-    pipeline = IngestPipeline(config=config)
+    pipeline = IngestPipeline(config=config, qa_model=qa_model)
     return await pipeline.ingest(
         source,
         store,

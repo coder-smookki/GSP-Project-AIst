@@ -22,6 +22,10 @@ x-runner-env: &runner-env
   EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-ollama-local}
   EMBEDDING_MODEL: ${EMBEDDING_MODEL:-bge-m3}
   EMBEDDING_QUERY_INSTRUCTION: ${EMBEDDING_QUERY_INSTRUCTION:-}
+  # Модель для QA-индексации (AIST_QA_INDEX=1): клиент чат-модели собирается
+  # по тем же настройкам, что и у основного приложения.
+  LLM_PROVIDER: ${LLM_PROVIDER:-ollama-local}
+  LLM_MODEL: ${LLM_MODEL:-gemma4:26b-nvfp4}
   # Расписание и параметры deployment (наследуется из .env основного стека).
   AIST_CRON: ${AIST_CRON:-}
   AIST_SOURCE_KIND: ${AIST_SOURCE_KIND:-files}
@@ -30,6 +34,7 @@ x-runner-env: &runner-env
   AIST_LIMIT: ${AIST_LIMIT:-}
   AIST_DRY_RUN: ${AIST_DRY_RUN:-0}
   AIST_FULL: ${AIST_FULL:-0}
+  AIST_QA_INDEX: ${AIST_QA_INDEX:-0}
   AIST_SWITCH_ALIAS: ${AIST_SWITCH_ALIAS:-1}
   # Учётные данные базы знаний для --source api: те же, что у основного
   # стека (KB_EMAIL / KB_PASSWORD в deploy/.env).

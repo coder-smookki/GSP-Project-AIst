@@ -56,6 +56,40 @@ def get_search(settings) -> Search:
     return search
 
 
+def get_catalog(settings):
+    """Возвращает каталог базы знаний поверх той же коллекции, что и поиск.
+
+    Клиент Qdrant переиспользуется: отдельное соединение на каталог не нужно,
+    а фабрика поиска уже держит его на весь процесс.
+
+    Args:
+        settings: Настройки приложения.
+
+    Returns:
+        Catalog | None: Каталог или ``None`` в режиме заглушки, когда индекса
+        нет и перечислять нечего.
+    """
+    global _client
+
+    if settings.resolved_retrieval_provider() == "mock":
+        logger.warning("каталог недоступен: поиск работает на заглушке")
+        return None
+
+    from qdrant_client import AsyncQdrantClient
+
+    from infrastructure.retrieval.catalog import Catalog
+
+    if _client is None:
+        _client = AsyncQdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key or None,
+            timeout=int(settings.qdrant_timeout),
+        )
+        logger.info("создан клиент Qdrant: %s", settings.qdrant_url)
+
+    return Catalog(_client, collection=settings.qdrant_collection)
+
+
 async def shutdown() -> None:
     global _client
     if _client is not None:

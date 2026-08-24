@@ -23,6 +23,7 @@ from infrastructure.retrieval.bm25 import (
     bm25_document,
 )
 from infrastructure.retrieval.qdrant_search import QdrantSearch, SearchUnavailable
+from infrastructure.retrieval.rerank import RerankerUnavailable
 from infrastructure.retrieval.store import PAYLOAD_INDEXES, chunk_payload
 
 
@@ -160,6 +161,31 @@ def test_empty_selection_means_whole_base() -> None:
     """Пустой выбор означает поиск по всей базе, а не по пустому множеству."""
     assert QdrantSearch._build_filter(None, None) is None
     assert QdrantSearch._build_filter([], []) is None
+    assert QdrantSearch._build_filter([], [], []) is None
+
+
+def test_document_level_narrows_filter() -> None:
+    """Третий уровень дерева областей знаний - конкретный документ.
+
+    Поле ``doc_code`` проиндексировано как KEYWORD наравне с ``area`` и
+    ``section_type``, поэтому отбор по документу идёт по индексу.
+    """
+    built = QdrantSearch._build_filter(None, None, ["Р-У2-59"])
+    assert isinstance(built, models.Filter)
+    assert {condition.key for condition in built.must} == {"doc_code"}
+
+
+def test_three_levels_combine_as_conjunction() -> None:
+    """Область, документ и тип раздела сужают выдачу одновременно."""
+    built = QdrantSearch._build_filter(
+        ["ohrana_truda"], ["procedura"], ["Р-У2-59", "Р-У2-23"]
+    )
+    assert isinstance(built, models.Filter)
+    assert {condition.key for condition in built.must} == {
+        "area",
+        "section_type",
+        "doc_code",
+    }
 
 
 # ----------------------------------------------------------------- поведение
@@ -223,3 +249,124 @@ def test_document_may_belong_to_several_areas() -> None:
     )
     assert "pozharnaya_bezopasnost" in areas
     assert "promyshlennaya_bezopasnost" in areas
+
+
+class _Point:
+    """Точка выдачи Qdrant."""
+
+    def __init__(self, n: int) -> None:
+        """Готовит точку.
+
+        Args:
+            n: Порядковый номер, попадает в идентификатор фрагмента.
+        """
+        self.score = 1.0 / n
+        self.payload = {
+            "chunk_id": f"R-U2-59#c{n:03d}",
+            "doc_code": "Р-У2-59",
+            "doc_title": "Регламент",
+            "section_no": "4",
+            "section_type": "procedura",
+            "clause": f"4.{n}",
+            "text": f"фрагмент {n}",
+        }
+
+
+class _Response:
+    """Ответ Qdrant с готовыми точками."""
+
+    def __init__(self, count: int) -> None:
+        """Готовит ответ.
+
+        Args:
+            count: Сколько точек вернуть.
+        """
+        self.points = [_Point(n) for n in range(1, count + 1)]
+
+
+class _FakeClient:
+    """Клиент Qdrant, отдающий фиксированную выдачу."""
+
+    async def query_points(self, **kwargs):
+        """Возвращает четыре точки.
+
+        Args:
+            **kwargs: Параметры запроса, не используются.
+
+        Returns:
+            _Response: Ответ с точками.
+        """
+        return _Response(4)
+
+
+class _FakeEmbedder:
+    """Эмбеддер, отдающий фиксированный вектор."""
+
+    async def aembed(self, texts: list[str]) -> list[list[float]]:
+        """Кодирует тексты нулевым вектором.
+
+        Args:
+            texts: Тексты для кодирования.
+
+        Returns:
+            list[list[float]]: По вектору на текст.
+        """
+        return [[0.0, 0.0, 0.0] for _ in texts]
+
+
+class _FlakyReranker:
+    """Переоценка, которая падает заданное число раз, затем работает."""
+
+    def __init__(self, failures: int) -> None:
+        """Готовит реранкер.
+
+        Args:
+            failures: Сколько первых вызовов должны упасть.
+        """
+        self._left = failures
+        self.calls = 0
+        self._candidates = 10
+
+    def rerank(self, query, hits, limit):
+        """Переоценивает кандидатов, роняя первые вызовы.
+
+        Args:
+            query: Текст запроса.
+            hits: Кандидаты.
+            limit: Сколько вернуть.
+
+        Returns:
+            list: Кандидаты в обратном порядке - видно, что переоценка была.
+
+        Raises:
+            RerankerUnavailable: Пока не исчерпан счётчик падений.
+        """
+        self.calls += 1
+        if self._left > 0:
+            self._left -= 1
+            raise RerankerUnavailable("сервис не ответил")
+        return list(reversed(hits))[:limit]
+
+
+async def test_transient_rerank_failure_does_not_disable_it_forever() -> None:
+    """Разовый сбой переоценки не выключает её до перезапуска процесса.
+
+    У реранкера своё остывание на 30 с, но поиск обнулял ссылку на него, и
+    остывание не срабатывало никогда: одна сетевая заминка стоила +17 пунктов
+    hit@1 на весь оставшийся сеанс, причём молча.
+    """
+    reranker = _FlakyReranker(failures=1)
+    search = QdrantSearch(
+        _FakeClient(),
+        _FakeEmbedder(),
+        collection="c",
+        top_k=2,
+        reranker=reranker,
+    )
+
+    first = await search.query("вопрос")
+    assert first, "при сбое переоценки выдача остаётся, просто без неё"
+    assert search._reranker is reranker, "реранкер не выброшен"
+
+    await search.query("вопрос")
+    assert reranker.calls == 2, "вторая попытка переоценки состоялась"

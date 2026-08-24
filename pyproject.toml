@@ -21,6 +21,10 @@ dependencies = [
     "qdrant-client==1.19.0",
     "langchain-ollama>=1.0.0",
     "sqlalchemy[asyncio]>=2.0.0",
+    # Маршруты каталога встраиваются в Aegra (deploy/content_app.py).
+    # Пакет и так приходит с chainlit и aegra-api, но первой стороне
+    # нельзя зависеть от чужой транзитивной зависимости.
+    "fastapi>=0.115.0",
 ]
 
 [project.optional-dependencies]
@@ -60,7 +64,8 @@ markers = [
     "embeddings: requires a real embedding model (Ollama) - excluded from fast CI",
     "tools: tests ai agents tool",
     "corpus: runs the ingest pipeline over the real knowledge base dump",
-    "qdrant: requires a live Qdrant server (auto-skipped when unreachable)"
+    "qdrant: requires a live Qdrant server (auto-skipped when unreachable)",
+    "vllm: requires a live vLLM server (auto-skipped when unreachable)"
 ]
 asyncio_mode = "auto"
 

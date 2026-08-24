@@ -20,6 +20,8 @@ def _deployment_description() -> str:
         f"- Dry-run: `{os.environ.get('AIST_DRY_RUN', '0')}`;"
         f" полная переиндексация: `{os.environ.get('AIST_FULL', '0')}`;"
         f" переключение алиаса: `{os.environ.get('AIST_SWITCH_ALIAS', '0')}`",
+        f"- QA-индексация: `{os.environ.get('AIST_QA_INDEX', '0')}`"
+        f" (модель `{os.environ.get('LLM_MODEL') or 'из настроек'}`)",
         f"- Cron: `{os.environ.get('AIST_CRON') or 'нет'}`;"
         f" интервал: `{os.environ.get('AIST_INTERVAL') or 'нет'}`",
     ]
@@ -44,6 +46,7 @@ def _deployment_kwargs() -> dict[str, object]:
         "limit": int(limit) if limit else None,
         "dry_run": os.environ.get("AIST_DRY_RUN", "0") == "1",
         "full": os.environ.get("AIST_FULL", "0") == "1",
+        "qa_index": os.environ.get("AIST_QA_INDEX", "0") == "1",
         "switch_alias": os.environ.get("AIST_SWITCH_ALIAS", "0") == "1",
         "sync_tag": os.environ.get("AIST_SYNC_TAG") or None,
         # Эмбеддинги: берём уже существующие EMBEDDING_* (они же в .env).
@@ -53,6 +56,8 @@ def _deployment_kwargs() -> dict[str, object]:
         "embedding_query_instruction": os.environ.get(
             "EMBEDDING_QUERY_INSTRUCTION"
         ) or None,
+        "llm_model": os.environ.get("LLM_MODEL") or None,
+        "llm_provider": os.environ.get("LLM_PROVIDER") or None,
     }
     return kwargs
 

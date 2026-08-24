@@ -1,3 +1,4 @@
+import hmac
 import logging
 import os
 import time
@@ -8,6 +9,10 @@ import chainlit as cl
 from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 from chainlit.input_widget import InputWidget, MultiSelect
 from chainlit.server import app as _chainlit_app
+
+# Своя страница регистрации: Chainlit собран на FastAPI, поэтому маршрут
+# добавляется в то же приложение (см. gui/register.py).
+from chainlit.server import app as chainlit_server_app
 from chainlit.types import ThreadDict
 from fastapi import APIRouter, HTTPException
 from langgraph_sdk import get_client
@@ -27,13 +32,102 @@ from gui.db import (
     seed_admin,
     update_password,
 )
+from gui.register import register_routes
+from gui.stages import StageView
+
+register_routes(chainlit_server_app)
 
 logger = logging.getLogger(__name__)
 
 AEGRA_URL = os.getenv("AEGRA_URL", "http://aegra:2026")
 
+#: Токен доверенного посредника. Aegra без него не отвечает вовсе
+#: (см. deploy/auth.py): браузер к ней не ходит, ходит только этот сервис.
+AEGRA_API_TOKEN = os.getenv("AEGRA_API_TOKEN", "")
+
+
+def build_client(user_id: str):
+    """Создаёт клиента Aegra от имени вошедшего пользователя.
+
+    Личность передаётся заголовком, а не полем запроса: Aegra подставляет
+    её в ``configurable.user_id`` сама, и подменить её клиент уже не может.
+
+    Args:
+        user_id: Имя вошедшего пользователя (``cl.User.identifier``).
+
+    Returns:
+        LangGraphClient: Клиент с заголовками доступа.
+    """
+    headers = {"X-Aist-User": user_id or "anonymous"}
+    if AEGRA_API_TOKEN:
+        headers["Authorization"] = f"Bearer {AEGRA_API_TOKEN}"
+    else:
+        logger.error(
+            "AEGRA_API_TOKEN не задан: агент откажет в доступе. "
+            "Задайте токен в deploy/.env и перезапустите стек."
+        )
+    return get_client(url=AEGRA_URL, headers=headers)
+
+#: Значение из шаблона deploy/.env.example. Его копируют как есть, и тогда
+#: ключ подписи сессий становится публично известной строкой из репозитория.
+_PLACEHOLDER_SECRET = "change-me-to-a-random-secret"
+
+#: Разумный минимум длины ключа подписи.
+_MIN_SECRET_LENGTH = 32
+
+
+def _check_auth_secret() -> None:
+    """Не даёт запуститься с непригодным ключом подписи сессий.
+
+    Chainlit подписывает им cookie сессии. Пустой ключ роняет вход,
+    а ключ из шаблона хуже: интерфейс работает как ни в чём не бывало,
+    но подделать cookie администратора может любой, кто видел репозиторий.
+    Поэтому проверка на старте, а не при первом входе.
+
+    Raises:
+        RuntimeError: Если ключ не задан, слишком короток или взят из шаблона.
+    """
+    secret = (os.getenv("CHAINLIT_AUTH_SECRET") or "").strip()
+    hint = (
+        'сгенерируйте: python -c "import secrets; print(secrets.token_urlsafe(32))" '
+        "и положите в deploy/.env как CHAINLIT_AUTH_SECRET"
+    )
+    if not secret:
+        raise RuntimeError(f"CHAINLIT_AUTH_SECRET не задан - {hint}")
+    if secret == _PLACEHOLDER_SECRET:
+        raise RuntimeError(
+            f"CHAINLIT_AUTH_SECRET взят из шаблона: этим ключом кто угодно "
+            f"подпишет себе сессию администратора - {hint}"
+        )
+    if len(secret) < _MIN_SECRET_LENGTH:
+        raise RuntimeError(
+            f"CHAINLIT_AUTH_SECRET короче {_MIN_SECRET_LENGTH} знаков - {hint}"
+        )
+
+
+_check_auth_secret()
+
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+
+#: Типы разделов регламента для тонкой настройки поиска.
+#:
+#: Поиск умеет фильтровать по ним с самого начала, но интерфейс их не
+#: показывал. Пользы больше всего от «Порядок проведения»: инженер чаще
+#: ищет процедуру, а не термины и не список литературы, и сужение по типу
+#: убирает из выдачи ровно то, что мешает.
+SECTION_CHOICES = {
+    "Порядок проведения": "procedura",
+    "Термины и определения": "terminy",
+    "Общие положения": "obshchie",
+    "Ответственность": "otvetstvennost",
+    "Назначение и область применения": "naznachenie",
+    "Приложения": "prilozhenie",
+    "Нормативные ссылки": "normativnye_ssylki",
+}
+
+#: Пустой выбор означает поиск по всем типам разделов.
+DEFAULT_SECTIONS: list[str] = []
 
 AREA_CHOICES = {
     "Пожарная безопасность": "pozharnaya_bezopasnost",
@@ -70,9 +164,33 @@ async def _ensure_persisted(user: cl.User) -> cl.User:
     return user
 
 
+def _is_admin(username: str, password: str) -> bool:
+    """Проверяет учётную запись администратора из окружения.
+
+    Пустой ``ADMIN_PASSWORD`` не открывает вход: раньше при заданном имени и
+    незаданном пароле пустая строка совпадала сама с собой и пускала внутрь.
+    Сравнение постоянного времени - чтобы по времени ответа нельзя было
+    подбирать пароль посимвольно.
+
+    Args:
+        username: Введённое имя пользователя.
+        password: Введённый пароль.
+
+    Returns:
+        bool: ``True``, если это администратор из окружения.
+    """
+    if not ADMIN_USERNAME or not ADMIN_PASSWORD:
+        return False
+    # Сравниваются байты: ``compare_digest`` на строках не принимает не-ASCII,
+    # и кириллица в пароле уронила бы вход с ошибкой вместо отказа.
+    return hmac.compare_digest(
+        username.encode("utf-8"), ADMIN_USERNAME.encode("utf-8")
+    ) and hmac.compare_digest(password.encode("utf-8"), ADMIN_PASSWORD.encode("utf-8"))
+
+
 @cl.password_auth_callback
 async def auth_callback(username: str, password: str) -> cl.User | None:
-    if ADMIN_USERNAME and username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+    if _is_admin(username, password):
         return await _ensure_persisted(
             cl.User(
                 identifier=username,
@@ -169,7 +287,7 @@ async def on_chat_start():
         return
     user_id = app_user.identifier
 
-    client = get_client(url=AEGRA_URL)
+    client = build_client(user_id)
     assistants = await client.assistants.search()
     if not assistants:
         await cl.Message(
@@ -188,6 +306,8 @@ async def on_chat_start():
     cl.user_session.set("thread_id", thread["thread_id"])
     cl.user_session.set("user_id", user_id)
     cl.user_session.set("areas", DEFAULT_AREAS)
+    cl.user_session.set("sections", DEFAULT_SECTIONS)
+    cl.user_session.set("show_stages", True)
 
     widgets: list[InputWidget] = [
         MultiSelect(
@@ -196,13 +316,31 @@ async def on_chat_start():
             items=AREA_CHOICES,
             initial=DEFAULT_AREAS,
         ),
+        MultiSelect(
+            id="sections",
+            label="Типы разделов",
+            items=SECTION_CHOICES,
+            initial=DEFAULT_SECTIONS,
+            description=(
+                "Пусто — искать по всем разделам. Сузьте до «Порядок "
+                "проведения», если нужна процедура, а не термины"
+            ),
+        ),
         cl.input_widget.Checkbox(
             id="always_answer_with_db",
             label="Всегда искать в базе знаний",
             initial=False,
             description=(
-                "Принудительно использовать поиск по базе "
-                "даже для общих вопросов"
+                "Принудительно использовать поиск по базе даже для общих вопросов"
+            ),
+        ),
+        cl.input_widget.Checkbox(
+            id="show_stages",
+            label="Показывать этапы выполнения",
+            initial=True,
+            description=(
+                "Лента шагов над ответом: планирование, поиск, отбор "
+                "источников. Выключите, если мешает читать"
             ),
         ),
     ]
@@ -211,7 +349,7 @@ async def on_chat_start():
 
     await cl.Message(
         content=(
-            f"Здравствуйте, **{user_id}**. Я АИст — помощник по корпоративной базе "
+            f"Здравствуйте, **{user_id}**. Я AIst - помощник по корпоративной базе "
             "знаний: охрана труда, промышленная и пожарная безопасность, "
             "гражданская оборона и ЧС.\n\n"
             "Задайте вопрос своими словами. В ответе будут ссылки на документ "
@@ -227,7 +365,7 @@ async def on_chat_resume(thread: ThreadDict) -> None:
         await cl.Message(content="Требуется вход в систему.").send()
         return
 
-    client = get_client(url=AEGRA_URL)
+    client = build_client(app_user.identifier)
     assistants = await client.assistants.search()
     if not assistants:
         await cl.Message(
@@ -243,6 +381,8 @@ async def on_chat_resume(thread: ThreadDict) -> None:
     cl.user_session.set("thread_id", thread_id)
     cl.user_session.set("user_id", app_user.identifier)
     cl.user_session.set("areas", DEFAULT_AREAS)
+    cl.user_session.set("sections", DEFAULT_SECTIONS)
+    cl.user_session.set("show_stages", True)
     logger.info("диалог %s восстановлен для %s", thread_id, app_user.identifier)
 
 
@@ -257,10 +397,23 @@ async def on_settings_update(settings: dict):
         areas = [raw]
     cl.user_session.set("areas", areas)
 
+    raw_sections = settings.get("sections")
+    if isinstance(raw_sections, list):
+        sections = raw_sections
+    elif raw_sections is None or raw_sections == "":
+        sections = []
+    else:
+        sections = [raw_sections]
+    cl.user_session.set("sections", sections)
+
     # чекбокс «Всегда искать в базе знаний»
     always_db = settings.get("always_answer_with_db")
     if isinstance(always_db, bool):
         cl.user_session.set("always_answer_with_db", always_db)
+
+    show_stages = settings.get("show_stages")
+    if isinstance(show_stages, bool):
+        cl.user_session.set("show_stages", show_stages)
 
 
 @cl.on_message
@@ -268,7 +421,6 @@ async def on_message(message: cl.Message):
     client = cl.user_session.get("client")
     assistant_id: str | None = cl.user_session.get("assistant_id")
     thread_id: str | None = cl.user_session.get("thread_id")
-    user_id: str | None = cl.user_session.get("user_id")
 
     if client is None or assistant_id is None or thread_id is None:
         await cl.Message(
@@ -277,7 +429,28 @@ async def on_message(message: cl.Message):
         return
 
     msg = cl.Message(content="")
-    await msg.send()
+    msg_sent = False
+
+    async def ensure_message_sent() -> None:
+        """Отправляет пустое сообщение ответа не раньше, чем оно нужно.
+
+        Порядок в ленте задаётся моментом отправки. Если отправить сообщение
+        сразу, шаги этапов встанут ПОД пустым пузырём ответа, и ход работы
+        читался бы после самого ответа (см. docs/GUI.md).
+
+        Returns:
+            None
+        """
+        nonlocal msg_sent
+        if not msg_sent:
+            msg_sent = True
+            await msg.send()
+
+    # Лента этапов рисуется только если человек её не выключил: на длинных
+    # ответах пять шагов над текстом мешают читать, а смысл они несут один
+    # раз - когда надо убедиться, что система работает.
+    show_stages = cl.user_session.get("show_stages")
+    stages = StageView() if show_stages is not False else None
 
     # Ключ панели источников создаётся ДО цикла: панель рисуется по событию
     # sources, а поток завершается только после узла write_memory — то есть
@@ -286,6 +459,7 @@ async def on_message(message: cl.Message):
     sidebar_drawn = False
 
     areas: list[str] | None = cl.user_session.get("areas")
+    sections: list[str] | None = cl.user_session.get("sections")
     always_db: bool = cl.user_session.get("always_answer_with_db", False)
 
     sidebar_key = f"sources-{msg.id or uuid.uuid4()}"
@@ -305,9 +479,11 @@ async def on_message(message: cl.Message):
             thread_id=thread_id,
             assistant_id=assistant_id,
             input=build_input(
-                message.content, areas=areas, always_answer_with_db=always_db
+                message.content,
+                sections=sections,
+                areas=areas,
+                always_answer_with_db=always_db,
             ),
-            config={"configurable": {"user_id": user_id or "anonymous"}},
             stream_mode=["messages", "updates", "custom"],
             version="v1",
         ):
@@ -323,26 +499,16 @@ async def on_message(message: cl.Message):
                     prev = partials.get(mid, "")
                     if len(content) > len(prev):
                         partials[mid] = content
-                        await msg.stream_token(content[len(prev):])
+                        await ensure_message_sent()
+                        await msg.stream_token(content[len(prev) :])
                 continue
 
-            if chunk.event != "updates":
-                continue
-
-            # --- updates: управляем should_stream по узлам графа ---
-            for node_name, data in chunk.data.items():
-                if node_name == "finalize" and data:
-                    # После finalize начинается assistant — включаем стрим
-                    should_stream = True
-                elif node_name == "assistant" and data:
-                    # assistant завершился — выключаем стрим и забираем финальный ответ
-                    should_stream = False
-                    for m in data.get("messages") or []:
-                        if m.get("type") == "ai" and not m.get("tool_calls"):
-                            content = str(m.get("content") or "")
-                            partials[m.get("id", "")] = content
-                            assistant_final.append(content)
-
+            # --- custom: панель источников и подсказки ---
+            #
+            # Блок обязан стоять ДО отсева не-updates. Раньше он был под
+            # ним, поэтому события custom до него не доходили вовсе:
+            # панель «Источники» и подсказки не рисовались никогда, хотя
+            # агент их исправно слал (agent/graph.py, узел finalize).
             if chunk.event == "custom":
                 env = decode_aist_envelope(chunk.data or {})
                 if env:
@@ -366,10 +532,44 @@ async def on_message(message: cl.Message):
                             sidebar_drawn = True
                     elif kind == "followups":
                         followups = payload.get("items") or []
+                    elif kind == "trace":
+                        if stages is not None:
+                            await stages.handle(payload)
                 continue
+
+            if chunk.event != "updates":
+                continue
+
+            # --- updates: управляем should_stream по узлам графа ---
+            for node_name, data in chunk.data.items():
+                if node_name in ("plan", "finalize") and data:
+                    # Включаем стрим после планировщика, а не только после
+                    # finalize. В режиме «chat» (приветствие, вопрос о
+                    # возможностях, вопрос о самом пользователе) граф идёт
+                    # plan -> assistant МИМО finalize, поэтому прежнее условие
+                    # там не срабатывало и ответ не стримился вовсе.
+                    #
+                    # После plan это безопасно в обоих режимах: ветви поиска
+                    # живут в подграфе, а он не стримится (в runs.stream нет
+                    # subgraphs=True), finalize модель не зовёт, а запись
+                    # памяти идёт уже после assistant, когда стрим выключен.
+                    should_stream = True
+                elif node_name == "assistant" and data:
+                    # assistant завершился — выключаем стрим и забираем финальный ответ
+                    should_stream = False
+                    for m in data.get("messages") or []:
+                        if m.get("type") == "ai" and not m.get("tool_calls"):
+                            content = str(m.get("content") or "")
+                            partials[m.get("id", "")] = content
+                            assistant_final.append(content)
+
     except Exception as exc:
         run_error = exc
-        logger.exception("run stream failed")
+        logger.exception("поток запуска графа оборван")
+    finally:
+        # Незакрытый шаг остался бы «выполняется» навсегда.
+        if stages is not None:
+            await stages.close()
 
     msg.content = pick_final_text(partials, assistant_final, error=run_error)
 
@@ -387,6 +587,7 @@ async def on_message(message: cl.Message):
             for label in followups[:4]
         ]
 
+    await ensure_message_sent()
     await msg.update()
 
 

@@ -194,10 +194,36 @@ GUI она не выводится.
 
 | kind | Генерируется | Назначение |
 | --- | --- | --- |
-| `sources` | retrieve (graph.py:261) | панель «Источники» |
-| `followups` | retrieve (graph.py:265) | подсказки-уточнения |
-| `trace` | assistant/retrieve | трассировка ошибок и статусов |
+| `sources` | finalize | панель «Источники» |
+| `followups` | finalize | подсказки-уточнения |
+| `trace` | все долгие узлы | этапы выполнения и статусы |
 | `related` | — | зарезервировано |
+
+### Этапы выполнения (`kind="trace"`)
+
+Полезная нагрузка обязательно содержит `stage` (узел) и `status`. Событие со
+`status: "start"` шлётся **до** работы узла, `status: "done"` — после; на
+сбое узел шлёт `error`, `model_unavailable` или `unavailable`. Пары
+«start/done» нужны интерфейсу: событие о завершении приходит, когда узел уже
+отработал, и по нему одному пользователь всё так же ждал бы молча
+(`docs/GUI.md`, «Этапы работы графа»).
+
+| stage | Узел | Поля при `done` |
+| --- | --- | --- |
+| `condense` | condense_context | `condensed` (0/1) |
+| `plan` | plan | `mode`, `subqueries` |
+| `search_agent` | search_agent | `query`, `retrieved`, `failed` |
+| `finalize` | finalize | `retrieved`, `failures`, `retrieval_failed` |
+| `assistant` | assistant | — |
+
+**Ветки поиска идут параллельно**, поэтому события `search_agent` несут
+`query`: без него события веток неразличимы и интерфейс не сможет свести
+начало и конец одной ветки.
+
+**Этап `condense` шлётся не всегда**: узел сначала спрашивает
+`ContextManager.should_condense` (проверка дешёвая, без модели) и молчит,
+когда история укладывается в бюджет. Иначе этап мигал бы на каждом сообщении,
+ничего при этом не делая.
 
 ## Грейдер фрагментов — grading.py
 

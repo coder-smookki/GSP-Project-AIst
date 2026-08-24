@@ -1,5 +1,12 @@
 {
   "graphs": {
     "agent": "./deploy/aegra_entry.py:graph"
+  },
+  "auth": {
+    "path": "./deploy/auth.py:auth"
+  },
+  "http": {
+    "app": "./deploy/content_app.py:app",
+    "enable_custom_route_auth": true
   }
 }

@@ -24,7 +24,7 @@ from .numbers import annotate as annotate_numbers
 from .planner import plan_search
 from .prompts import MEMORY_EXTRACT_PROMPT, MODEL_SYSTEM_MESSAGE
 from .search_agent import SearchAgentState, build_search_agent
-from .state import AgentState
+from .state import RESET_CHANNEL, AgentState
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,18 @@ def _model_errors() -> tuple[type[BaseException], ...]:
         from langchain_core.exceptions import OutputParserException
 
         errors.append(OutputParserException)
+    except ImportError:
+        pass
+    try:
+        # Провайдеры vLLM и llama.cpp ходят через OpenAI-совместимый SDK, а он
+        # заворачивает сетевые сбои в собственные классы и наружу httpx не
+        # отдаёт. Без этой ветки отказ такого сервера пролетал мимо перехвата,
+        # и пользователь вместо понятного сообщения видел трассировку.
+        # APIError — общий предок APIConnectionError, APITimeoutError и
+        # APIStatusError, поэтому одного класса достаточно.
+        from openai import APIError
+
+        errors.append(APIError)
     except ImportError:
         pass
     return tuple(errors)
@@ -133,6 +145,51 @@ def _dedup_retrieved(items: list[dict]) -> list[dict]:
     return list(best.values())
 
 
+def _merge_branches(items: list[dict], limit: int) -> list[dict]:
+    """Собирает выдачу ветвей, давая каждому подзапросу свою долю.
+
+    Скоры считаются каждый по своему подзапросу и между собой несопоставимы:
+    у одной формулировки совпадение может быть сильнее просто потому, что она
+    ближе к языку документа. Прежняя общая сортировка по скору из-за этого
+    могла отдать все места фрагментам одного подзапроса, а ответ на вторую
+    часть вопроса выпадал целиком — то есть декомпозиция обнулялась ровно на
+    тех вопросах, ради которых её и делали.
+
+    Поэтому берём по кругу: сначала лучший фрагмент каждой ветви, затем
+    вторые и так далее. Внутри ветви порядок сохраняется — там скоры
+    сопоставимы, потому что запрос один. Если ветвь исчерпалась, её место
+    достаётся остальным, и предел `limit` расходуется полностью.
+
+    Args:
+        items: Фрагменты всех ветвей с полем ``subquery``.
+        limit: Сколько фрагментов оставить.
+
+    Returns:
+        list[dict]: Фрагменты в порядке предъявления модели.
+    """
+    if not items:
+        return []
+
+    branches: dict[str, list[dict]] = {}
+    for item in items:
+        branches.setdefault(str(item.get("subquery") or ""), []).append(item)
+
+    for chunk_list in branches.values():
+        chunk_list.sort(key=lambda c: c.get("score", 0.0), reverse=True)
+
+    merged: list[dict] = []
+    queues = list(branches.values())
+    position = 0
+    while len(merged) < limit and any(len(q) > position for q in queues):
+        for queue in queues:
+            if position < len(queue):
+                merged.append(queue[position])
+                if len(merged) == limit:
+                    return merged
+        position += 1
+    return merged
+
+
 def create_app_agent(
     model,
     support_model,
@@ -175,17 +232,29 @@ def create_app_agent(
     graph = StateGraph(AgentState)
 
     async def reset_turn(state: AgentState):
+        """Готовит состояние к новому вопросу в том же диалоге.
+
+        Каналы ``branch_retrieved`` и ``failures`` сбрасываются сигналом, а не
+        пустым списком: у них reducer-сумматор, и пустой список он применил бы
+        как ``current + []``, то есть не сбросил бы ничего. Из-за этого
+        фрагменты копились от вопроса к вопросу, и со второго вопроса в одном
+        диалоге ответ собирался в основном по выдержкам к предыдущим.
+
+        Returns:
+            dict: Обновление состояния для нового хода.
+        """
         return {
             "plan": None,
             "retrieved": [],
-            "branch_retrieved": [],
-            "failures": [],
+            "branch_retrieved": RESET_CHANNEL,
+            "failures": RESET_CHANNEL,
             "followups": [],
             "retrieval_failed": False,
         }
 
     async def plan(state: AgentState):
         question = query_from_state(state)
+        emit("trace", {"stage": "plan", "status": "start"})
         search_plan = await plan_search(
             support_model,
             question,
@@ -197,6 +266,7 @@ def create_app_agent(
             "trace",
             {
                 "stage": "plan",
+                "status": "done",
                 "mode": search_plan.mode,
                 "subqueries": len(search_plan.subqueries),
             },
@@ -218,6 +288,7 @@ def create_app_agent(
                     "query": q,
                     "sections": state.get("sections"),
                     "areas": state.get("areas"),
+                    "docs": state.get("docs"),
                 },
             )
             for q in search_plan.subqueries
@@ -226,20 +297,33 @@ def create_app_agent(
     async def search_agent(state: AgentState):
         if search is None:
             return {"retrieved": [], "failures": []}
+        emit(
+            "trace",
+            {"stage": "search_agent", "status": "start", "query": state.get("query")},
+        )
         branch_input: SearchAgentState = {
             "query": state.get("query") or "",
             "sections": state.get("sections") or [],
             "areas": state.get("areas") or [],
+            "docs": state.get("docs") or [],
             "rounds": 0,
             "branch_messages": [],
         }
-        result = await search_agent_subgraph.ainvoke(branch_input, config={"recursion_limit": 20})
-        retrieved = result.get("retrieved", []) or []
+        result = await search_agent_subgraph.ainvoke(
+            branch_input, config={"recursion_limit": 20}
+        )
+        subquery = state.get("query") or ""
+        # Помечаем каждый фрагмент своим подзапросом: на сборке нужно знать,
+        # какая ветвь его нашла, иначе доли ветвей не выделить.
+        retrieved = [
+            dict(item, subquery=subquery) for item in (result.get("retrieved") or [])
+        ]
         failures = result.get("failures", []) or []
         emit(
             "trace",
             {
                 "stage": "search_agent",
+                "status": "done",
                 "query": state.get("query"),
                 "retrieved": len(retrieved),
                 "failed": bool(failures),
@@ -249,7 +333,7 @@ def create_app_agent(
 
     async def finalize(state: AgentState):
         raw = _dedup_retrieved(state.get("branch_retrieved") or [])
-        items = sorted(raw, key=lambda c: c.get("score", 0.0), reverse=True)[:top_k]
+        items = _merge_branches(raw, top_k)
         items = [dict(item, n=n) for n, item in enumerate(items, 1)]
         failures = state.get("failures") or []
         retrieval_failed = bool(failures) and not items
@@ -262,6 +346,7 @@ def create_app_agent(
             "trace",
             {
                 "stage": "finalize",
+                "status": "done",
                 "retrieved": len(items),
                 "failures": len(failures),
                 "retrieval_failed": retrieval_failed,
@@ -275,6 +360,7 @@ def create_app_agent(
         }
 
     async def assistant(state: AgentState, config: RunnableConfig, *, store: BaseStore):
+        emit("trace", {"stage": "assistant", "status": "start"})
         user_id = config.get("configurable", {"user_id": "default"}).get(
             "user_id", "default"
         )
@@ -333,11 +419,19 @@ def create_app_agent(
             if marked != text:
                 answer = AIMessage(content=marked)
 
+        emit("trace", {"stage": "assistant", "status": "done"})
         return {"messages": [answer]}
 
     async def condense_context(state: AgentState):
         if not context_manager:
             return {}
+        # Этап показываем пользователю только когда сворачивание дойдёт до
+        # модели: проверка дешёвая, а иначе шаг мигал бы на каждом сообщении.
+        shown = context_manager.should_condense(
+            state["messages"], state.get("summary", "")
+        )
+        if shown:
+            emit("trace", {"stage": "condense", "status": "start"})
         try:
             summary = await context_manager.condense(
                 state["messages"],
@@ -345,9 +439,20 @@ def create_app_agent(
             )
         except MODEL_ERRORS as exc:
             logger.warning("история не сжата: %s: %s", type(exc).__name__, exc)
+            if shown:
+                emit("trace", {"stage": "condense", "status": "error"})
             return {}
-        if summary is None:
+        # Пустое резюме - тоже отказ. Раньше проверялось только ``None``, и
+        # пустая строка проходила дальше: история сообщений удалялась, а
+        # взамен не оставалось ничего - диалог терял всё, что было сказано.
+        if summary is None or not summary.strip():
+            if summary is not None:
+                logger.warning("история не сжата: модель вернула пустое резюме")
+            if shown:
+                emit("trace", {"stage": "condense", "status": "done", "condensed": 0})
             return {}
+        if shown:
+            emit("trace", {"stage": "condense", "status": "done", "condensed": 1})
         removals = [
             RemoveMessage(id=m.id)
             for m in state["messages"][: -context_manager.keep_last]
@@ -395,6 +500,17 @@ def create_app_agent(
 
         memories = _parse_memory_json(result.content)
         if memories is None:
+            return {}
+
+        # Пустой набор не считается решением «забыть всё». Ниже удаляется
+        # каждая запись, которой нет в новом наборе, поэтому один неудачный
+        # ответ модели стирал бы всю долгосрочную память пользователя без
+        # возможности восстановить.
+        if not memories and existing_items:
+            logger.warning(
+                "память не тронута: модель вернула пустой набор при %d записях",
+                len(existing_items),
+            )
             return {}
 
         new_contents = {m["content"] for m in memories}

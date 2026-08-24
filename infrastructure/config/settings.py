@@ -6,8 +6,19 @@
 
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: Провайдеры моделей, которые реестр умеет собирать (см. model_registry).
+MODEL_PROVIDERS = ("ollama-local", "llamacpp", "vllm")
+
+#: Способы посчитать переоценку кандидатов.
+#:
+#: ``auto`` - хост-сервис, если задан ``rerank_endpoint``, иначе локальный
+#: расчёт (историческое поведение); ``local`` - только локальный
+#: кросс-энкодер; ``http`` - только хост-сервис ``deploy/rerank_server.py``;
+#: ``vllm`` - эндпоинт ``/v1/rerank`` сервера vLLM.
+RERANK_PROVIDERS = ("auto", "local", "http", "vllm")
 
 
 class Settings(BaseSettings):
@@ -32,9 +43,30 @@ class Settings(BaseSettings):
     llamacpp_base_url: str = "http://localhost:8080"
     vllm_base_url: str = "http://localhost:8000"
 
+    # ------------------------------------------------------------------ vLLM
+    #: Ключ доступа к vLLM (сервер запущен с ``--api-key``).
+    #:
+    #: Уходит заголовком ``Authorization: Bearer <ключ>``. Пусто - сервер
+    #: поднят без ключа; клиент всё равно шлёт заглушку, потому что
+    #: OpenAI-совместимый SDK отказывается работать с пустым ключом.
+    vllm_api_key: str = Field(default="", repr=False)
+
+    #: Предел ожидания ответа vLLM, с. Значение большое по той же причине,
+    #: что и у Ollama: первый запрос может ждать прогрева сервера.
+    vllm_timeout: float = 300.0
+
+    #: Адрес vLLM с эмбеддером. Пусто - берётся ``vllm_base_url``.
+    #:
+    #: Один процесс vLLM обслуживает ровно одну модель, поэтому генерация,
+    #: эмбеддинги и переоценка живут на разных портах.
+    vllm_embedding_base_url: str = ""
+
+    #: Адрес vLLM с моделью переоценки. Пусто - берётся ``vllm_base_url``.
+    vllm_rerank_base_url: str = ""
+
     # ----------------------------------------------------------- эмбеддинги
     embedding_provider: str = "ollama-local"  # ollama-local | llamacpp | vllm
-    embedding_model: str = "bge-m3"
+    embedding_model: str = "bge-m3:567m"
 
     #: Инструкция, добавляемая к тексту ЗАПРОСА перед кодированием.
     #:
@@ -43,6 +75,14 @@ class Settings(BaseSettings):
     #: падает. Для bge-m3 инструкция не нужна и поле остаётся пустым —
     #: у неё запрос и документ кодируются одинаково.
     embedding_query_instruction: str = ""
+
+    #: Предел ожидания ответа эмбеддера, с.
+    #:
+    #: Задавался только для vLLM, а Ollama работала вообще без предела: если
+    #: сервер модели подвисал, запрос висел бесконечно - ни ответа, ни ошибки,
+    #: и на демонстрации это выглядело бы как намертво зависший интерфейс.
+    #: Значение большое: первое обращение может ждать прогрева модели.
+    embedding_timeout: float = 120.0
 
     # ------------------------------------------ наблюдаемость (OpenLIT/OTLP)
     otlp_endpoint: str = ""  # напр. http://openlit:4318; пусто = трассировка выключена
@@ -81,6 +121,12 @@ class Settings(BaseSettings):
 
     # ------------------------------------------------------- переоценка
     rerank_enabled: bool = False
+
+    #: Кто считает переоценку: auto | local | http | vllm.
+    #:
+    #: ``auto`` сохраняет прежнее поведение: есть ``rerank_endpoint`` -
+    #: хост-сервис, нет - локальный кросс-энкодер.
+    rerank_provider: str = "auto"
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_device: str = ""
     rerank_half_precision: bool = True
@@ -121,8 +167,23 @@ class Settings(BaseSettings):
     #: кейса, и нарушить его молча нельзя.
     aist_offline: bool = False
 
+    # Читаются оба файла, причём корневой `.env` перекрывает `deploy/.env`.
+    #
+    # Зачем два. Настройки стенда живут в `deploy/.env`, потому что оттуда их
+    # берёт docker compose. Но пути в pydantic считаются от текущего каталога,
+    # и всё, что запускается с хоста из корня репозитория (замер качества,
+    # индексация, scripts/verify.sh), этот файл просто не видело. Настройки
+    # молча брались из умолчаний ниже, и человек был уверен, что померил свою
+    # конфигурацию, хотя мерил чужую: выставленные в `deploy/.env` prefetch=10,
+    # rrf=40 и min_rel=0.45 не применялись, работали 30, 60 и 0.55.
+    #
+    # Сетевые адреса (QDRANT_URL, OLLAMA_LOCAL_BASE_URL, POSTGRES_HOST) в
+    # `deploy/.env` держать не нужно: внутри стека их подставляет сам compose,
+    # а на хосте верны умолчания ниже. В шаблоне они закомментированы.
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+        env_file=("deploy/.env", ".env"),
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     @field_validator("retrieval_provider")
@@ -132,6 +193,51 @@ class Settings(BaseSettings):
         if normalized not in {"mock", "qdrant"}:
             raise ValueError(
                 f"неизвестная реализация поиска {value!r}: ожидается mock или qdrant"
+            )
+        return normalized
+
+    @field_validator("llm_provider", "embedding_provider")
+    @classmethod
+    def _check_model_provider(cls, value: str, info: ValidationInfo) -> str:
+        """Проверяет, что провайдер моделей реализован в реестре.
+
+        Args:
+            value: Значение настройки провайдера.
+            info: Контекст валидации; нужен ради имени поля в сообщении.
+
+        Returns:
+            str: Нормализованное значение провайдера.
+
+        Raises:
+            ValueError: Если провайдер не входит в ``MODEL_PROVIDERS``.
+        """
+        normalized = value.strip().lower()
+        if normalized not in MODEL_PROVIDERS:
+            raise ValueError(
+                f"неизвестный провайдер {info.field_name}={value!r}: "
+                f"поддерживаются {', '.join(MODEL_PROVIDERS)}"
+            )
+        return normalized
+
+    @field_validator("rerank_provider")
+    @classmethod
+    def _check_rerank_provider(cls, value: str) -> str:
+        """Проверяет способ переоценки кандидатов.
+
+        Args:
+            value: Значение настройки ``rerank_provider``.
+
+        Returns:
+            str: Нормализованное значение.
+
+        Raises:
+            ValueError: Если значение не входит в ``RERANK_PROVIDERS``.
+        """
+        normalized = value.strip().lower()
+        if normalized not in RERANK_PROVIDERS:
+            raise ValueError(
+                f"неизвестный способ переоценки {value!r}: "
+                f"поддерживаются {', '.join(RERANK_PROVIDERS)}"
             )
         return normalized
 
@@ -149,6 +255,24 @@ class Settings(BaseSettings):
 
     def resolved_retrieval_provider(self) -> str:
         return "mock" if self.use_mock_search else self.retrieval_provider
+
+    def resolved_vllm_embedding_base_url(self) -> str:
+        """Возвращает адрес vLLM для эмбеддингов.
+
+        Returns:
+            str: ``vllm_embedding_base_url``, а при пустом значении -
+            ``vllm_base_url``.
+        """
+        return self.vllm_embedding_base_url or self.vllm_base_url
+
+    def resolved_vllm_rerank_base_url(self) -> str:
+        """Возвращает адрес vLLM для переоценки.
+
+        Returns:
+            str: ``vllm_rerank_base_url``, а при пустом значении -
+            ``vllm_base_url``.
+        """
+        return self.vllm_rerank_base_url or self.vllm_base_url
 
 
 @lru_cache

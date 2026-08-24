@@ -138,7 +138,54 @@ class DocxParser:
                 return text
         return ""
 
-    def parse_file(self, path: str | Path, *, source: str = "files") -> ParsedDocument:
+    def parse(self, raw) -> ParsedDocument:
+        """Разбирает документ, пришедший из источника корпуса.
+
+        Метод протокола ``DocumentParser``: конвейер зовёт у парсера именно
+        ``parse``. Без него любой ``.docx`` из папки ронял разбор с
+        ``AttributeError``, конвейер записывал документу ошибку, и папка
+        регламентов индексировалась в ноль фрагментов.
+
+        Args:
+            raw: Документ источника (``RawDocument``); в ``content`` лежит
+                путь к файлу, потому что разбор ``.docx`` читает его сам.
+
+        Returns:
+            ParsedDocument: Разобранный документ.
+        """
+        return self.parse_file(
+            raw.content,
+            source="files",
+            doc_id=raw.doc_id,
+            updated_at=raw.updated_at,
+        )
+
+    def parse_file(
+        self,
+        path: str | Path,
+        *,
+        source: str = "files",
+        doc_id: str | None = None,
+        updated_at: str | None = None,
+    ) -> ParsedDocument:
+        """Разбирает файл ``.docx`` по пути.
+
+        Args:
+            path: Путь к файлу.
+            source: Метка источника документа.
+            doc_id: Идентификатор из источника; пусто - имя файла. Свой
+                идентификатор нужен, чтобы документ не «переехал» при
+                переименовании файла и совпадал с тем, по которому источник
+                отдаёт обновления.
+            updated_at: Отметка обновления из источника; пусто - время
+                изменения файла.
+
+        Returns:
+            ParsedDocument: Разобранный документ.
+
+        Raises:
+            ValueError: Если в документе нет текста.
+        """
         target = Path(path)
         paragraphs = self.read_paragraphs(target)
         if not paragraphs:
@@ -158,11 +205,11 @@ class DocxParser:
 
         document = build_document(
             self.to_blocks(paragraphs),
-            doc_id=target.name,
+            doc_id=doc_id or target.name,
             doc_code=doc_code,
             doc_title=title[:200],
             source=source,
-            updated_at=str(int(target.stat().st_mtime)),
+            updated_at=updated_at or str(int(target.stat().st_mtime)),
         )
         logger.info(
             "разобран файл %s (%s): разделов %d, атомов %d",
