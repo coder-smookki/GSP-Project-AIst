@@ -159,7 +159,9 @@ async def scope_to_owner(ctx: Auth.types.AuthContext, value: dict) -> dict | Non
     """
     # Системные ассистенты должны быть видны всем аутентифицированным
     # пользователям. Фильтр по владельцу здесь ломает их видимость.
-    if ctx.resource == "assistants":
+    # ``getattr`` — тест ``test_resources_are_scoped_to_their_owner`` передаёт
+    # мок ``_Ctx`` без поля ``resource``, реальный ``AuthContext`` его имеет.
+    if getattr(ctx, "resource", None) == "assistants":
         return None
     owner = ctx.user.identity
     if isinstance(value, dict):

@@ -25,6 +25,52 @@ ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Prefect: временный сервер в тестах пишет "Stopping temporary server..." уже
+# после закрытия capsys/rich консоли pytest — Rich пытается писать в закрытый
+# файл и падает ValueError: I/O operation on closed file (см. трейс
+# prefect/logging/handlers.py:389 console.print). Это шум teardown, не ошибка
+# теста. Оригинальный emit ловит ValueError и зовёт handleError, а handleError
+# сам пишет в sys.stderr и тоже падает — поэтому патчим emit напрямую,
+# проверяя закрытый файл до печати, как это делает _SafeStreamHandler для
+# prefect._internal.
+try:
+    from prefect.logging.handlers import PrefectConsoleHandler
+
+    def _patched_emit(self, record):  # type: ignore[no-untyped-def]
+        try:
+            # Если консольный файл уже закрыт pytest, молча пропускаем
+            if getattr(getattr(self, "console", None), "file", None) is not None and getattr(
+                self.console.file, "closed", False
+            ):
+                return
+            message = self.format(record)
+            self.console.print(message, soft_wrap=True)
+        except ValueError as exc:
+            if "I/O operation on closed file" in str(exc):
+                return
+            self.handleError(record)
+        except Exception:
+            self.handleError(record)
+
+    PrefectConsoleHandler.emit = _patched_emit  # type: ignore[method-assign]
+
+    # На случай если handleError всё же вызовется с закрытым sys.stderr
+    import logging
+
+    _orig_handler_handleError = logging.Handler.handleError
+
+    def _safe_handler_handleError(self, record):  # type: ignore[no-untyped-def]
+        try:
+            return _orig_handler_handleError(self, record)
+        except ValueError as exc:
+            if "I/O operation on closed file" in str(exc):
+                return
+            raise
+
+    logging.Handler.handleError = _safe_handler_handleError  # type: ignore[method-assign]
+except ImportError:
+    pass
+
 
 @pytest.fixture(autouse=True)
 def _isolate_settings(monkeypatch):
