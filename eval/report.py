@@ -106,10 +106,13 @@ def collect_runs(cache: ResultCache) -> list[dict]:
     """
     groups: dict[tuple, list[dict]] = {}
     for path in sorted(cache.directory.glob("*.json")):
-        # Пропускаем A/B вердикты (ab_*.json) — у них другая структура
-        if path.name.startswith("ab_"):
+        # Пропускаем A/B вердикты (ab_*.json) и bench-артефакты — у них другая структура
+        if path.name.startswith("ab_") or path.name.startswith("bench_"):
             continue
         entry = json.loads(path.read_text(encoding="utf-8"))
+        # Старые или сторонние json без result (например bench_verify.json) — пропускаем
+        if "result" not in entry:
+            continue
         config = json.dumps(
             entry.get("config", {}), ensure_ascii=False, sort_keys=True
         )

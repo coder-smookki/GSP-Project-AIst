@@ -22,7 +22,10 @@ import pytest
 
 pytestmark = pytest.mark.corpus
 
-ROOT = Path(__file__).resolve().parents[1]
+# parents[2], а не [1]: файл переехал в tests/eval/, и путь стал
+# складываться в tests/tests/fixtures - набор «не находился», а все
+# проверки молча пропускались. То есть цитаты не сверялись ни разу.
+ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = ROOT / "tests" / "fixtures" / "golden" / "questions.json"
 CORPUS_DIR = ROOT / "tests" / "fixtures" / "corpus"
 
