@@ -39,9 +39,9 @@ try:
     def _patched_emit(self, record):  # type: ignore[no-untyped-def]
         try:
             # Если консольный файл уже закрыт pytest, молча пропускаем
-            if getattr(getattr(self, "console", None), "file", None) is not None and getattr(
-                self.console.file, "closed", False
-            ):
+            console = getattr(self, "console", None)
+            file = getattr(console, "file", None) if console else None
+            if file is not None and getattr(file, "closed", False):
                 return
             message = self.format(record)
             self.console.print(message, soft_wrap=True)
