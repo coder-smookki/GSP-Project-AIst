@@ -21,8 +21,17 @@ from infrastructure.retrieval.store import QdrantStore
 class _Client:
     """Клиент Qdrant с коллекцией заданной размерности."""
 
-    def __init__(self, dim: int | None):
+    def __init__(self, dim: int | None, collections: tuple[str, ...] = ()):
+        """Готовит клиента.
+
+        Args:
+            dim: Размерность dense-вектора; ``None`` - коллекции нет.
+            collections: Имена НАСТОЯЩИХ коллекций. Алиасы сюда не входят:
+                на них ``collection_exists`` отвечает утвердительно, и
+                проверка коллизии имён обязана смотреть именно этот список.
+        """
         self._dim = dim
+        self._collections = collections
         self.created = False
 
     async def collection_exists(self, collection_name: str) -> bool:
@@ -65,12 +74,18 @@ class _Client:
         """
 
     async def get_collections(self):
-        """Отдаёт пустой перечень коллекций.
+        """Отдаёт перечень НАСТОЯЩИХ коллекций.
+
+        Алиасы сюда не входят намеренно: ``collection_exists`` отвечает на
+        них утвердительно, и проверка коллизии имён обязана смотреть именно
+        этот список, иначе она срабатывает на каждом законном переключении.
 
         Returns:
-            SimpleNamespace: Пустой перечень.
+            SimpleNamespace: Поле ``collections`` со списком имён.
         """
-        return SimpleNamespace(collections=[])
+        return SimpleNamespace(
+            collections=[SimpleNamespace(name=n) for n in self._collections]
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -125,7 +140,10 @@ class TestAliasCollision:
 
     async def test_collision_is_reported_with_instructions(self) -> None:
         """Совпадение имён вскрывается до запроса к серверу."""
-        store = QdrantStore(_Client(1024), alias="aist_chunks_v2")
+        store = QdrantStore(
+            _Client(1024, collections=("aist_chunks_v2",)),
+            alias="aist_chunks_v2",
+        )
         with pytest.raises(ValueError) as info:
             await store.switch_generation("aist_chunks_v2_v1")
 

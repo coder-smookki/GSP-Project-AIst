@@ -239,3 +239,6 @@ index/
 .DS_Store
 eval/results/
 eval/results/
+
+# Зависимости пакетных менеджеров
+node_modules/
