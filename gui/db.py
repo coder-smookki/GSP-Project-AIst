@@ -193,17 +193,26 @@ async def create_user(username: str, password: str, role: str = "user") -> bool:
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
-            await conn.execute(
+            # ON CONFLICT, а не перехват исключения: заведение администратора
+            # идёт при каждом старте, и на существующей записи Postgres писал
+            # в свой лог ERROR «duplicate key». Настоящие ошибки тонули в этом
+            # шуме, хотя ничего не ломалось.
+            created = await conn.fetchval(
                 "INSERT INTO gui_users (username, password_hash, role) "
-                "VALUES ($1, $2, $3)",
+                "VALUES ($1, $2, $3) "
+                "ON CONFLICT (username) DO NOTHING "
+                "RETURNING username",
                 username,
                 password_hash,
                 role,
             )
-        logger.info("User created: %s (role=%s)", username, role)
+        if created is None:
+            logger.info("пользователь %s уже заведён", username)
+            return False
+        logger.info("заведён пользователь %s (роль %s)", username, role)
         return True
-    except asyncpg.UniqueViolationError:
-        logger.warning("User already exists: %s", username)
+    except asyncpg.PostgresError as exc:
+        logger.error("не удалось завести пользователя %s: %s", username, exc)
         return False
 
 
