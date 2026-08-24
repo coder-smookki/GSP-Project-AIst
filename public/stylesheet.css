@@ -58,6 +58,19 @@
   filter: brightness(1.1);
 }
 
+/* Кнопка входа. Селектор по атрибуту, а не по классу: у формы входа своего
+ * класса нет. Проверять такие правила поиском по бандлу бессмысленно - в
+ * разметке они не встречаются как строка, смотреть надо на живой странице. */
+form button[type="submit"] {
+  background: var(--aist-sweep) !important;
+  border: none !important;
+  color: #fff !important;
+}
+
+form button[type="submit"]:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
 /* Поле ввода: рамка подсвечивается фирменным голубым, а не системным. */
 #message-composer {
   border-radius: 14px;

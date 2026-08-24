@@ -90,7 +90,7 @@ def _page(message: str = "", ok: bool = False) -> str:
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>АИст — регистрация</title>
+<title>AIst - регистрация</title>
 <style>
   :root {{ color-scheme: dark; }}
   * {{ box-sizing: border-box; }}
